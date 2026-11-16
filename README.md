@@ -3,10 +3,11 @@
 Ultima Underworld: The Stygian Abyss (1992) running on Windows and Linux with a renderer, sound and interface of our
 own, in plain C (clang). The game's rules are meant to be EXACTLY those of the original UW.EXE; only the presentation
 (graphics, sound, interface, controls) and a few optional extras may differ, and each of those has a switch in the
-Esc menu. The program is `uwr` (`uwr.exe` on Windows), short for Ultima Underworld Rekonfigmasturfication. This repository holds only what we made ourselves: no original game files, no executables,
-no ROMs and no third-party sources. You need your own copy of the game to run anything.
+Esc menu. The program is `uwr` (`uwr.exe` on Windows), short for Ultima Underworld Rekonfigmasturfication.
 
-This is a private snapshot, taken by `tools/uwr_export.py`. The source of truth is the working tree it is exported from.
+This repository holds only what we made ourselves: no original game files, no executables, no ROMs and no
+third-party sources. You need your own copy of the game to run anything. It is a snapshot of our working tree,
+taken by `tools/uwr_export.py`.
 
 ## Built on others' work
 
@@ -34,6 +35,17 @@ ray tracing, upscaled textures, relief maps and the effects on. Click a picture 
 ![The original next to uwr: level 1](docs/images/uwr-collage-1.jpg)
 
 ![The original next to uwr: levels 2 to 8](docs/images/uwr-collage-2.jpg)
+
+## Trying it
+
+- **There is no download yet.** This repository is the source only; a ready-to-run package for Windows and Linux
+  is planned.
+- **You need your own copy of Ultima Underworld: The Stygian Abyss.** The game reads its data files from it. The
+  Roland MT-32 sound also needs your own ROM files.
+- **Building it yourself** needs LLVM clang, the Underworld Exhumed source and its Exhume tools. The build scripts
+  still carry the folder paths of our own machine and have to be edited first. [port/README.md](port/README.md)
+  describes the Windows build, [docs/LINUX_BUILD.md](docs/LINUX_BUILD.md) the Linux one.
+- The keys are listed in [docs/KEYBINDS.md](docs/KEYBINDS.md).
 
 ## What is in it
 
@@ -66,7 +78,7 @@ ray tracing, upscaled textures, relief maps and the effects on. Click a picture 
 | You want to | Read |
 | --- | --- |
 | know the rules every session follows | [CLAUDE.md](CLAUDE.md), [DECOMP_RULESET.md](DECOMP_RULESET.md) |
-| see status and next steps | [NOTES.md](NOTES.md), [ROADMAP.md](ROADMAP.md), the newest `HANDOFF-*.md` |
+| see status and next steps | [NOTES.md](NOTES.md), [ROADMAP.md](ROADMAP.md) |
 | see which original routines are ported and proved | [ROUTINES.md](ROUTINES.md), [re/README.md](re/README.md) |
 | read the decoded game mechanics | [MECHANICS.md](MECHANICS.md) |
 | understand the engine source | [src/README-src-a.md](src/README-src-a.md), [src/README-src-b.md](src/README-src-b.md) |
@@ -120,3 +132,12 @@ The eight listed here until 2026-11-16 were checked against the source and the o
 
 The per-area guides list more ("UNSURE" at the end of `src/README-src-a.md` and `src/README-src-b.md`); those have
 not been checked yet.
+
+## Licence
+
+Our own code and files are under the MIT licence: [LICENSE](LICENSE). One part differs: `tools/laigter-cli` is a port
+of Laigter and is GPL v3 (its own licence file is in that folder). Everything we use from others is listed in
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+
+Ultima Underworld is the property of its owners (Electronic Arts). This project is not affiliated with or endorsed
+by them, and contains none of the game's files.
