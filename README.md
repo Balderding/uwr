@@ -23,6 +23,9 @@ This port would not exist without two projects, both under the MIT licence:
 
 The full list of what we use, with the licences, is in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
+The published work and measurements behind our changes (fire, firelight's colour, water, acoustics, creature AI)
+are listed in [SOURCES.md](SOURCES.md).
+
 ## What it looks like
 
 The same places in the same game: the original 1992 display on the left of each pair, ours on the right with
