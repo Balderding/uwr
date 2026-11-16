@@ -13,6 +13,10 @@ port_normal_strength 0.75
 texture_ao_strength 1
 texture_shadow 8
 object_shadows 1
+# these two have no row in the Esc menu (the user, 2026-11-16: on): the sprites' depth, 1 texel (0 none),
+# and light bouncing more than once (1: one bounce)
+sprite_height 1
+rt_bounces 2
 smooth_motion 1
 light_adaptation auto
 fx_particles 1
