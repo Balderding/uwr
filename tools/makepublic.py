@@ -70,8 +70,11 @@ for root, dirs, files in os.walk(PUB):
     for f in files:
         a = os.path.join(root, f)
         rel = os.path.relpath(a, PUB)
-        if rel == 'put-your-roms-here.txt':   # (kept at the top of tools\public: .gitignore leaves any roms\ out)
+        # (kept at the top of tools\public: .gitignore leaves any roms\ and data\ folder out)
+        if rel == 'put-your-roms-here.txt':
             rel = os.path.join('roms', rel)
+        if rel == 'settings.txt':   # the package's settings: everything on (the game reads data\settings.txt)
+            rel = os.path.join('data', rel)
         pairs.append((a, os.path.join(OUT, rel)))
 for a, z in pairs:
     if not os.path.isfile(a):
