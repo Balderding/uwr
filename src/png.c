@@ -40,6 +40,7 @@ void path_join(char *out, size_t n, const char *a, const char *b) { snprintf(out
 
 void make_dirs_for(const char *file_path) {
     char p[MAX_PATH];
+    if (file_in_memory_root(file_path)) return;
     str_copy(p, sizeof p, file_path);
     for (char *s = p; *s; s++) {
         if ((*s == '\\' || *s == '/') && s > p && s[-1] != ':') {
@@ -67,6 +68,7 @@ void path_join(char *out, size_t n, const char *a, const char *b) { snprintf(out
 
 void make_dirs_for(const char *file_path) {
     char p[1024];
+    if (file_in_memory_root(file_path)) return;
     str_copy(p, sizeof p, file_path);
     for (char *s = p; *s; s++) if (*s == '\\') *s = '/';
     for (char *s = p; *s; s++) {

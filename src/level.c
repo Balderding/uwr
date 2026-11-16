@@ -205,14 +205,20 @@ static void terrain_load(const char *data_dir) {
     char path[700], line[128];
     memset(terr, 0, sizeof terr);
     snprintf(path, sizeof path, "%s\\levels\\terrain.txt", data_dir);
-    FILE *f = fopen(path, "r");
-    if (!f) return;
-    while (fgets(line, sizeof line, f)) {
+    size_t mark = arena_mark();
+    Bytes f = file_read(path);   /* (the disk's, or the one kept in memory) */
+    for (size_t at = 0; at < f.size;) {
+        size_t n = 0;
+        while (at < f.size && f.data[at] != '\n') {
+            if (n + 1 < sizeof line) line[n++] = (char)f.data[at];
+            at++;
+        }
+        at++, line[n] = 0;
         int t;
         char w[16];
         if (sscanf(line, "floor %d %15s", &t, w) == 2 && t >= 0 && t < 64) terr[t] = (u8)(w[0] == 'w' ? 1 : w[0] == 'l' ? 2 : 0);
     }
-    fclose(f);
+    arena_reset(mark);
 }
 static int tex_terrain(int tex) { return tex >= 210 && tex - 210 < 64 ? terr[tex - 210] : 0; }
 

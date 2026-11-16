@@ -643,7 +643,15 @@ static std::string lower(std::string s) {
     return s;
 }
 
-int main(int argc, char **argv) {
+static void tool_init() { /* once: --uwr runs laigter_main several times */
+    static bool done = false;
+    if (done) return;
+    done = true;
+    arena_init((size_t)1 << 30);
+    crc_init();
+}
+
+static int laigter_main(int argc, char **argv) {
     std::string input, preset, location, sfx_n = "_n.", sfx_s = "_s.", sfx_o = "_o.", sfx_p = "_p.";
     bool has_n = false, has_c = false, has_o = false, has_p = false, not_recursive = false, flatten = false,
          check_changes = false, tile = false, flat_zero_x = false, occ_median = false, quiet = false;
@@ -722,8 +730,7 @@ int main(int argc, char **argv) {
         in_dir = files[0].parent_path();
     }
 
-    arena_init((size_t)1 << 30);
-    crc_init();
+    tool_init();
     std::atomic<size_t> next_file{0}, made{0}, skipped{0}, failed{0};
     std::mutex print_lock;
     auto t0 = std::chrono::steady_clock::now();
@@ -781,4 +788,12 @@ int main(int argc, char **argv) {
     double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     printf("%zu pictures made, %zu skipped, %zu failed, %.1f s\n", (size_t)made, (size_t)skipped, (size_t)failed, s);
     return failed ? 1 : 0;
+}
+
+#include "uwr_maps.inc" /* --uwr: every map uwr's renderer reads, in one run (ours, not Laigter's) */
+
+int main(int argc, char **argv) {
+    if (argc > 1 && !strcmp(argv[1], "--uwr")) return uwr_main(argc, argv);
+    if (argc > 1 && !strcmp(argv[1], "--uwr-game")) return uwr_game_main(argc, argv);
+    return laigter_main(argc, argv);
 }

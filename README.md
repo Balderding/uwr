@@ -39,7 +39,7 @@ ray tracing, upscaled textures, relief maps and the effects on. Click a picture 
 ## Trying it
 
 - **There is no download yet.** This repository is the source only; a ready-to-run package for Windows and Linux
-  is planned.
+  is being prepared (`tools/makepublic.py`). It will hold our programs only: nothing from the game.
 - **You need your own copy of Ultima Underworld: The Stygian Abyss.** The game reads its data files from it. The
   Roland MT-32 sound also needs your own ROM files.
 - **Building it yourself** needs LLVM clang, the Underworld Exhumed source and its Exhume tools. The build scripts
@@ -103,7 +103,11 @@ ray tracing, upscaled textures, relief maps and the effects on. Click a picture 
   end, menu, audio, acoustics, input); `sdl3/` is the Linux platform layer over SDL3.
 - **Proof** (`tools/proof_*.py`, `tools/emu.py`): each ported routine is run beside the original under an emulator
   on the same inputs; matching routines are listed in `re/proved.txt`.
-- **Data** (`data/`): our own normal, height and occlusion maps only.
+- **Relief maps** (normal, occlusion and height maps for walls, floors and sprites): not in this repository and
+  not in the download. The game makes them on its first start from the player's own game files, with
+  `tools/laigter-cli` and its presets (`src/mapsmake.h`); they come out pixel for pixel as the ones we tuned.
+- **The download** is put together by `tools/makepublic.py`, which copies only named files and refuses anything
+  that looks like a game file, a ROM, a model or a picture.
 
 ## Notes and warnings
 

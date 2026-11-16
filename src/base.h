@@ -43,6 +43,12 @@ bool file_write(const char *path, const void *data, size_t n);
 /* the checks: when set, file_write hands the bytes to this instead of writing */
 extern bool (*g_write_hook)(const char *path, const void *data, size_t n);
 bool file_exists(const char *path);
+/* Files kept in memory (the user, 2026-11-16: the game's own files are not extracted onto the disk). Once a root is
+ * named, file_write under it keeps the bytes in memory and writes nothing; file_read and file_exists look on the disk
+ * first (a file there is someone's own and wins), then in memory; make_dirs_for makes no folder under it. */
+void file_memory_root(const char *dir);
+bool file_in_memory_root(const char *path);
+int file_memory_count(size_t *bytes);
 
 /* --- text ----------------------------------------------------------------------------------- */
 void logf_(const char *fmt, ...);           /* to stdout, unbuffered */

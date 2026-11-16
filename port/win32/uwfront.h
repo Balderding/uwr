@@ -33,6 +33,10 @@ extern struct loop {
 extern const PlatHooks *hooks;
 extern PlatConfig live;                /* the options as they stand: plat_set_display and plat_set_mouse_lock change it */
 
+/* our own files' folder (settings.txt, our maps): <program's folder>data, or <program's folder>uwr in a flat folder
+   (the program beside the game's own UW.EXE, no game\ folder: the user, 2026-11-16) */
+void uwf_our_data(char *out, size_t n);
+
 /* ---- events: the backend's window thread calls these ---- */
 
 void uwf_key(int c, int down, int repeat);   /* a key (set-1 code, 0x100 for E0; down 1, a repeat with repeat 1) */

@@ -18,7 +18,14 @@ rem sprites (16 px items, creatures): tools\laigter-cli\sprite_op.preset: pixela
 rem user chose it 2026-11-10 over Laigter's defaults, which make every small picture one smooth dome) plus occlusion (a soft
 rem rim toward the silhouette, distance 6) and height (HeightMap, contrast 2.5, +40) maps, NAME_o and NAME_p beside NAME_n
 rem (the user chose them 2026-11-12 from work\laigter\try\sheet_op_F.png); the renderer's loader takes them up (uwr's task)
-build\laigter-cli.exe -q -n -o -p %CC% -r tools\laigter-cli\sprite_op.preset -d data\sprites -l data\laigter\sprites || exit /b 1
+for %%S in (doors flat_objects wall_objects) do build\laigter-cli.exe -q -n -o -p %CC% -r tools\laigter-cli\sprite_op.preset -d data\sprites\%%S -l data\laigter\sprites\%%S || exit /b 1
+rem creatures (the user, 2026-11-16, "B" of work\laigter\npc16): tools\laigter-cli\creature.preset: more blur on the detail
+rem (the dithered shading no longer a checkerboard of bumps), a 6 px bevel, occlusion in the dark creases plus a thin rim
+rem (threshold per picture, as the walls': thin limbs stay light), a soft dome for the height
+build\laigter-cli.exe -q -n -o -p %CC% --occlusion-thresh-median -r tools\laigter-cli\creature.preset -d data\sprites\creatures -l data\laigter\sprites\creatures || exit /b 1
+rem the items (the user, 2026-11-16, row 10 of work\laigter\items16b): tools\laigter-cli\item.preset, the creatures' normals
+rem and occlusion with a steeper height map (contrast 3, brightness 0, soft 1); then N4 + A4 of work\laigter\items16c: stronger detail (EnhanceHeight 400), harder creases (contrast 1, brightness 60)
+build\laigter-cli.exe -q -n -o -p %CC% --occlusion-thresh-median -r tools\laigter-cli\item.preset -d data\sprites\objects -l data\laigter\sprites\objects || exit /b 1
 rem the effects (ANIMO.GR: blood, sparks, dust, splashes, spell effects): the items' preset (the user, 2026-11-11)
 build\laigter-cli.exe -q -n -o -p %CC% -r tools\laigter-cli\sprite_op.preset -d data\ui\animo -l data\laigter\ui\animo || exit /b 1
 echo normal maps in data\laigter

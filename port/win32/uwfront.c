@@ -2591,13 +2591,37 @@ composed:
    north) as the renderer's tiles (x, z); the height the eye's, or an object's z (32 a tile, as the renderer's). */
 static int fx_pan_fix = 1;   /* data\settings.txt fx_pan_fix (1 unless written 0): the Roland effects panned as the game meant */
 static unsigned fx_ac_seen;   /* the renderer's acoustic epoch the audio has (0: none) */
+/* Our own files' folder (settings.txt, acoustics.txt, our maps): data\ beside the program. In a flat folder (the user,
+   2026-11-16: the program beside the game's own UW.EXE, no game\ folder) it is uwr\, so that nothing of ours lands in
+   the game's DATA\. The renderer makes the same choice (src\uwview.c data_dirs). */
+void uwf_our_data(char *out, size_t n)
+{
+    static const char *const old_way[2] = { "game/UW.EXE", "game/uw.exe" }, *const flat[2] = { "UW.EXE", "uw.exe" };
+    static int is_flat = -1;
+    const char *base = plat_base_dir();
+    if (!base) base = "";
+    if (is_flat < 0) {
+        char p[UWF_PATH + 16];
+        FILE *f = NULL;
+        int k;
+        is_flat = 0;
+        for (k = 0; k < 2 && !f; k++) snprintf(p, sizeof p, "%s%s", base, old_way[k]), f = fopen(p, "rb");
+        if (f) fclose(f);
+        else {
+            for (k = 0; k < 2 && !f; k++) snprintf(p, sizeof p, "%s%s", base, flat[k]), f = fopen(p, "rb");
+            if (f) fclose(f), is_flat = 1;
+        }
+    }
+    snprintf(out, n, "%s%s", base, is_flat ? "uwr" : "data");
+}
 static void fx_audio_start(int again)
 {
     char bin[UWF_PATH], data[UWF_PATH];
     const char *base = plat_base_dir();
     if (!base) return;
     if (again) uwaudio_shutdown();
-    snprintf(bin, sizeof bin, "%sbin", base), snprintf(data, sizeof data, "%sdata", base);
+    snprintf(bin, sizeof bin, "%sbin", base), uwf_our_data(data, sizeof data);
+    uwaudio_game_dir(plat_data_root());
     fx_pan_fix = uwaudio_setting(data, "fx_pan_fix", 1);
     volumes_load();
     uwaudio_volume(fx_vol / 100.0f);
@@ -2609,7 +2633,7 @@ static void fx_pan_fix_read(void)   /* the menu's "Effects' sides" changed: take
     char data[UWF_PATH];
     const char *base = plat_base_dir();
     if (!base) return;
-    snprintf(data, sizeof data, "%sdata", base);
+    uwf_our_data(data, sizeof data);
     fx_pan_fix = uwaudio_setting(data, "fx_pan_fix", 1);
 }
 /* the level for the sound (the acoustics plan's Tasks 2 and 4): taken from the renderer whenever it built a level
@@ -2662,7 +2686,7 @@ static void fx_acoustics_tune(void)
     char data[UWF_PATH];
     const char *base = plat_base_dir();
     if (!base) return;
-    snprintf(data, sizeof data, "%sdata", base);
+    uwf_our_data(data, sizeof data);
     uwaudio_tune(data);
 }
 static void fx_pump(void)

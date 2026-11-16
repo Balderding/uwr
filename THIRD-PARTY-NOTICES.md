@@ -58,6 +58,10 @@ runtime/port/sys/enhance.h and cheat.h), with which underworld-exhumed's C compi
 tools\laigter-cli\laigter_cli.cpp is a port of Laigter's map maker (https://github.com/azagaya/laigter,
 Copyright (C) 2019 Pablo Ivan Fonovich) without Qt, so it is GPL v3 (tools\laigter-cli\LICENSE-GPL3.txt).
 It is a separate program: uw.exe never links it, it only reads the PNG files it writes.
+The public download carries it as laigter\laigter-cli.exe (Windows) and laigter\laigter-cli (Linux) with
+license-gpl3.txt beside them: the game starts it once, on the first run, to make its relief maps from the
+player's own game files (src\mapsmake.h). Its source is this repository's tools\laigter-cli with src\base.c,
+png.c, gr.c, audio.c, conv.c and extract.c (ours, MIT, compiled into it); CImg.h is taken from Laigter's source.
 tools\laigter-cli\thirdparty\CImg.h is CImg 2.9.1 (David Tschumperle), CeCILL-C, as shipped in Laigter.
 
 ## OpenAL Soft 1.25.2 (LGPL 2.1) and Steam Audio 4.8.1 (Apache 2.0): the effects' audio (fx_audio, fx_acoustics)

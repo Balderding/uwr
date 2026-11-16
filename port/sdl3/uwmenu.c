@@ -24,7 +24,9 @@ static int menu_start(int w, int h)
     static int arena;
     if (!arena) arena_init((size_t)256 << 20), arena = 1;
     else arena_reset(0);
-    snprintf(data, sizeof data, "%sdata", base ? base : "");
+    (void)base;
+    uwf_our_data(data, sizeof data);   /* data\, or uwr\ in a flat folder (uwfront.c) */
+    file_memory_root(data);            /* the game's fonts ui_start copies are kept in memory, not written */
     snprintf(game, sizeof game, "%s", plat_data_root() ? plat_data_root() : "");
     ui_game_dir(game);
     started = 0;

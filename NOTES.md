@@ -1726,3 +1726,62 @@ The user set the fine-tuned model aside: the rulebook the model was being taught
   NOT checked: the user judges it in play with Ctrl+L (lines "the rules choose ... (rule N)", "calls for help",
   "pack courage", "hit and run", "strike together"). The trait numbers are first guesses to tune.
 - Backups of the files as they were: work\*.before-ai-levels-2026-11-16.
+
+## 2026-11-16: one folder, the game's own files not extracted
+
+The user: "make the game work out of one directory with the original game files not extracted".
+
+- **Nothing extracted onto the disk.** src\base.c keeps files in memory: `file_memory_root(dir)` names a root;
+  `file_write` under it keeps the bytes (a hash table, heap), `file_read` / `file_exists` look on the disk first (a
+  file there is someone's own and wins) and then in memory, `make_dirs_for` makes no folder under it. uwview.c's
+  level_build names our data folder as the root before `extract_missing`, so the 5,746 loose files (31 MB: textures,
+  sprites, levels, strings, the interface) are made in memory at every start (about 2 s) and never written.
+  `UWVIEW_EXTRACT_TO_DISK=1` writes them out as before (make-normals.cmd and the sheets need the loose PNGs; the
+  project's own data\ still has them). Two readers that opened files themselves now go through file_read:
+  level.c terrain_load, uwview.c read_light_table. The program's own audio (port\win32\uwaudio.c) read
+  data\sound\sounds.dat and uw.mt: it now falls back to the game's SOUND\ (uwaudio_game_dir).
+- **A flat folder.** When the program is run bare beside the game's own UW.EXE and there is no game\ folder
+  (underworld-exhumed uw1\src\port\sys\main.c), that folder is the game and the home is uwr\home. Our own files
+  (settings.txt, acoustics.txt, laigter\, upscaled\) are then in uwr\ and not data\, so that nothing of ours lands
+  in the game's DATA\: uwfront.c `uwf_our_data` (the program, the Linux menu) and uwview.c `data_dirs` (the
+  renderer) make the same choice. The old layout (game\ + data\ + home\, dist\UW1) works as before.
+- `tools\makeflat.py` builds dist\uwr (copies only; dist\UW1 untouched; llm\ only with --llm).
+- Proof: builds (Windows program, both renderers; the Linux program and libuwview.so cross-built); a hidden bare run
+  of dist\uwr\uwr.exe loaded the saved game with the Vulkan renderer and wrote only under uwr\home
+  (work\onedir\flatrun.py, mem.py). NOT run: the audio fallback (a hidden run has the effects' audio off), Linux, the
+  D3D12 renderer in the flat folder. Known gap: the Linux menu without the renderer (uwmenu.c) has no extracted
+  interface pictures unless data\ui is on the disk. dlss\, bin\, roms\, freefonts\ are still folders of the top level.
+
+## 2026-11-16: the relief maps made on the first run; the public package
+
+The user: "We cannot include the upscaled textures" in a public download, and: can the game make the normal, AO and
+depth maps on the first run "with the laigter tool, with the exact settings we used", for Linux and Windows.
+
+- **tools\laigter-cli --uwr / --uwr-game** (uwr_maps.inc, part of the GPL program): every map in one run. The walls'
+  and floors' two Python steps (upsize_normals.py, make_soft_maps.py variant A) are ported into it. --uwr-game reads
+  the player's own game files with src\extract.c (unpacked into OUT\laigter\unpack-tmp, removed afterwards).
+  Windows: tools\laigter-cli\build.cmd; Linux: tools\build_laigter_linux.py (build\linux\laigter-cli).
+- **src\mapsmake.h** (uwview.c level_build, after extract_missing): when <data>\laigter has neither made.txt nor
+  walls\000_n.png and <root>\laigter\laigter-cli(.exe) is there, the game runs it and waits. Our own dist\UW1
+  (maps on the disk, no made.txt) is left alone. In a flat folder the maps go to uwr\laigter (data_dirs).
+- **Proof** (tools\cmp_map_pixels.py): 13,227 maps, 0 pixels different from data\laigter, by --uwr, --uwr-game, the
+  Linux program under WSL, and the game's own first run on Windows (hidden: "first run: making the relief maps",
+  "made", level 2 loaded; a second start makes nothing), and the Linux game's own first run under WSL Ubuntu
+  24.04 (work\announce\linux_firstrun.sh: the package on the distro's own disk, the same two lines, level 2
+  loaded, llvmpipe). Not run on a real Linux Mint machine.
+- **tools\makepublic.py NAME** -> release\NAME\uwr: the public download from dist\UW1 by named files only, with
+  laigter\, the texts of tools\public\ and VERSION.txt. No game\, roms\, home\, llm\, data\ (so no maps, no
+  upscaled textures, nothing from the game's art), no nvngx_dlssnr.dll. It refuses uncommitted changes and anything
+  that looks like a game file, a ROM, a model or a picture. About 330 MB, of which DLSS 206 and Steam Audio 93.
+- Nothing is uploaded: a GitHub release needs the user's yes each time (a draft made 2026-11-16 was deleted on
+  their word). Announcement drafts: work\announce\ANNOUNCE-DRAFTS.md.
+- **The clean build of 2026-11-16** (uo-new 6fe669e, underworld-exhumed 45a30dd; the working tree clean): every
+  program made again from the committed source (portwin32.py, laigter-cli's build.cmd, build_laigter_linux.py,
+  portlinux.py, buildview_linux.py, makelinuxdist.py, makedist.py: logs in work\announce\clean), dist\UW1 refreshed,
+  release\uwr-preview-2026-11-16d\uwr made by makepublic.py. Checked: dist\UW1\uwr.exe starts and loads a saved
+  game (hidden, a home of its own; its own maps left alone); the package's first run on Windows and under WSL; no
+  file of the package is the same as any file of game\, roms\, dist's data\ or home\ (work\announce\scan_package.py:
+  16,649 files hashed, 0 the same), and it holds no picture.
+- **uw-original.exe no longer links** (`portwin32.py --original`: port_hunter_setting, port_sound_volumes and other
+  port_* of uw-new are undefined in the untouched tree): dist's is still the build of 2026-11-10, and the public
+  package leaves it out. Open.

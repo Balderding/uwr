@@ -14,6 +14,7 @@ void uwaudio_listener(float x, float y, float z, float yaw);
 void uwaudio_event(int kind, float x, float y, float z, int fx, int vol);
 int  uwaudio_rendered(int fx, int vel);   /* 1 once effect fx is rendered at velocity vel (the checks) */
 void uwaudio_shutdown(void);
+void uwaudio_game_dir(const char *dir);   /* the game's own folder (its SOUND\), before uwaudio_init: read when data\sound is not there */
 int  uwaudio_on(void);
 unsigned long long uwaudio_taken(void);   /* bit n: effect n is ours to play now (the game's copy to be silent) */
 void uwaudio_volume(float gain);          /* the menu's Sound volume, 0..1 */

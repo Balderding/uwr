@@ -1,0 +1,16 @@
+EnhanceHeight 	250
+EnhanceSoft 	2
+BumpHeight 	80
+BumpDistance	6
+BumpSoft 	2
+BumpCut 	1
+OcclusionDistanceMode 	1
+OcclusionThresh 	30
+OcclusionDistance 	4
+OcclusionContrast 	600
+OcclusionBright 	85
+OcclusionBlur 	1
+ParallaxType	1
+HeightMapContrast 	1500
+HeightMapBrightness 	40
+ParallaxSoft 	2

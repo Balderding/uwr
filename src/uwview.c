@@ -19,6 +19,7 @@
 #include "render.h"
 #include "base.h"
 #include "extract.h"
+#include "mapsmake.h"
 #include "lights.h"
 #include "world.h"
 #include "models.h"
@@ -393,8 +394,21 @@ UWV_API void uwv_game_dir(const char *dir) { snprintf(game_dir, sizeof game_dir,
 static void data_dirs(char *data, char *game)
 {
     const char *e = getenv("UWVIEW_DATA");
+    /* a flat folder (the user, 2026-11-16: the program beside the game's own UW.EXE, no game\ folder): our own files
+       are in uwr\, so that nothing of ours lands in the game's DATA\ (uwfront.c's uwf_our_data makes the same choice) */
+    static int is_flat = -1;
+    if (is_flat < 0 && root[0]) {
+        static const char *const old_way[2] = {"game\\UW.EXE", "game\\uw.exe"}, *const flat[2] = {"UW.EXE", "uw.exe"};
+        char p[MAX_PATH + 16];
+        is_flat = 0;
+        snprintf(p, sizeof p, "%s\\%s", root, old_way[0]);
+        bool old = file_exists(p);
+        if (!old) snprintf(p, sizeof p, "%s\\%s", root, old_way[1]), old = file_exists(p);
+        if (!old)
+            for (int k = 0; k < 2 && !is_flat; k++) snprintf(p, sizeof p, "%s\\%s", root, flat[k]), is_flat = file_exists(p);
+    }
     if (e && *e) snprintf(data, MAX_PATH, "%s", e);
-    else snprintf(data, MAX_PATH, "%s\\data", root);
+    else snprintf(data, MAX_PATH, "%s\\%s", root, is_flat > 0 ? "uwr" : "data");
     snprintf(game, MAX_PATH, "%s", game_dir);
     ui_game_dir(game);   /* (ui_start's fonts, when data\ui\fonts has none: the test build's data folder) */
 }
@@ -416,7 +430,18 @@ static bool level_build(int n)
     data_dirs(data, game);
     if (!arena_ready) {
         arena_init((size_t)1024 << 20);
-        extract_missing(data, game);
+        /* the game's own files are not extracted onto the disk (the user, 2026-11-16): what extract_missing makes is
+           kept in memory, this run's; a file on the disk under data\ is someone's own and is read first.
+           UWVIEW_EXTRACT_TO_DISK=1: written out as before (the tools that work on the loose files) */
+        {
+            const char *e = getenv("UWVIEW_EXTRACT_TO_DISK");
+            int made;
+            size_t bytes = 0;
+            if (!(e && *e && *e != '0')) file_memory_root(data);
+            made = extract_missing(data, game);
+            fprintf(stderr, "uwview: the game's files read: %d made, %d kept in memory (%zu KB)\n", made, file_memory_count(&bytes), bytes >> 10);
+        }
+        maps_make_if_missing(root, data, game);   /* the first run of a package without our relief maps (mapsmake.h) */
         models_load(game);   /* the original's 3D models (game\UW.EXE), for world_model_quads */
         lv_mark = arena_mark();
         arena_ready = true;
@@ -969,17 +994,24 @@ static bool light_table_read;
 static void read_light_table(void)
 {
     char data[MAX_PATH], game[MAX_PATH], p[MAX_PATH], line[256];
+    if (!arena_ready) return;   /* (file_read's arena: after the first level is built) */
     light_table_read = true;
     data_dirs(data, game);
     snprintf(p, sizeof p, "%s\\objects\\lights.txt", data);
-    FILE *f = fopen(p, "r");
-    if (!f) return;
-    while (fgets(line, sizeof line, f)) {
+    size_t mark = arena_mark();
+    Bytes f = file_read(p);   /* (the disk's, or the one kept in memory) */
+    for (size_t at = 0; at < f.size;) {
+        size_t n = 0;
+        while (at < f.size && f.data[at] != '\n') {
+            if (n + 1 < sizeof line) line[n++] = (char)f.data[at];
+            at++;
+        }
+        at++, line[n] = 0;
         int item, dur, bright;
         if (sscanf(line, "light %d %d %d", &item, &dur, &bright) == 3 && item >= 0x90 && item <= 0x9F)
             light_bright[item - 0x90] = (u8)(bright < 0 ? 0 : bright > 15 ? 15 : bright);
     }
-    fclose(f);
+    arena_reset(mark);
 }
 static Light burning[256];
 static int nburning;

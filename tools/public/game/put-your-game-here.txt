@@ -1,0 +1,17 @@
+Put your own copy of Ultima Underworld: The Stygian Abyss here.
+
+Copy these from the folder that holds UW.EXE:
+
+    UW.EXE
+    CRIT\
+    CUTS\
+    DATA\
+    SOUND\
+
+so that this folder holds game\UW.EXE, game\DATA\LEV.ARK and so on.
+
+On Linux the names must be in lower case (uw.exe, data/lev.ark ...).
+
+The game was made against the UW.EXE of 16 June 1993 (547,248 bytes). Other versions are untried.
+
+Nothing in this folder is changed by uwr: saved games go in home\.

@@ -40,11 +40,98 @@ size_t arena_mark(void) { return g_arena_used; }
 void arena_reset(size_t mark) { g_arena_used = mark; }
 size_t arena_used(void) { return g_arena_used; }
 
+/* --- files kept in memory (base.h) --- */
+typedef struct {
+    char *key;   /* the path, lower case, '\\' for every separator */
+    u8 *data;
+    size_t n;
+} MemFile;
+static MemFile *g_mem;          /* open addressing, g_mem_cap a power of two */
+static size_t g_mem_cap, g_mem_n, g_mem_bytes;
+static char g_mem_root[1024];   /* normalised as the keys, ending in '\\'; empty: nothing kept in memory */
+
+static void mem_key(const char *path, char *out, size_t n) {
+    size_t i = 0;
+    for (; path[i] && i + 1 < n; i++) {
+        char c = path[i];
+        out[i] = c == '/' ? '\\' : (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c;
+    }
+    out[i] = 0;
+}
+static size_t mem_hash(const char *k) {
+    size_t h = 1469598103934665603ull;
+    for (; *k; k++) h = (h ^ (u8)*k) * 1099511628211ull;
+    return h;
+}
+static MemFile *mem_slot(const char *key) {   /* the file's slot, or the empty one it would take */
+    size_t i = mem_hash(key) & (g_mem_cap - 1);
+    while (g_mem[i].key && strcmp(g_mem[i].key, key)) i = (i + 1) & (g_mem_cap - 1);
+    return &g_mem[i];
+}
+static const MemFile *mem_find(const char *path) {
+    char key[1024];
+    if (!g_mem_n) return NULL;
+    mem_key(path, key, sizeof key);
+    const MemFile *m = mem_slot(key);
+    return m->key ? m : NULL;
+}
+static bool mem_put(const char *path, const void *data, size_t n) {
+    char key[1024];
+    mem_key(path, key, sizeof key);
+    if ((g_mem_n + 1) * 2 > g_mem_cap) {   /* grow: at most half full */
+        MemFile *old = g_mem;
+        size_t oc = g_mem_cap;
+        g_mem_cap = oc ? oc * 2 : 16384;
+        g_mem = calloc(g_mem_cap, sizeof *g_mem);
+        if (!g_mem) fatal("no memory for the files kept in memory");
+        for (size_t i = 0; i < oc; i++)
+            if (old[i].key) *mem_slot(old[i].key) = old[i];
+        free(old);
+    }
+    MemFile *m = mem_slot(key);
+    u8 *copy = malloc(n ? n : 1);
+    if (!copy) return false;
+    memcpy(copy, data, n);
+    if (m->key) g_mem_bytes -= m->n, free(m->data);
+    else {
+        size_t kl = strlen(key) + 1;
+        if (!(m->key = malloc(kl))) return free(copy), false;
+        memcpy(m->key, key, kl);
+        g_mem_n++;
+    }
+    m->data = copy, m->n = n, g_mem_bytes += n;
+    return true;
+}
+void file_memory_root(const char *dir) {
+    mem_key(dir ? dir : "", g_mem_root, sizeof g_mem_root - 1);
+    size_t n = strlen(g_mem_root);
+    while (n && g_mem_root[n - 1] == '\\') g_mem_root[--n] = 0;
+    if (n) g_mem_root[n] = '\\', g_mem_root[n + 1] = 0;
+}
+bool file_in_memory_root(const char *path) {
+    char key[1024];
+    if (!g_mem_root[0]) return false;
+    mem_key(path, key, sizeof key);
+    return !strncmp(key, g_mem_root, strlen(g_mem_root));
+}
+int file_memory_count(size_t *bytes) {
+    if (bytes) *bytes = g_mem_bytes;
+    return (int)g_mem_n;
+}
+
 Bytes file_read(const char *path) {
     Bytes b = {0};
     char pb[1024];
     FILE *f = fopen(OS_PATH(path, pb), "rb");
-    if (!f) return b;
+    if (!f) {
+        const MemFile *m = mem_find(path);   /* not on the disk: ours in memory */
+        if (m && m->n) {
+            u8 *p = arena_alloc(m->n + 1);
+            memcpy(p, m->data, m->n);
+            b.data = p, b.size = m->n;
+        }
+        return b;
+    }
     fseek(f, 0, SEEK_END);
     long n = ftell(f);
     fseek(f, 0, SEEK_SET);
@@ -63,6 +150,7 @@ bool (*g_write_hook)(const char *path, const void *data, size_t n);
 
 bool file_write(const char *path, const void *data, size_t n) {
     if (g_write_hook) return g_write_hook(path, data, n);
+    if (file_in_memory_root(path)) return mem_put(path, data, n);
     char pb[1024];
     FILE *f = fopen(OS_PATH(path, pb), "wb");
     if (!f) return false;
@@ -74,7 +162,7 @@ bool file_exists(const char *path) {
     char pb[1024];
     FILE *f = fopen(OS_PATH(path, pb), "rb");
     if (f) fclose(f);
-    return f != NULL;
+    return f != NULL || mem_find(path) != NULL;
 }
 
 void logf_(const char *fmt, ...) {

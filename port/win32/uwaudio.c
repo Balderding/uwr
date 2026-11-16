@@ -370,6 +370,25 @@ static int read_file(const char *path, unsigned char **out, long *len, long most
     return *len == n;
 }
 
+/* The game's own folder (uwaudio_game_dir, the front end's before uwaudio_init). The game's files are no longer
+   extracted onto the disk (the user, 2026-11-16), so data\sound\sounds.dat and uw.mt (plain copies of the game's
+   SOUND\SOUNDS.DAT and UW.MT) may not be there: the game's own are read then, the folder and the name in either case. */
+static char game_dir_set[1024];
+void uwaudio_game_dir(const char *dir) { snprintf(game_dir_set, sizeof game_dir_set, "%s", dir ? dir : ""); }
+static int read_game_sound(const char *upper, const char *lower, unsigned char **out, long *len, long most)
+{
+    static const char *const dirs[2] = { "SOUND", "sound" };
+    char p[1100];
+    int d, k;
+    if (!game_dir_set[0]) return 0;
+    for (d = 0; d < 2; d++)
+        for (k = 0; k < 2; k++) {
+            snprintf(p, sizeof p, "%s" UWOS_SEP "%s" UWOS_SEP "%s", game_dir_set, dirs[d], k ? lower : upper);
+            if (read_file(p, out, len, most)) return 1;
+        }
+    return 0;
+}
+
 /* Munt opened as UW's MT32MPU.ADV opens the unit (the runtime's mt32.c reset_synth / init_synth: the channel map,
    the partial reserve, the reverb) and the rendering started; 0 (with the reason logged) leaves the effects to the
    music driver as before */
@@ -395,13 +414,14 @@ static int mt_start(const char *datadir)
 #undef GET
     if (!why) {
         snprintf(p, sizeof p, "%s" UWOS_SEP "sound" UWOS_SEP "sounds.dat", datadir ? datadir : ".");
-        if (!read_file(p, &sd, &sdlen, sizeof M.sounds) || sdlen < 1 || 1 + sd[0] * 5 > sdlen) why = "no SOUND\\SOUNDS.DAT";
+        if (!read_file(p, &sd, &sdlen, sizeof M.sounds) && !read_game_sound("SOUNDS.DAT", "sounds.dat", &sd, &sdlen, sizeof M.sounds)) why = "no SOUND\\SOUNDS.DAT";
+        else if (sdlen < 1 || 1 + sd[0] * 5 > sdlen) why = "no SOUND\\SOUNDS.DAT";
         else memcpy(M.sounds, sd, (size_t)sdlen), M.nsounds = sd[0] > 64 ? 64 : sd[0];
         free(sd);
     }
     if (!why) {
         snprintf(p, sizeof p, "%s" UWOS_SEP "sound" UWOS_SEP "uw.mt", datadir ? datadir : ".");
-        if (!read_file(p, &M.mt, &M.mtlen, 1 << 20)) why = "no SOUND\\UW.MT";
+        if (!read_file(p, &M.mt, &M.mtlen, 1 << 20) && !read_game_sound("UW.MT", "uw.mt", &M.mt, &M.mtlen, 1 << 20)) why = "no SOUND\\UW.MT";
     }
     if (!why) {
         M.ctx = M.mt32emu_create_context(NULL, NULL);

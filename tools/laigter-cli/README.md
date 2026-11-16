@@ -29,8 +29,8 @@ History, the proof and the user's choices of settings: NOTES.md, "Laigter normal
 tools\laigter-cli\build.cmd
 ```
 
-It loads `O:\appsnotonc\llvm\env.cmd`, compiles our `src\base.c` and `src\png.c` (the engine's own PNG reader) into
-`build\laigter-obj\`, and compiles `laigter_cli.cpp` with `clang++ -std=c++17 -O3 -ffp-contract=off`. The flag turns
+It loads `O:\appsnotonc\llvm\env.cmd`, compiles our `src\base.c` and `src\png.c` (the engine's own PNG reader) and
+`src\gr.c`, `audio.c`, `conv.c`, `extract.c` (the engine's extractor, for `--uwr-game`) into `build\laigter-obj\`, and compiles `laigter_cli.cpp` with `clang++ -std=c++17 -O3 -ffp-contract=off`. The flag turns
 off fused multiply-add, so the floating-point math rounds as Laigter's does. The program is linked statically into
 `build\laigter-cli.exe`.
 
@@ -59,6 +59,36 @@ build\laigter-cli.exe -d <file|folder|a,b,c> [-n] [-c] [-o] [-p] [-r X.preset] [
 Only `.png` files are read. A picture under 3 pixels across is skipped with a message, because Laigter's slopes would
 read past its edge. The program ends with "N pictures made, N skipped, N failed, T s", and the exit code is 1 if any
 picture failed.
+
+The Linux program is cross-built by `tools\build_laigter_linux.py` into `build\linux\laigter-cli` (the same
+sources and switches; libstdc++ linked in).
+
+`thirdparty\CImg.h` (CImg 2.9.1, CeCILL-C) is not in the public repository: take it from Laigter 1.14.0's own
+source, https://github.com/azagaya/laigter (`thirdparty/CImg.h`).
+
+## Every map in one run (uwr_maps.inc)
+
+Ours, not Laigter's. Two more ways to start the program, which make every map uwr's renderer reads:
+
+```
+laigter-cli --uwr DATA [PRESETS] [-j N]            from loose pictures (DATA\textures, sprites, ui) into DATA\laigter
+laigter-cli --uwr-game GAME OUT [PRESETS] [-j N]   from the player's own game files into OUT\laigter
+```
+
+- `--uwr-game` is what the game runs on its first start when it has no maps (`src\mapsmake.h`, called from
+  uwview.c's level_build). It unpacks the game's pictures with the engine's own extractor into
+  `OUT\laigter\unpack-tmp`, makes the maps, and removes the unpacked pictures: only the maps stay on the disk.
+  `OUT\laigter\made.txt` is written last, so a run cut short is made again.
+- PRESETS is the folder of the `.preset` files; the default is the program's own folder.
+- The steps are make-normals.cmd's below. For the walls and floors, the two Python steps that followed it
+  (`tools\upsize_normals.py`: the normal map enlarged 4 times by Pillow's bicubic curve wrapped round the tile;
+  `tools\make_soft_maps.py` variant A: the soft height and occlusion maps) are ported into the program, so a
+  player needs no Python.
+- Proved 2026-11-16 with `tools\cmp_map_pixels.py A B` (every PNG decoded and compared): all 13,227 maps made by
+  `--uwr`, by `--uwr-game`, by the Linux program under WSL, and by the game's own first run are the same, pixel
+  for pixel, as the maps in `data\laigter` made by make-normals.cmd and the two Python scripts (0 pixels
+  different). The files themselves differ (this program writes PNGs without compression).
+- About 10 seconds on the machine it was written on (36 threads).
 
 ## make-normals.cmd
 
@@ -108,7 +138,9 @@ The three presets:
 | --- | --- | --- |
 | `texture.preset` | EnhanceHeight 275, EnhanceSoft 2.6, BumpHeight 80, BumpDistance 32, BumpSoft 4.1, BumpCut 1 | Walls and floors. Halfway between Laigter's defaults and pixelart, the blurs 25% under halfway (chosen by the user, 2026-11-10). |
 | `pixelart.preset` | EnhanceHeight 300, EnhanceSoft 1, BumpHeight 60, BumpDistance 3, BumpSoft 1, BumpCut 1 | A short bevel and little blur, for 16 px pictures. Laigter's defaults made each one a smooth dome. |
-| `sprite_op.preset` | pixelart's six lines, plus OcclusionDistanceMode 1, OcclusionDistance 6, OcclusionBlur 1, ParallaxType 1 (HeightMap), HeightMapContrast 2500, HeightMapBrightness 40, ParallaxSoft 1 | Sprites and effects (chosen by the user, 2026-11-12). |
+| `sprite_op.preset` | pixelart's six lines, plus OcclusionDistanceMode 1, OcclusionDistance 6, OcclusionBlur 1, ParallaxType 1 (HeightMap), HeightMapContrast 2500, HeightMapBrightness 40, ParallaxSoft 1 | Doors, wall and flat objects, effects (chosen by the user, 2026-11-12). Creatures and items used it until 2026-11-16. |
+| `item.preset` | `creature.preset` with EnhanceHeight 400 (N4), OcclusionContrast 1000 and OcclusionBright 60 (A4), HeightMapContrast 3000, HeightMapBrightness 0, ParallaxSoft 1 (row 10); run with `--occlusion-thresh-median`. Sheets: `work\laigter\items16b`, `items16c` | Items (`data\sprites\objects`), chosen by the user 2026-11-16 as row 10 of the sheets in `work\laigter\items16b`. They had `creature.preset` for an hour before that. |
+| `creature.preset` | EnhanceHeight 250, EnhanceSoft 2, BumpHeight 80, BumpDistance 6, BumpSoft 2, BumpCut 1, OcclusionThresh 30, OcclusionDistance 4, OcclusionContrast 600, OcclusionBright 85, OcclusionBlur 1, HeightMap contrast 1500, brightness 40, ParallaxSoft 2; run with `--occlusion-thresh-median` | Creatures (`data\sprites\creatures`) and, since the same day, items (`data\sprites\objects`; old maps in `work\laigter_backup_2026-11-16_object_maps`, sheets in `work\laigter\items16`); chosen by the user 2026-11-16 as "B" from the sheets in `work\laigter\npc16`. The old maps are in `work\laigter_backup_2026-11-16_creature_maps`. |
 
 ## The code (laigter_cli.cpp)
 

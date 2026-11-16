@@ -1,0 +1,8 @@
+Optional: Roland CM-32L ROM files, for the Roland MT-32 music and effects.
+
+Put your own two files here, with these names:
+
+    cm32l_ctrl_1_02.rom     (65,536 bytes)
+    cm32l_pcm.rom           (1,048,576 bytes)
+
+They are not included and uwr does not download them. Without them the game plays its other sound.
