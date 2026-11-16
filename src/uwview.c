@@ -152,6 +152,7 @@ static void read_settings(const char *path)
         else if (!strcmp(key, "hdr_peak")) render_set_hdr_levels(v, render_hdr_paper());   /* nits; 0 the monitor's own */
         else if (!strcmp(key, "hdr_paper_white")) render_set_hdr_levels(render_hdr_peak_setting(), v);   /* nits (200) */
         else if (!strcmp(key, "object_shadows")) render_set_object_shadows(v != 0);
+        else if (!strcmp(key, "flame_breath")) render_set_breath_depth(v);   /* the fires' slow breath, 0-0.4 (0.20) */
         else if (!strcmp(key, "campfire_swell")) render_set_campfire_depth(v);   /* the campfires' own swell, 0-0.6 (0.35) */
         else if (!strcmp(key, "flame_swell")) render_set_puff_depth(v);   /* the fires' coherent swell, 0-0.5 */   /* objects, creatures, doors */                 /* uw.exe's: the vertical field of view, degrees */   /* uw.exe's: how fast the mouse turns the view */
         else if (!strcmp(key, "invert_mouse")) S.invert_mouse = (int)v;   /* tiles a bounce ray goes (8) */
@@ -222,6 +223,8 @@ static void settings_env(void)
     if (e && *e) S.dlss5 = atoi(e) != 0;
     e = getenv("UWVIEW_PUFF");           /* the flame's coherent swell (the checks) */
     if (e && *e) render_set_puff_depth((float)atof(e));
+    e = getenv("UWVIEW_BREATH");         /* the fires' slow breath (the checks) */
+    if (e && *e) render_set_breath_depth((float)atof(e));
     e = getenv("UWVIEW_CAMPFIRE");       /* the campfires' swell (the checks) */
     if (e && *e) render_set_campfire_depth((float)atof(e));
     e = getenv("UWVIEW_ADAPT");          /* the eye's adaptation to firelight, 0..1 (the checks) */
@@ -2805,6 +2808,18 @@ UWV_API int uwv_option(int id, int step, char *value, int n)
         if (step) render_set_object_shadows(!render_object_shadows()), settings_save("object_shadows", render_object_shadows() ? "1" : "0");
         snprintf(value, (size_t)n, "%s", render_object_shadows() ? "On" : "Off");
         return 1;
+    case 61: {  /* Fire breathing (the user 2026-11-16): the fires' slow breath now and then, Off then 10 to 40 % */
+        int pc = (int)(render_breath_depth() * 100.0f + 0.5f);
+        if (step) {
+            pc += step > 0 ? 10 : -10;
+            pc = pc < 0 ? 0 : pc > 40 ? 40 : pc;
+            render_set_breath_depth((float)pc / 100.0f);
+            snprintf(t, sizeof t, "%.2f", render_breath_depth()), settings_save("flame_breath", t);
+        }
+        if (pc <= 0) snprintf(value, (size_t)n, "Off");
+        else snprintf(value, (size_t)n, "%d%%", pc);
+        return 1;
+    }
     case 50: {  /* Joint shadows (AO, the user 2026-11-14): the walls' and floors' occlusion maps, Off then 25 to 200 % */
         int pc = (int)(S.texture_ao * 100.0f + 0.5f);
         if (step) {

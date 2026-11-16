@@ -894,7 +894,7 @@ void render_set_lights(const Light *l, int n, const u32 *tiles)
     memcpy(V.placed, l, sizeof(Light) * (size_t)V.nplaced);
     for (int i = 0; i < V.nplaced; i++) {
         GpuLight *g = &lp[1 + i];
-        memcpy(g->pr, l[i].pos, 12), g->pr[3] = l[i].range;
+        memcpy(g->pr, l[i].pos, 12), g->pr[3] = l[i].range * RENDER_LIGHT_REACH;
         for (int j = 0; j < 3; j++) g->col[j] = l[i].color[j] * l[i].intensity;
         g->col[3] = 1;
         g->info[0] = 0;

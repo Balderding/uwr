@@ -134,11 +134,14 @@ static const float LIGHTDAT[16] = {1.000, 0.934, 0.885, 0.826, 0.764, 0.710, 0.6
 // and the bounced light with it (the light's range); no cell steps (the original's whole-cell cut-off left the
 // floor ending in a hard line before the walls). dh: the distance across the floor.
 static const float TORCH_REACH = 3.0;
+// every light reaches 10% less far (the user, 2026-11-16): the player's light here (its level's reach x this), the
+// placed and burning lights where their range is handed over (render.h's RENDER_LIGHT_REACH, the same number)
+static const float LIGHT_REACH = 0.9;
 float original_light(float d3, float dh, uint level) {
     // level 0, no light carried: the player's eyes (the user, 2026-11-11), a fifth shorter: 2.4 tiles, not 3
     if ((level & 7) == 0) { d3 *= 1.25; dh *= 1.25; }
     float4 s = SHADES[level & 7];
-    float R = s.w;   // the original's reach for the light level (SHADES.DAT's curvrad: 3 3 4 4 5 6 7 7 tiles; a torch 4)
+    float R = s.w * LIGHT_REACH;   // the original's reach for the light level (SHADES.DAT's curvrad: 3 3 4 4 5 6 7 7 tiles; a torch 4)
     if (dh >= R) return 0;
     float shade = min(max(0, 8 * d3 * s.x / 64 + s.z) + s.y, 15);
     uint i = min((uint)shade, 14);
@@ -223,7 +226,7 @@ float reach_window(float3 p) {
         if (k == NO_LIGHT - 1) continue;
         if (k == 0 && lights[0].col.w > 1.5 && rtlim.w < 0) { r = 1; continue; }   // full bright: everywhere
         if (k == 0 && lights[0].col.w > 1.5) {   // the player's light: 3 tiles across the floor from the eye, as it lights
-            float R = SHADES[(uint)(lights[0].col.w - 2) & 7].w;   // its level's reach, as it lights
+            float R = SHADES[(uint)(lights[0].col.w - 2) & 7].w * LIGHT_REACH;   // its level's reach, as it lights
             r = max(r, 1 - smoothstep(R - 0.75, R, length(p.xz - lights[0].col.xz)));
             continue;
         }

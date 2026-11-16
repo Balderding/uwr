@@ -120,10 +120,39 @@ void render_set_puff_depth(float d) { g_puff_depth = d < 0 ? 0 : d > 0.5f ? 0.5f
  * 0.35: the light about half as bright again at a puff's crest and half at its neck); the torches keep flame_swell */
 static float g_camp_depth = 0.35f;
 void render_set_campfire_depth(float d) { g_camp_depth = d < 0 ? 0 : d > 0.6f ? 0.6f : d; }
+/* the flame's slow breath (the user, 2026-11-16: "a deeper slow breathing ... once in a while"). What is measured
+ * of real flames: besides the puffing (f = 1.5 / sqrt(D), Cetegen and Ahmed 1993) their light carries slow, aperiodic
+ * changes below about 1 Hz, from the flame's shape changing with the air round it and the fuel reaching it (a lull
+ * starves it: shorter, dimmer, cooler; a fresh pocket of fuel flares). So not a steady pulse: now and then, each flame
+ * at its own times, one swell 3 to 6 s long, two in three a sag and one a flare; about half of every 9 s has none.
+ * Returns -1 (the deepest sag) .. 0.6 (a flare); render_flame takes g_breath_depth of it (settings flame_breath, the
+ * Esc menu's Fire breathing row; UWVIEW_BREATH for checks), a campfire half as much again, a candle's or a lantern's
+ * flame a quarter (sheltered, small) */
+static float g_breath_depth = 0.20f;
+void render_set_breath_depth(float d) { g_breath_depth = d < 0 ? 0 : d > 0.4f ? 0.4f : d; }
+float render_breath_depth(void) { return g_breath_depth; }
+static float flame_breath(float t, float seed) {
+    float u = t / 9.0f + seed * 17.0f, b = 0;
+    for (int k = -1; k <= 0; k++) {   /* (a swell begun in the window before can still be running) */
+        float w = floorf(u) + (float)k;
+        unsigned h = (unsigned)(long long)w * 2654435761u ^ (unsigned)(seed * 1e6f) * 40503u;
+        h ^= h >> 15, h *= 2246822519u, h ^= h >> 13, h *= 3266489917u, h ^= h >> 16;
+        if ((h & 0xFF) >= 128) continue;
+        float start = w + (float)((h >> 8) & 0xFF) / 255.0f, len = (3.0f + 3.0f * (float)((h >> 16) & 0xFF) / 255.0f) / 9.0f;
+        float x = (u - start) / len;
+        if (x <= 0 || x >= 1) continue;
+        float s = sinf(3.14159265f * x);
+        b += (((h >> 24) % 3) ? -1.0f : 0.6f) * s * s;
+    }
+    return b < -1 ? -1 : b > 0.6f ? 0.6f : b;
+}
 static void render_flame(GpuLight *g, const float base[3], float D, float Q, float Tmax, float seed, const float vel[2], float t,
                          float scale) {
     float f = 1.5f / sqrtf(D), L = 0.235f * powf(Q, 0.4f) - 1.02f * D;
     if (L < 2.0f * D) L = 2.0f * D;
+    /* its slow breath (flame_breath): the flame shorter, dimmer and cooler in a sag, the other way in a flare */
+    float br = g_breath_depth * (D >= 0.4f ? 1.5f : D < 0.03f ? 0.25f : 1.0f) * flame_breath(t, seed);
+    L *= 1.0f + 0.5f * br, Tmax += 150.0f * br, scale *= 1.0f + br;
     /* the mean sum of the emissions over a period (the puffs evenly spaced in phase) */
     float mean = 0;
     for (int s = 0; s < 64; s++) {
@@ -1095,7 +1124,7 @@ void render_set_lights(const Light *l, int n, const u32 *tiles) {
     memcpy(R.placed, l, sizeof(Light) * (size_t)R.nplaced);
     for (int i = 0; i < R.nplaced; i++) {
         GpuLight *g = &R.lights_ptr[1 + i];
-        memcpy(g->pr, l[i].pos, 12), g->pr[3] = l[i].range;
+        memcpy(g->pr, l[i].pos, 12), g->pr[3] = l[i].range * RENDER_LIGHT_REACH;
         for (int j = 0; j < 3; j++) g->col[j] = l[i].color[j] * l[i].intensity;
         g->col[3] = 1;
         g->info[0] = 0;

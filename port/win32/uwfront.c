@@ -1224,7 +1224,7 @@ static void inv_draw(void)
    renderer's by the DLL (uwv_option), the window's here */
 enum { MO_RESUME, MO_DISPLAY, MO_FULL, MO_SAVE, MO_LOAD, MO_NEW, MO_DLSS, MO_DLSS5, MO_STYLE, MO_RT, MO_BOUNCE, MO_SHADOWS, MO_RELIEF, MO_NSTR,
        MO_MUSIC, MO_MUSVOL, MO_SOUND, MO_FXVOL, MO_FADE, MO_MOUSE, MO_LLM, MO_FOV,
-       MO_PARTICLES, MO_DECALS, MO_WATER, MO_FOG, MO_FXAUDIO, MO_ACOUSTICS, MO_SMOOTH, MO_CONVFONT, MO_HUNTERS, MO_MENUFONT, MO_HRTF, MO_PANFIX, MO_RES, MO_DLSSMODE, MO_RR, MO_D5INT, MO_D5STR, MO_CHARSHEET, MO_LOGFONT, MO_ACWET, MO_ACSIZE, MO_ACOCCL, MO_ACDETOUR, MO_FOOTSTEPS, MO_FONT, MO_FONTSIZE, MO_QUIT, MO_TEXAO, MO_TEXSHADOW, MO_TEXRES, MO_LIGHTCOL, MO_ADAPT, MO_HDR, MO_HDRPEAK, MO_HDRPAPER, MO_RENDERER, MO_MAPNORMAL, MO_MAPAO, MO_MAPHEIGHT, MO_HEARRANGE, MO_FEETSPREAD, MO_ECHOQ, MO_STEPVOL, MO_STEPECHO, MO_AILEVEL, MO_AIBY, MO_AIP0, MO_AIP1, MO_AIP2, MO_AIP3, MO_AIP4, MO_AIP5, MO_AIP6, MO_COUNT, MO_HEAD = 98 };
+       MO_PARTICLES, MO_DECALS, MO_WATER, MO_FOG, MO_FXAUDIO, MO_ACOUSTICS, MO_SMOOTH, MO_CONVFONT, MO_HUNTERS, MO_MENUFONT, MO_HRTF, MO_PANFIX, MO_RES, MO_DLSSMODE, MO_RR, MO_D5INT, MO_D5STR, MO_CHARSHEET, MO_LOGFONT, MO_ACWET, MO_ACSIZE, MO_ACOCCL, MO_ACDETOUR, MO_FOOTSTEPS, MO_FONT, MO_FONTSIZE, MO_QUIT, MO_TEXAO, MO_TEXSHADOW, MO_TEXRES, MO_LIGHTCOL, MO_ADAPT, MO_HDR, MO_HDRPEAK, MO_HDRPAPER, MO_RENDERER, MO_MAPNORMAL, MO_MAPAO, MO_MAPHEIGHT, MO_HEARRANGE, MO_FEETSPREAD, MO_ECHOQ, MO_STEPVOL, MO_STEPECHO, MO_AILEVEL, MO_AIBY, MO_AIP0, MO_AIP1, MO_AIP2, MO_AIP3, MO_AIP4, MO_AIP5, MO_AIP6, MO_BREATH, MO_COUNT, MO_HEAD = 98 };
 /* the language model's files and the one in use (uwmindhost.c): the Language model row */
 int port_mind_models(const char **names, const char **paths, int max);
 void port_mind_pick(const char *path);
@@ -1365,6 +1365,7 @@ static const struct { int id; const char *label; int opt; const char *hint; } ME
     {MO_TEXAO, "Joint shadows (AO)", 50, "Darkness in the joints between the stones of walls and floors. Off: none."},
     {MO_TEXSHADOW, "Relief shadows", 51, "The stones cast small shadows of their own across walls and floors, from each light. Off: none."},
     {MO_LIGHTCOL, "Light colour", 31, "How the eye's adaptation to the fires' colour is worked out: CAT16 (CAM16's, the current standard) or Bradford."},
+    {MO_BREATH, "Fire breathing", 61, "Now and then a fire sags or flares for a few seconds, as real flames do when the air or the fuel changes. How deep."},
     {MO_ADAPT, "Light adaptation", 32, "How far the eye gets used to firelight. Automatic: as a torch-lit dungeon's light makes it (CAM16). 0% the fire's raw orange, 100% white."},
     {MO_HDR, "HDR output", 33, "On an HDR monitor (HDR on in Windows' display settings): fire and bright light go past white, up to the monitor's peak."},
     {MO_HDRPEAK, "HDR peak brightness", 34, "The brightest the highlights go, in nits. The monitor's: what it reports it reaches."},

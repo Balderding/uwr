@@ -51,6 +51,9 @@ typedef struct {
 } Look;
 
 /* the placed lights of a level and each tile's list of them (lights_tiles), at a level's load */
+/* every light reaches 10% less far (the user, 2026-11-16): a placed or burning light's range times this as the
+   renderer takes it; the player's light in common.hlsli (LIGHT_REACH, the same number) */
+#define RENDER_LIGHT_REACH 0.9f
 void render_set_lights(const Light *l, int n, const u32 *tiles);
 /* placed light k moved (it keeps the tiles render_set_lights gave it) */
 void render_set_light_pos(int k, const float pos[3]);
@@ -84,6 +87,8 @@ float render_hdr_peak_setting(void);
 float render_hdr_paper(void);
 void render_set_torch_motion(float vx, float vz);
 void render_set_puff_depth(float d);
+void render_set_breath_depth(float d);     /* the fires' slow breath now and then, 0-0.4 (0.20; 0 none) */
+float render_breath_depth(void);
 void render_set_campfire_depth(float d);   /* the campfires' own swell, 0-0.6 (0.35) */
 void render_set_torch_colour(const float rgb[3]);
 /* no light carried (the light level 0): the player's light steady, a point at the eye with no flame (the user) */
