@@ -1,4 +1,4 @@
-# uwr's settings as the public download starts: everything on (the user, 2026-11-16).
+# uwr's settings as the public download starts: everything on, each at its highest (the user, 2026-11-16).
 # Each of these has its row in the Esc menu, and what a machine cannot do is left out by the game itself:
 # no ray tracing or DLSS without a card that has them, no HDR without an HDR monitor, the plain sound when
 # OpenAL or Steam Audio cannot start.
@@ -10,6 +10,7 @@ dlss 1
 hdr 1
 normal_maps 1
 port_normal_strength 0.75
+texture_ao_strength 1
 texture_shadow 8
 object_shadows 1
 smooth_motion 1
@@ -17,13 +18,12 @@ light_adaptation auto
 fx_particles 1
 fx_decals 1
 fx_water 1
-fx_fog 2
 
 # sound
 fx_audio 1
 fx_hrtf 1
 fx_pan_fix 1
 fx_acoustics 2
-acoustics_quality 2
+acoustics_quality 3
 acoustics_detour 1
 fx_footsteps 1

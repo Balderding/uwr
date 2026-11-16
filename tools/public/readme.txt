@@ -26,7 +26,7 @@ The first start takes about ten seconds longer: the game makes its relief maps (
 sprites) from your copy's pictures, into data\laigter\. That happens once.
 
 Everything is switched on as it comes: the Vulkan renderer with ray tracing, DLSS and HDR, the effects (particles,
-water, fog), and the 3D sound with room acoustics. What your machine cannot do is left out by the game itself, and
+decals, water), and the 3D sound with room acoustics. What your machine cannot do is left out by the game itself, and
 each has its own row in the Esc menu to turn it off (data\settings.txt keeps your choices).
 There are no saved games in the package: the game starts at its menu.
 

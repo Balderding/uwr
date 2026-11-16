@@ -54,7 +54,7 @@ ray tracing, upscaled textures, relief maps and the effects on. Click a picture 
   DLSS Ray Reconstruction, HDR output. DLSS 5 exists in the Direct3D 12 renderer only and is not being carried on.
 - **Walls and floors.** The game's own textures, or upscaled to 256 / 512 pixels in the same colours; normal maps,
   joint shadows (AO) and relief shadows, with maps made at each texture size.
-- **Effects.** Particles, decals, water, fog and light shafts, firelight with the eye's adaptation.
+- **Effects.** Particles, decals, water, firelight with the eye's adaptation.
 - **Sound.** The Roland MT-32's own voices, placed in space (OpenAL Soft, headphone 3D); walls and doors muffle,
   rooms ring by their size, sound comes round corners; ray-traced echoes through the level's shape (Steam Audio);
   footsteps by the floor.
