@@ -1,0 +1,14 @@
+# two sequences, release while playing, restart
+reg O:/uw/uo-new/game/SOUND/UW02.XMI 0
+reg O:/uw/uo-new/game/SOUND/UW06.XMI 0
+start 0
+start 1
+at 900
+release 0
+at 1500
+status 1
+start 1
+at 2000
+stop 1
+start 1
+at 2600

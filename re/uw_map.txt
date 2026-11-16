@@ -1,0 +1,2218 @@
+# UW.EXE routines (tools/exe_map.py). file offset (segment:offset, or overlay stub + offset)
+#   callers / calls: counts; msg: strings block 1 messages it prints; items: object ids it compares
+# 1909 routines; 66 overlays; message printer 32a8:0494 (pushes before it: 96)
+
+003202 (0000:0002)  callers 6  calls 1
+003273 (0000:0073)  callers 0  calls 1
+    items: 40(a_rotworm)
+0032a6 (0000:00a6)  callers 6  calls 1
+    items: 40(a_rotworm)
+0032eb (0000:00eb)  callers 10  calls 1
+    items: 40(a_rotworm)
+003320 (0000:0120)  callers 1  calls 1
+    items: 40(a_rotworm)
+003355 (0000:0155)  callers 4  calls 1
+    items: 40(a_rotworm)
+00338b (0000:018b)  callers 4  calls 1
+    items: 40(a_rotworm)
+0033c2 (0000:01c2)  callers 0  calls 1
+    items: 40(a_rotworm)
+0033f9 (0000:01f9)  callers 1  calls 1
+    items: 40(a_rotworm)
+003429 (0000:0229)  callers 8  calls 0
+    items: 100(a_key)
+003530 (0000:0330)  callers 8  calls 7
+0036ec (004e:000c)  callers 1  calls 1
+00372a (004e:004a)  callers 6  calls 0
+00373a (004e:005a)  callers 2  calls 0
+0037e5 (004e:0105)  callers 1  calls 0
+0037f2 (004e:0112)  callers 1  calls 0
+0038b5 (004e:01d5)  callers 5  calls 0
+0038cf (004e:01ef)  callers 1  calls 2
+00393b (004e:025b)  callers 11  calls 0
+003948 (004e:0268)  callers 1  calls 2
+0039b1 (004e:02d1)  callers 0  calls 0
+003a6a (0086:000a)  callers 1  calls 0
+    items: 40(a_rotworm)
+003b00 (0090:0000)  callers 1  calls 0
+003b08 (0090:0008)  callers 1  calls 0
+003b10 (0090:0010)  callers 1  calls 0
+003b18 (0090:0018)  callers 1  calls 1
+003b28 (0090:0028)  callers 1  calls 1
+003b60 (0090:0060)  callers 1  calls 0
+003c21 (0090:0121)  callers 1  calls 2
+003f22 (0090:0422)  callers 1  calls 0
+003f3a (0090:043a)  callers 1  calls 0
+003fb9 (0090:04b9)  callers 1  calls 0
+003fd1 (0090:04d1)  callers 1  calls 4
+004546 (0090:0a46)  callers 1  calls 0
+004548 (0090:0a48)  callers 1  calls 0
+0045c8 (0090:0ac8)  callers 1  calls 0
+0045ec (0090:0aec)  callers 1  calls 0
+00460c (0090:0b0c)  callers 1  calls 0
+    items: 140(a_door)
+00465d (0090:0b5d)  callers 1  calls 1
+0046ec (0090:0bec)  callers 1  calls 0
+00482d (0090:0d2d)  callers 1  calls 0
+0049ff (0090:0eff)  callers 1  calls 1
+004a77 (0090:0f77)  callers 1  calls 0
+004b82 (0090:1082)  callers 1  calls 5
+    items: fb(a_Tym stone) ff(a_Ylem stone) 128(a_rock hammer)
+005a3a (0090:1f3a)  callers 1  calls 0
+00627f (0090:277f)  callers 1  calls 0
+0066ba (0090:2bba)  callers 1  calls 0
+0066d3 (0090:2bd3)  callers 1  calls 0
+0066fa (0090:2bfa)  callers 1  calls 0
+006711 (0090:2c11)  callers 1  calls 0
+006728 (0090:2c28)  callers 1  calls 0
+006736 (0090:2c36)  callers 1  calls 11
+006e25 (0090:3325)  callers 1  calls 0
+    items: ba(a_bottle of ale&bo)
+006e3f (0090:333f)  callers 1  calls 0
+006e57 (0090:3357)  callers 1  calls 2
+006e86 (0090:3386)  callers 2  calls 0
+006ec5 (0090:33c5)  callers 1  calls 1
+006ed4 (0090:33d4)  callers 1  calls 0
+006ee3 (0090:33e3)  callers 1  calls 0
+006efb (0090:33fb)  callers 1  calls 0
+006f1c (0090:341c)  callers 1  calls 0
+006f7a (0090:347a)  callers 1  calls 0
+006fc5 (0090:34c5)  callers 1  calls 2
+007104 (0090:3604)  callers 1  calls 2
+007299 (0090:3799)  callers 1  calls 3
+007464 (0090:3964)  callers 1  calls 0
+00747c (0090:397c)  callers 1  calls 0
+00753f (0090:3a3f)  callers 1  calls 1
+007566 (0090:3a66)  callers 1  calls 0
+007568 (0090:3a68)  callers 1  calls 2
+007586 (0090:3a86)  callers 1  calls 0
+00759b (0090:3a9b)  callers 1  calls 4
+0075ea (0090:3aea)  callers 1  calls 1
+0075ed (0090:3aed)  callers 1  calls 1
+0075fd (0090:3afd)  callers 2  calls 1
+00760f (0090:3b0f)  callers 1  calls 2
+007662 (0090:3b62)  callers 3  calls 2
+00769a (0090:3b9a)  callers 1  calls 2
+0076a1 (0090:3ba1)  callers 1  calls 1
+0076a4 (0090:3ba4)  callers 2  calls 0
+0076ee (0090:3bee)  callers 1  calls 1
+0076f1 (0090:3bf1)  callers 1  calls 2
+00773e (0090:3c3e)  callers 2  calls 0
+00779e (0090:3c9e)  callers 1  calls 1
+0077a3 (0090:3ca3)  callers 1  calls 0
+0077ae (0090:3cae)  callers 3  calls 0
+0077ff (0090:3cff)  callers 1  calls 0
+00782e (0090:3d2e)  callers 2  calls 0
+007842 (0090:3d42)  callers 1  calls 0
+007847 (0090:3d47)  callers 1  calls 1
+00790f (0090:3e0f)  callers 1  calls 0
+007a0e (0090:3f0e)  callers 2  calls 0
+007adc (0090:3fdc)  callers 2  calls 1
+007b3e (0090:403e)  callers 1  calls 1
+007b9c (0090:409c)  callers 1  calls 0
+007c34 (0090:4134)  callers 1  calls 2
+007cdc (0090:41dc)  callers 1  calls 1
+007d09 (0090:4209)  callers 1  calls 1
+007d3b (0090:423b)  callers 2  calls 1
+007d82 (0090:4282)  callers 1  calls 0
+007e8d (0090:438d)  callers 1  calls 3
+    items: 63(a_ghoul)
+007f62 (0090:4462)  callers 1  calls 0
+007fb2 (0090:44b2)  callers 1  calls 0
+007fcc (0090:44cc)  callers 1  calls 1
+007fe1 (0090:44e1)  callers 1  calls 2
+0084d0 (0090:49d0)  callers 1  calls 0
+008506 (0090:4a06)  callers 1  calls 1
+    items: 7a(a_wisp)
+008745 (0090:4c45)  callers 2  calls 0
+008774 (0090:4c74)  callers 4  calls 0
+008775 (0090:4c75)  callers 0  calls 1
+0087b1 (0090:4cb1)  callers 1  calls 1
+0087ed (0090:4ced)  callers 26  calls 1
+00885c (0090:4d5c)  callers 0  calls 1
+0088cb (0090:4dcb)  callers 25  calls 1
+00893a (0090:4e3a)  callers 0  calls 1
+0089a9 (0090:4ea9)  callers 1  calls 1
+0089e5 (0090:4ee5)  callers 0  calls 1
+008a2a (0090:4f2a)  callers 6  calls 1
+008a66 (0090:4f66)  callers 20  calls 1
+008aa2 (0090:4fa2)  callers 0  calls 1
+008ade (0090:4fde)  callers 1  calls 1
+008b20 (0090:5020)  callers 0  calls 1
+008b62 (0090:5062)  callers 0  calls 1
+008ba4 (0090:50a4)  callers 0  calls 1
+008be6 (0090:50e6)  callers 0  calls 1
+008c2d (0090:512d)  callers 0  calls 1
+008c74 (0090:5174)  callers 30  calls 1
+008cb3 (0090:51b3)  callers 1  calls 1
+008cef (0090:51ef)  callers 0  calls 1
+008d2e (0090:522e)  callers 1  calls 1
+008d74 (0090:5274)  callers 0  calls 1
+008dba (0090:52ba)  callers 11  calls 1
+008e14 (0090:5314)  callers 2  calls 1
+008e50 (0090:5350)  callers 5  calls 1
+008e8c (0090:538c)  callers 0  calls 1
+008ed3 (0090:53d3)  callers 0  calls 1
+008f18 (0090:5418)  callers 1  calls 1
+008f5d (0090:545d)  callers 0  calls 1
+008fa4 (0090:54a4)  callers 0  calls 1
+008feb (0090:54eb)  callers 27  calls 1
+009035 (0090:5535)  callers 0  calls 1
+00907f (0090:557f)  callers 1  calls 1
+0090bb (0090:55bb)  callers 2  calls 1
+009105 (0090:5605)  callers 0  calls 1
+00914f (0090:564f)  callers 0  calls 1
+0091a9 (0090:56a9)  callers 0  calls 1
+0091f3 (0090:56f3)  callers 0  calls 1
+009232 (0090:5732)  callers 0  calls 1
+009271 (0090:5771)  callers 0  calls 1
+0092bb (0090:57bb)  callers 17  calls 1
+00931e (0090:581e)  callers 3  calls 1
+009381 (0090:5881)  callers 2  calls 1
+0093e0 (0090:58e0)  callers 0  calls 1
+009415 (0090:5915)  callers 0  calls 1
+009474 (0090:5974)  callers 1  calls 1
+0094c1 (0090:59c1)  callers 1  calls 1
+009519 (0090:5a19)  callers 1  calls 1
+009532 (0090:5a32)  callers 1  calls 1
+009572 (0090:5a72)  callers 1  calls 0
+009575 (0090:5a75)  callers 1  calls 0
+009578 (0090:5a78)  callers 1  calls 0
+009581 (0090:5a81)  callers 1  calls 0
+009587 (0090:5a87)  callers 1  calls 0
+00958d (0090:5a8d)  callers 1  calls 0
+009590 (0090:5a90)  callers 1  calls 0
+009593 (0090:5a93)  callers 3  calls 0
+009596 (0090:5a96)  callers 1  calls 0
+009599 (0090:5a99)  callers 1  calls 0
+00959c (0090:5a9c)  callers 1  calls 0
+00959f (0090:5a9f)  callers 1  calls 0
+0095a2 (0090:5aa2)  callers 1  calls 0
+0095ab (0090:5aab)  callers 2  calls 0
+0095ae (0090:5aae)  callers 2  calls 0
+0095b1 (0090:5ab1)  callers 3  calls 0
+0095b4 (0090:5ab4)  callers 1  calls 0
+0095b7 (0090:5ab7)  callers 1  calls 0
+0095ba (0090:5aba)  callers 1  calls 0
+0095de (0090:5ade)  callers 1  calls 0
+00960b (0090:5b0b)  callers 4  calls 0
+00965d (0090:5b5d)  callers 1  calls 0
+009665 (0090:5b65)  callers 1  calls 4
+    items: 63(a_ghoul)
+009e50 (0090:6350)  callers 1  calls 1
+009f16 (0090:6416)  callers 1  calls 0
+00a047 (0090:6547)  callers 1  calls 2
+00a0d3 (06e7:0063)  callers 2  calls 0
+    items: ff(a_Ylem stone)
+00a13b (06e7:00cb)  callers 1  calls 2
+    items: ff(a_Ylem stone)
+00a1fd (06e7:018d)  callers 1  calls 0
+00a204 (06e7:0194)  callers 1  calls 6
+00a4cc (06e7:045c)  callers 1  calls 1
+00a5fe (06e7:058e)  callers 1  calls 1
+00a734 (06e7:06c4)  callers 1  calls 1
+00a868 (06e7:07f8)  callers 1  calls 1
+00a9a0 (06e7:0930)  callers 1  calls 1
+00aae1 (06e7:0a71)  callers 1  calls 6
+00acf1 (06e7:0c81)  callers 1  calls 4
+00ade0 (06e7:0d70)  callers 1  calls 1
+00ae2a (06e7:0dba)  callers 2  calls 1
+00aef8 (06e7:0e88)  callers 1  calls 0
+00af6e (06e7:0efe)  callers 2  calls 2
+00b0aa (06e7:103a)  callers 1  calls 2
+00b0c9 (06e7:1059)  callers 2  calls 1
+00b1c3 (06e7:1153)  callers 1  calls 3
+00b36e (06e7:12fe)  callers 1  calls 0
+00b3a2 (06e7:1332)  callers 1  calls 0
+00b3e0 (06e7:1370)  callers 2  calls 0
+00b58f (06e7:151f)  callers 2  calls 4
+00b81b (06e7:17ab)  callers 1  calls 21
+00cf3f (06e7:2ecf)  callers 1  calls 17
+00e0cb (06e7:405b)  callers 1  calls 1
+00e1d4 (06e7:4164)  callers 1  calls 1
+00e2e4 (06e7:4274)  callers 1  calls 1
+00e3f2 (06e7:4382)  callers 1  calls 2
+00e9f7 (06e7:4987)  callers 1  calls 7
+    items: 68(a_fighter)
+00ebb4 (06e7:4b44)  callers 1  calls 1
+00eee6 (06e7:4e76)  callers 3  calls 0
+00f0b0 (06e7:5040)  callers 4  calls 0
+00f0d9 (06e7:5069)  callers 3  calls 0
+00f106 (06e7:5096)  callers 1  calls 0
+00f12e (06e7:50be)  callers 2  calls 0
+00f148 (06e7:50d8)  callers 2  calls 0
+00f213 (06e7:51a3)  callers 1  calls 0
+00f27f (06e7:520f)  callers 2  calls 1
+00f36f (06e7:52ff)  callers 1  calls 0
+00f3e4 (06e7:5374)  callers 1  calls 0
+00f459 (06e7:53e9)  callers 2  calls 0
+00f496 (06e7:5426)  callers 2  calls 2
+00f5c1 (06e7:5551)  callers 2  calls 0
+00f5fe (06e7:558e)  callers 2  calls 2
+00f729 (06e7:56b9)  callers 2  calls 0
+00f766 (06e7:56f6)  callers 2  calls 2
+00f7b0 (06e7:5740)  callers 1  calls 0
+00f891 (06e7:5821)  callers 2  calls 1
+00f8a4 (06e7:5834)  callers 1  calls 2
+00f8ee (06e7:587e)  callers 15  calls 0
+00f96a (06e7:58fa)  callers 1  calls 1
+00f9a7 (06e7:5937)  callers 1  calls 0
+00f9ae (06e7:593e)  callers 1  calls 0
+00fa4c (06e7:59dc)  callers 1  calls 0
+00faf3 (06e7:5a83)  callers 1  calls 0
+00fb98 (06e7:5b28)  callers 1  calls 0
+00fbac (06e7:5b3c)  callers 1  calls 2
+010199 (06e7:6129)  callers 1  calls 5
+0102bb (06e7:624b)  callers 1  calls 1
+010436 (06e7:63c6)  callers 1  calls 1
+0105b5 (06e7:6545)  callers 1  calls 1
+010732 (06e7:66c2)  callers 1  calls 8
+    items: ff(a_Ylem stone) 1c0(some_blood)
+011b79 (06e7:7b09)  callers 1  calls 0
+011ba7 (06e7:7b37)  callers 1  calls 0
+011bad (06e7:7b3d)  callers 1  calls 0
+    items: ff(a_Ylem stone)
+011c2a (06e7:7bba)  callers 1  calls 1
+    items: ff(a_Ylem stone)
+011cfb (06e7:7c8b)  callers 1  calls 5
+    items: f0(an_In stone) ff(a_Ylem stone)
+011f63 (0ec5:0113)  callers 1  calls 1
+011f83 (0ec5:0133)  callers 2  calls 2
+011fc3 (0ec5:0173)  callers 1  calls 0
+012006 (0ec5:01b6)  callers 1  calls 0
+012033 (0ec5:01e3)  callers 2  calls 0
+    items: ff(a_Ylem stone)
+012076 (0ec5:0226)  callers 2  calls 2
+012099 (0ec5:0249)  callers 3  calls 1
+0120d0 (0ec5:0280)  callers 0  calls 0
+0120fd (0ec5:02ad)  callers 2  calls 3
+01214e (0ec5:02fe)  callers 29  calls 2
+01217c (0ec5:032c)  callers 8  calls 1
+0121a1 (0ec5:0351)  callers 2  calls 1
+012221 (0ec5:03d1)  callers 2  calls 2
+012260 (0ec5:0410)  callers 2  calls 3
+0122cd (0ec5:047d)  callers 18  calls 5
+01234d (0ec5:04fd)  callers 1  calls 1
+01239f (0ec5:054f)  callers 7  calls 2
+012425 (0ec5:05d5)  callers 3  calls 1
+012494 (0ec5:0644)  callers 1  calls 1
+0124cc (0ec5:067c)  callers 1  calls 0
+    items: 61(a_ghost) 62(a_fighter) 72(an_earth golem) 74(a_deep lurker) 77(a_stone golem)
+012592 (0ec5:0742)  callers 3  calls 5
+01262a (0ec5:07da)  callers 2  calls 0
+01264c (0ec5:07fc)  callers 15  calls 2
+01266a (0ec5:081a)  callers 0  calls 2
+01268e (0ec5:083e)  callers 0  calls 2
+0126b8 (0ec5:0868)  callers 1  calls 2
+0127a4 (0ec5:0954)  callers 15  calls 2
+0127f1 (0ec5:09a1)  callers 2  calls 0
+012857 (0ec5:0a07)  callers 8  calls 3
+0128bd (0ec5:0a6d)  callers 1  calls 2
+012900 (0ec5:0ab0)  callers 2  calls 2
+012949 (0ec5:0af9)  callers 1  calls 0
+01295c (0ec5:0b0c)  callers 1  calls 0
+01296f (0ec5:0b1f)  callers 1  calls 0
+012997 (0ec5:0b47)  callers 1  calls 1
+0129ae (0ec5:0b5e)  callers 1  calls 1
+0129ca (0ec5:0b7a)  callers 3  calls 2
+012ad1 (0ec5:0c81)  callers 0  calls 1
+012ae6 (0ec5:0c96)  callers 1  calls 6
+012c26 (0ec5:0dd6)  callers 2  calls 0
+012c37 (0ec5:0de7)  callers 91  calls 1
+012c5d (0ec5:0e0d)  callers 3  calls 3
+012cec (0ec5:0e9c)  callers 2  calls 3
+012dc4 (0ec5:0f74)  callers 0  calls 0
+012de3 (0ec5:0f93)  callers 0  calls 0
+012ded (0ec5:0f9d)  callers 1  calls 1
+012e0b (0ec5:0fbb)  callers 0  calls 1
+012e28 (0ec5:0fd8)  callers 0  calls 3
+012e60 (0ec5:1010)  callers 2  calls 3
+012ead (0ec5:105d)  callers 3  calls 1
+012ee0 (0ec5:1090)  callers 1  calls 1
+012efa (0ec5:10aa)  callers 1  calls 3
+01301d (0ec5:11cd)  callers 1  calls 4
+0131ed (0ec5:139d)  callers 2  calls 2
+013235 (0ec5:13e5)  callers 0  calls 2
+01326e (0ec5:141e)  callers 1  calls 0
+01329a (0ec5:144a)  callers 1  calls 0
+0132c6 (0ec5:1476)  callers 8  calls 3
+    items: 80(a_sack)
+013405 (0ec5:15b5)  callers 5  calls 0
+013475 (0ec5:1625)  callers 0  calls 1
+013482 (0ec5:1632)  callers 3  calls 0
+0134a4 (0ec5:1654)  callers 3  calls 0
+0134d5 (0ec5:1685)  callers 0  calls 1
+0134e1 (0ec5:1691)  callers 0  calls 1
+0134f1 (0ec5:16a1)  callers 1  calls 1
+01350d (0ec5:16bd)  callers 0  calls 0
+01351a (0ec5:16ca)  callers 2  calls 1
+013535 (0ec5:16e5)  callers 2  calls 1
+013553 (0ec5:1703)  callers 1  calls 0
+013563 (0ec5:1713)  callers 1  calls 0
+    items: ff(a_Ylem stone)
+01359f (0ec5:174f)  callers 1  calls 2
+0135e0 (0ec5:1790)  callers 1  calls 1
+0136a6 (0ec5:1856)  callers 2  calls 1
+01370e (0ec5:18be)  callers 2  calls 1
+013741 (0ec5:18f1)  callers 2  calls 1
+01376e (0ec5:191e)  callers 3  calls 1
+0137af (0ec5:195f)  callers 2  calls 1
+0137d8 (0ec5:1988)  callers 1  calls 2
+013831 (0ec5:19e1)  callers 2  calls 1
+013849 (0ec5:19f9)  callers 3  calls 5
+013901 (0ec5:1ab1)  callers 1  calls 1
+01391c (0ec5:1acc)  callers 1  calls 0
+01397a (0ec5:1b2a)  callers 0  calls 1
+01398b (0ec5:1b3b)  callers 1  calls 0
+0139a8 (0ec5:1b58)  callers 1  calls 0
+0139c8 (0ec5:1b78)  callers 1  calls 0
+0139d7 (0ec5:1b87)  callers 1  calls 0
+0139e8 (0ec5:1b98)  callers 1  calls 2
+013a10 (0ec5:1bc0)  callers 1  calls 1
+013aac (0ec5:1c5c)  callers 0  calls 2
+013ad1 (0ec5:1c81)  callers 3  calls 1
+013b34 (0ec5:1ce4)  callers 1  calls 1
+013b5b (0ec5:1d0b)  callers 23  calls 0
+    items: 58(a_red lizardman&re)
+013b98 (0ec5:1d48)  callers 2  calls 0
+013ba9 (0ec5:1d59)  callers 21  calls 1
+013bd2 (0ec5:1d82)  callers 4  calls 0
+013c4f (0ec5:1dff)  callers 18  calls 1
+013c76 (0ec5:1e26)  callers 1  calls 1
+013c90 (0ec5:1e40)  callers 2  calls 1
+013cb5 (0ec5:1e65)  callers 3  calls 0
+013cd6 (0ec5:1e86)  callers 2  calls 0
+013cfe (0ec5:1eae)  callers 15  calls 1
+013d17 (0ec5:1ec7)  callers 2  calls 1
+013d2d (0ec5:1edd)  callers 19  calls 0
+013d4f (0ec5:1eff)  callers 1  calls 1
+013d68 (0ec5:1f18)  callers 1  calls 0
+013d7a (0ec5:1f2a)  callers 29  calls 7
+013eb5 (0ec5:2065)  callers 1  calls 1
+013f01 (0ec5:20b1)  callers 12  calls 2
+013fbc (0ec5:216c)  callers 2  calls 1
+013fd6 (0ec5:2186)  callers 1  calls 1
+013ff5 (0ec5:21a5)  callers 3  calls 0
+014009 (0ec5:21b9)  callers 3  calls 0
+01407e (0ec5:222e)  callers 1  calls 3
+014167 (0ec5:2317)  callers 1  calls 1
+01417e (0ec5:232e)  callers 1  calls 1
+01419e (0ec5:234e)  callers 1  calls 5
+014239 (0ec5:23e9)  callers 1  calls 1
+    items: 5d(a_fighter) 5e(a_fighter)
+014488 (0ec5:2638)  callers 1  calls 0
+0144b3 (0ec5:2663)  callers 1  calls 1
+    items: 58(a_red lizardman&re) 78(a_fire elemental)
+014632 (0ec5:27e2)  callers 2  calls 0
+01464a (0ec5:27fa)  callers 1  calls 1
+014666 (0ec5:2816)  callers 1  calls 0
+014679 (0ec5:2829)  callers 1  calls 0
+01468c (0ec5:283c)  callers 1  calls 0
+0146b8 (0ec5:2868)  callers 1  calls 0
+0146bf (0ec5:286f)  callers 1  calls 2
+01475a (0ec5:290a)  callers 34  calls 0
+014793 (0ec5:2943)  callers 5  calls 0
+0147c9 (0ec5:2979)  callers 46  calls 0
+0147ed (0ec5:299d)  callers 29  calls 0
+014807 (0ec5:29b7)  callers 3  calls 0
+014833 (0ec5:29e3)  callers 3  calls 0
+014853 (0ec5:2a03)  callers 2  calls 7
+0149d4 (0ec5:2b84)  callers 3  calls 0
+014ab6 (0ec5:2c66)  callers 0  calls 0
+014aff (0ec5:2caf)  callers 5  calls 1
+014b15 (0ec5:2cc5)  callers 1  calls 1
+014b1c (0ec5:2ccc)  callers 1  calls 1
+014b25 (0ec5:2cd5)  callers 1  calls 0
+014b2d (0ec5:2cdd)  callers 1  calls 0
+014b47 (0ec5:2cf7)  callers 1  calls 0
+014b54 (0ec5:2d04)  callers 1  calls 0
+014b5d (0ec5:2d0d)  callers 1  calls 6
+    items: 50(a_goblin) 58(a_red lizardman&re) 60(a_troll) 6f(a_feral troll) 78(a_fire elemental)
+014ff4 (0ec5:31a4)  callers 3  calls 2
+01506c (0ec5:321c)  callers 1  calls 2
+0150ce (0ec5:327e)  callers 1  calls 1
+01513f (0ec5:32ef)  callers 2  calls 0
+015168 (0ec5:3318)  callers 1  calls 0
+01519e (0ec5:334e)  callers 10  calls 2
+0151c7 (0ec5:3377)  callers 1  calls 1
+015228 (0ec5:33d8)  callers 1  calls 1
+015261 (0ec5:3411)  callers 1  calls 0
+015284 (0ec5:3434)  callers 13  calls 4
+015301 (0ec5:34b1)  callers 1  calls 2
+01537b (0ec5:352b)  callers 1  calls 2
+0153dd (0ec5:358d)  callers 0  calls 4
+01544b (0ec5:35fb)  callers 22  calls 0
+015462 (0ec5:3612)  callers 2  calls 0
+015483 (0ec5:3633)  callers 1  calls 0
+015486 (0ec5:3636)  callers 39  calls 0
+01548d (0ec5:363d)  callers 5  calls 0
+015492 (0ec5:3642)  callers 1  calls 0
+01549d (0ec5:364d)  callers 1  calls 0
+015534 (0ec5:36e4)  callers 9  calls 0
+015555 (0ec5:3705)  callers 3  calls 0
+015575 (0ec5:3725)  callers 7  calls 0
+015593 (0ec5:3743)  callers 1  calls 0
+0155f3 (0ec5:37a3)  callers 1  calls 0
+01561e (0ec5:37ce)  callers 39  calls 0
+015640 (0ec5:37f0)  callers 9  calls 2
+01565d (0ec5:380d)  callers 1  calls 2
+015697 (0ec5:3847)  callers 2  calls 1
+0156d0 (0ec5:3880)  callers 2  calls 0
+0156ec (0ec5:389c)  callers 1  calls 0
+01570f (0ec5:38bf)  callers 8  calls 4
+01576f (0ec5:391f)  callers 1  calls 1
+0157af (0ec5:395f)  callers 1  calls 1
+0157d8 (0ec5:3988)  callers 1  calls 0
+0157f1 (0ec5:39a1)  callers 1  calls 2
+015826 (0ec5:39d6)  callers 1  calls 2
+015868 (0ec5:3a18)  callers 3  calls 0
+01586a (0ec5:3a1a)  callers 0  calls 4
+0158bb (0ec5:3a6b)  callers 7  calls 0
+0158d2 (0ec5:3a82)  callers 2  calls 0
+0158f3 (0ec5:3aa3)  callers 1  calls 0
+0158f7 (0ec5:3aa7)  callers 1  calls 0
+0158fb (0ec5:3aab)  callers 1  calls 0
+0158ff (0ec5:3aaf)  callers 1  calls 1
+015994 (0ec5:3b44)  callers 1  calls 2
+    items: 5c(a_dread spider)
+015aa5 (128a:0005)  callers 1  calls 6
+015c04 (128a:0164)  callers 1  calls 5
+015d2e (128a:028e)  callers 1  calls 0
+015e07 (128a:0367)  callers 1  calls 2
+015ed1 (128a:0431)  callers 0  calls 3
+016097 (128a:05f7)  callers 0  calls 0
+01609e (128a:05fe)  callers 0  calls 1
+0160fe (128a:065e)  callers 0  calls 1
+01616b (128a:06cb)  callers 2  calls 1
+016196 (128a:06f6)  callers 3  calls 2
+    items: 7f(an_adventurer)
+016af6 (128a:1056)  callers 1  calls 1
+016d5b (128a:12bb)  callers 2  calls 3
+    items: 40(a_rotworm)
+0172e3 (128a:1843)  callers 1  calls 0
+0173d8 (128a:1938)  callers 1  calls 5
+017671 (128a:1bd1)  callers 4  calls 3
+017ae1 (128a:2041)  callers 1  calls 1
+017c71 (128a:21d1)  callers 1  calls 0
+017caa (128a:220a)  callers 2  calls 1
+    items: 100(a_key)
+017ce4 (128a:2244)  callers 1  calls 0
+017e6b (128a:23cb)  callers 2  calls 0
+017f48 (128a:24a8)  callers 1  calls 0
+017fa4 (128a:2504)  callers 1  calls 5
+018119 (128a:2679)  callers 1  calls 1
+018302 (128a:2862)  callers 12  calls 0
+01838a (128a:28ea)  callers 5  calls 0
+018441 (128a:29a1)  callers 6  calls 14
+    items: 7f(an_adventurer)
+018b01 (128a:3061)  callers 2  calls 2
+    items: 78(a_fire elemental)
+018bc3 (128a:3123)  callers 1  calls 4
+018cb1 (15ab:0001)  callers 4  calls 5
+019094 (15ab:03e4)  callers 1  calls 6
+    items: 40(a_rotworm)
+01928f (15ab:05df)  callers 2  calls 4
+019360 (15ab:06b0)  callers 2  calls 9
+019541 (15ab:0891)  callers 1  calls 6
+    items: 64(a_ghost) 100(a_key)
+0197af (15ab:0aff)  callers 2  calls 2
+    items: 51(a_mongbat) 64(a_ghost) ff(a_Ylem stone)
+019b0d (15ab:0e5d)  callers 1  calls 5
+019ca2 (15ab:0ff2)  callers 3  calls 2
+    items: ff(a_Ylem stone)
+019d4f (15ab:109f)  callers 2  calls 4
+    items: 40(a_rotworm)
+019eab (15ab:11fb)  callers 2  calls 3
+019f76 (15ab:12c6)  callers 1  calls 6
+    items: 90(a_lantern)
+01a0aa (15ab:13fa)  callers 2  calls 5
+    items: 40(a_rotworm) 6e(a_ghoul)
+01a4cd (15ab:181d)  callers 2  calls 2
+    items: 40(a_rotworm) 60(a_troll) 80(a_sack) a0(a_coin) c0(a_plant)
+01a5e7 (15ab:1937)  callers 1  calls 6
+    items: 90(a_lantern) 190(a_text string trap)
+01a7a6 (15ab:1af6)  callers 1  calls 3
+    items: 90(a_lantern)
+01a8a4 (15ab:1bf4)  callers 1  calls 4
+01a99b (15ab:1ceb)  callers 3  calls 2
+01abca (15ab:1f1a)  callers 3  calls 2
+01ac8c (15ab:1fdc)  callers 1  calls 0
+    items: 40(a_rotworm) 80(a_sack) c0(a_plant) e0(a_runestone)
+01add3 (15ab:2123)  callers 1  calls 4
+    items: 80(a_sack) e0(a_runestone)
+01af71 (15ab:22c1)  callers 1  calls 2
+01b006 (15ab:2356)  callers 1  calls 1
+01b138 (15ab:2488)  callers 1  calls 21
+    items: 64(a_ghost)
+01b8fa (15ab:2c4a)  callers 1  calls 21
+01bf1b (15ab:326b)  callers 5  calls 1
+01c033 (15ab:3383)  callers 1  calls 1
+01c0ba (15ab:340a)  callers 1  calls 0
+01c13e (15ab:348e)  callers 8  calls 0
+01c1ad (15ab:34fd)  callers 2  calls 0
+01c227 (15ab:3577)  callers 1  calls 1
+01c27b (15ab:35cb)  callers 1  calls 2
+01c2d2 (15ab:3622)  callers 1  calls 5
+    items: 100(a_key)
+01c4d5 (15ab:3825)  callers 1  calls 0
+01c518 (15ab:3868)  callers 1  calls 4
+01c5db (193d:000b)  callers 1  calls 1
+01c60d (193d:003d)  callers 5  calls 2
+01c720 (193d:0150)  callers 1  calls 4
+    items: 64(a_ghost)
+01c7e6 (193d:0216)  callers 1  calls 9
+    items: 1a0(a_move trigger)
+01cbb3 (193d:05e3)  callers 1  calls 1
+01cca1 (193d:06d1)  callers 3  calls 7
+01cedd (193d:090d)  callers 1  calls 6
+01d183 (193d:0bb3)  callers 0  calls 0
+01d1bc (193d:0bec)  callers 1  calls 0
+01d32b (193d:0d5b)  callers 1  calls 0
+01d355 (193d:0d85)  callers 1  calls 1
+01d36e (193d:0d9e)  callers 1  calls 0
+01d3a6 (193d:0dd6)  callers 1  calls 1
+01d3b7 (193d:0de7)  callers 1  calls 2
+01d3dc (193d:0e0c)  callers 4  calls 1
+    items: ff(a_Ylem stone)
+01d511 (1a31:0001)  callers 4  calls 1
+01d57d (1a31:006d)  callers 1  calls 5
+01d65a (1a31:014a)  callers 1  calls 1
+01d6ac (1a31:019c)  callers 1  calls 3
+01d731 (1a31:0221)  callers 5  calls 0
+01d775 (1a31:0265)  callers 22  calls 2
+01d7d6 (1a31:02c6)  callers 0  calls 3
+01d83c (1a31:032c)  callers 2  calls 2
+01d85d (1a31:034d)  callers 1  calls 2
+01d89c (1a31:038c)  callers 5  calls 1
+01d8f4 (1a6f:0004)  callers 1  calls 2
+01d94a (1a6f:005a)  callers 1  calls 1
+01d973 (1a6f:0083)  callers 5  calls 2
+01d9f5 (1a6f:0105)  callers 4  calls 2
+01da65 (1a6f:0175)  callers 4  calls 4
+01dba1 (1a6f:02b1)  callers 2  calls 3
+01dced (1a6f:03fd)  callers 1  calls 0
+01dd67 (1ab6:0007)  callers 1  calls 2
+01dd8c (1ab6:002c)  callers 4  calls 1
+01de0f (1ab6:00af)  callers 35  calls 0
+01de1b (1ac1:000b)  callers 1  calls 1
+01deb6 (1ac1:00a6)  callers 2  calls 0
+01decb (1ac1:00bb)  callers 6  calls 0
+01df1f (1ac1:010f)  callers 10  calls 0
+01df3c (1ac1:012c)  callers 1  calls 0
+01df51 (1ac1:0141)  callers 1  calls 0
+01df6e (1ac1:015e)  callers 2  calls 0
+01dfc1 (1ac1:01b1)  callers 1  calls 0
+01dfce (1adc:000e)  callers 1  calls 2
+01e035 (1adc:0075)  callers 3  calls 2
+01e081 (1adc:00c1)  callers 59  calls 1
+01e097 (1adc:00d7)  callers 62  calls 2
+01e0b8 (1adc:00f8)  callers 1  calls 0
+01e0d5 (1adc:0115)  callers 1  calls 1
+01e0fa (1adc:013a)  callers 1  calls 3
+01e214 (1adc:0254)  callers 1  calls 2
+01e279 (1adc:02b9)  callers 10  calls 0
+01e28e (1adc:02ce)  callers 1  calls 0
+01e2b8 (1adc:02f8)  callers 2  calls 0
+01e2ca (1adc:030a)  callers 1  calls 1
+01e2d8 (1adc:0318)  callers 1  calls 4
+01e305 (1adc:0345)  callers 5  calls 1
+01e327 (1adc:0367)  callers 30  calls 6
+01e3a4 (1adc:03e4)  callers 4  calls 6
+01e42d (1adc:046d)  callers 3  calls 0
+01e44a (1adc:048a)  callers 6  calls 0
+01e463 (1adc:04a3)  callers 1  calls 2
+01e4af (1adc:04ef)  callers 1  calls 0
+01e52b (1adc:056b)  callers 4  calls 2
+01e5c4 (1adc:0604)  callers 2  calls 2
+01e611 (1adc:0651)  callers 15  calls 1
+01e61e (1adc:065e)  callers 2  calls 1
+01e62b (1adc:066b)  callers 2  calls 1
+01e69c (1adc:06dc)  callers 1  calls 1
+01e6fa (1adc:073a)  callers 16  calls 3
+01e72c (1adc:076c)  callers 32  calls 4
+01e776 (1adc:07b6)  callers 2  calls 0
+01e7c2 (1adc:0802)  callers 4  calls 4
+01e828 (1adc:0868)  callers 5  calls 1
+01e8fc (1adc:093c)  callers 4  calls 5
+01eb68 (1adc:0ba8)  callers 2  calls 2
+01eba8 (1adc:0be8)  callers 2  calls 2
+01ebef (1adc:0c2f)  callers 1  calls 3
+01ecb2 (1adc:0cf2)  callers 2  calls 3
+01ed16 (1adc:0d56)  callers 1  calls 2
+01ed7e (1adc:0dbe)  callers 1  calls 0
+01ede9 (1adc:0e29)  callers 2  calls 1
+    items: 8c(an_urn) 8d(a_quiver) 8e(a_bowl) 8f(a_rune bag) 91(a_torch&torches) 92(a_candle) 93(a_taper) 94(a_lit lantern) e1(the_Key of Truth)
+01ef4d (1adc:0f8d)  callers 4  calls 1
+01ef8b (1bd8:000b)  callers 0  calls 0
+01ef9d (1bd8:001d)  callers 1  calls 4
+01efe1 (1bd8:0061)  callers 1  calls 15
+01f196 (1bd8:0216)  callers 1  calls 3
+    items: ff(a_Ylem stone)
+01f26e (1bd8:02ee)  callers 1  calls 8
+01f341 (1bd8:03c1)  callers 4  calls 3
+01f39c (1bd8:041c)  callers 6  calls 11
+01f4f3 (1bd8:0573)  callers 2  calls 5
+01f58d (1bd8:060d)  callers 1  calls 3
+01f5e2 (1bd8:0662)  callers 0  calls 5
+01f65b (1bd8:06db)  callers 1  calls 4
+01f6b8 (1bd8:0738)  callers 3  calls 0
+01f6c0 (1bd8:0740)  callers 2  calls 0
+01f6d4 (1bd8:0754)  callers 2  calls 0
+01f6e8 (1bd8:0768)  callers 3  calls 4
+01f75f (1bd8:07df)  callers 0  calls 1
+01f77c (1bd8:07fc)  callers 2  calls 1
+01f7a8 (1bd8:0828)  callers 0  calls 1
+01f7cb (1bd8:084b)  callers 1  calls 1
+01f7f0 (1bd8:0870)  callers 0  calls 1
+01f82e (1bd8:08ae)  callers 10  calls 6
+    items: 7f(an_adventurer)
+01fa9b (1bd8:0b1b)  callers 12  calls 1
+    items: 7f(an_adventurer)
+01fb1c (1bd8:0b9c)  callers 5  calls 1
+01fb7d (1bd8:0bfd)  callers 1  calls 2
+01fbfc (1bd8:0c7c)  callers 3  calls 2
+01fc95 (1bd8:0d15)  callers 0  calls 2
+01fd8e (1bd8:0e0e)  callers 1  calls 5
+01fe99 (1bd8:0f19)  callers 1  calls 4
+01fee9 (1bd8:0f69)  callers 2  calls 4
+020115 (1bd8:1195)  callers 1  calls 10
+    msg 250: You play the instrument.  (Use 0-9 to play, or ESC to return to game)\n
+    msg 251: You put the instrument down.\n
+    items: 40(a_rotworm) ff(a_Ylem stone)
+020443 (1bd8:14c3)  callers 1  calls 3
+    msg 136: An object appears in the air and falls into your hand...\n
+0204ce (1bd8:154e)  callers 1  calls 2
+0204e9 (1bd8:1569)  callers 1  calls 2
+02053a (1bd8:15ba)  callers 9  calls 0
+020545 (1bd8:15c5)  callers 6  calls 1
+02055c (1bd8:15dc)  callers 7  calls 2
+02058d (1bd8:160d)  callers 4  calls 3
+020741 (1bd8:17c1)  callers 2  calls 1
+02076d (1bd8:17ed)  callers 2  calls 0
+0207ba (1bd8:183a)  callers 1  calls 8
+02089d (1bd8:191d)  callers 1  calls 0
+0208a5 (1bd8:1925)  callers 1  calls 2
+020901 (1bd8:1981)  callers 1  calls 13
+020ac1 (1bd8:1b41)  callers 2  calls 6
+020bf8 (1bd8:1c78)  callers 2  calls 1
+020c46 (1bd8:1cc6)  callers 1  calls 1
+020c5e (1bd8:1cde)  callers 1  calls 1
+020c8d (1bd8:1d0d)  callers 1  calls 2
+020cee (1dae:000e)  callers 3  calls 0
+020dc8 (1dae:00e8)  callers 2  calls 0
+020dd8 (1dae:00f8)  callers 2  calls 0
+020dee (1dae:010e)  callers 14  calls 0
+020e04 (1dae:0124)  callers 2  calls 0
+020e24 (1dae:0144)  callers 30  calls 0
+020e59 (1dae:0179)  callers 3  calls 0
+020e81 (1dae:01a1)  callers 1  calls 0
+020edc (1dae:01fc)  callers 8  calls 0
+020f05 (1dae:0225)  callers 5  calls 0
+020f3a (1dae:025a)  callers 3  calls 0
+020f87 (1dae:02a7)  callers 2  calls 0
+021005 (1dae:0325)  callers 2  calls 0
+021046 (1dae:0366)  callers 2  calls 1
+02109b (1dae:03bb)  callers 0  calls 1
+021101 (1df0:0001)  callers 1  calls 0
+021136 (1df0:0036)  callers 2  calls 0
+021150 (1df0:0050)  callers 3  calls 0
+0211c5 (1df0:00c5)  callers 1  calls 5
+021443 (1df0:0343)  callers 1  calls 4
+021626 (1df0:0526)  callers 2  calls 4
+02189a (1df0:079a)  callers 1  calls 1
+021980 (1df0:0880)  callers 0  calls 1
+021a64 (1df0:0964)  callers 1  calls 1
+021b4a (1df0:0a4a)  callers 1  calls 1
+    items: 64(a_ghost)
+021d1b (1df0:0c1b)  callers 2  calls 1
+    items: 64(a_ghost)
+021ebc (1df0:0dbc)  callers 1  calls 3
+    items: 44(a_giant spider)
+022526 (1f32:0006)  callers 0  calls 0
+    items: ea(a_Corp stone)
+0225a0 (1f3a:0000)  callers 1  calls 2
+0225b7 (1f3a:0017)  callers 1  calls 4
+022605 (1f3a:0065)  callers 1  calls 0
+022641 (1f3a:00a1)  callers 1  calls 0
+022689 (1f3a:00e9)  callers 1  calls 1
+0226b2 (1f3a:0112)  callers 1  calls 1
+0226bb (1f3a:011b)  callers 1  calls 0
+0226f0 (1f3a:0150)  callers 1  calls 0
+022714 (1f3a:0174)  callers 1  calls 0
+022729 (1f3a:0189)  callers 1  calls 0
+022770 (1f3a:01d0)  callers 2  calls 1
+0227c8 (1f3a:0228)  callers 1  calls 0
+0227d6 (1f3a:0236)  callers 2  calls 2
+0227e4 (1f3a:0244)  callers 1  calls 8
+022824 (1f3a:0284)  callers 1  calls 1
+022856 (1f3a:02b6)  callers 1  calls 0
+02285d (1f3a:02bd)  callers 1  calls 3
+    items: ff(a_Ylem stone)
+02288c (1f3a:02ec)  callers 2  calls 0
+0228aa (1f3a:030a)  callers 2  calls 4
+022915 (1f3a:0375)  callers 1  calls 0
+022920 (1f3a:0380)  callers 1  calls 1
+02292f (1f3a:038f)  callers 1  calls 1
+022943 (1f3a:03a3)  callers 4  calls 1
+    items: 7f(an_adventurer)
+02299d (1f3a:03fd)  callers 2  calls 1
+0229f4 (1f3a:0454)  callers 1  calls 0
+022a0b (1f3a:046b)  callers 1  calls 1
+022a48 (1f3a:04a8)  callers 2  calls 4
+    items: e0(a_runestone) e1(the_Key of Truth)
+022abc (1f3a:051c)  callers 2  calls 2
+022af4 (1f3a:0554)  callers 1  calls 0
+022b04 (1f3a:0564)  callers 1  calls 0
+    items: e0(a_runestone) e1(the_Key of Truth)
+022b19 (1f3a:0579)  callers 2  calls 0
+022b38 (1f3a:0598)  callers 2  calls 2
+022b68 (1f3a:05c8)  callers 2  calls 1
+022b89 (1f3a:05e9)  callers 3  calls 2
+    items: fa(a_Sanct stone)
+022c40 (1f3a:06a0)  callers 1  calls 0
+022c46 (1f3a:06a6)  callers 1  calls 1
+022c68 (1f3a:06c8)  callers 1  calls 0
+022c87 (1f3a:06e7)  callers 1  calls 1
+022c98 (1f3a:06f8)  callers 1  calls 0
+022ca3 (1f3a:0703)  callers 2  calls 0
+022cd0 (1f3a:0730)  callers 1  calls 1
+022cde (1f3a:073e)  callers 1  calls 0
+022cf5 (1f3a:0755)  callers 1  calls 1
+022d31 (1f3a:0791)  callers 1  calls 1
+022d6d (1f3a:07cd)  callers 0  calls 1
+022da9 (1f3a:0809)  callers 0  calls 1
+022de5 (1f3a:0845)  callers 0  calls 1
+022e21 (1f3a:0881)  callers 0  calls 1
+022e5d (1f3a:08bd)  callers 0  calls 1
+022e99 (1f3a:08f9)  callers 0  calls 1
+022ed5 (1f3a:0935)  callers 0  calls 1
+022f11 (1f3a:0971)  callers 2  calls 1
+022f4d (1f3a:09ad)  callers 2  calls 1
+022f90 (1f3a:09f0)  callers 1  calls 1
+022fd0 (1f3a:0a30)  callers 4  calls 1
+022fd4 (1f3a:0a34)  callers 5  calls 1
+022fd8 (1f3a:0a38)  callers 2  calls 0
+023009 (1f3a:0a69)  callers 1  calls 0
+023018 (1f3a:0a78)  callers 2  calls 0
+023118 (1f3a:0b78)  callers 1  calls 0
+023142 (1f3a:0ba2)  callers 1  calls 0
+023174 (1f3a:0bd4)  callers 1  calls 2
+0231a0 (1f3a:0c00)  callers 1  calls 0
+0231b0 (1f3a:0c10)  callers 1  calls 0
+0231d4 (1f3a:0c34)  callers 1  calls 0
+02321e (1f3a:0c7e)  callers 2  calls 1
+023224 (1f3a:0c84)  callers 4  calls 1
+023257 (1f3a:0cb7)  callers 0  calls 1
+02328a (1f3a:0cea)  callers 0  calls 1
+0232bd (1f3a:0d1d)  callers 1  calls 1
+02331a (1f3a:0d7a)  callers 3  calls 4
+0233ba (1f3a:0e1a)  callers 1  calls 1
+023403 (1f3a:0e63)  callers 2  calls 1
+02344e (1f3a:0eae)  callers 4  calls 1
+02349b (1f3a:0efb)  callers 2  calls 1
+0234df (1f3a:0f3f)  callers 7  calls 1
+023523 (1f3a:0f83)  callers 3  calls 1
+02357d (1f3a:0fdd)  callers 1  calls 0
+0235a4 (1f3a:1004)  callers 1  calls 0
+0235cb (1f3a:102b)  callers 1  calls 1
+0235f1 (1f3a:1051)  callers 0  calls 2
+0239da (2042:03ba)  callers 2  calls 0
+023a12 (2042:03f2)  callers 2  calls 2
+023b01 (2042:04e1)  callers 1  calls 0
+023b33 (2042:0513)  callers 1  calls 2
+023b44 (2042:0524)  callers 1  calls 0
+023b72 (2042:0552)  callers 1  calls 1
+023b7c (2042:055c)  callers 1  calls 0
+023b98 (2042:0578)  callers 1  calls 1
+023ba2 (2042:0582)  callers 2  calls 0
+023bc0 (2042:05a0)  callers 1  calls 1
+023bcb (2042:05ab)  callers 1  calls 1
+023bf5 (2042:05d5)  callers 1  calls 0
+023c40 (2042:0620)  callers 1  calls 1
+023ccb (2042:06ab)  callers 1  calls 1
+023cd5 (2042:06b5)  callers 1  calls 0
+023d0f (2042:06ef)  callers 1  calls 1
+023d19 (2042:06f9)  callers 1  calls 3
+023d73 (2042:0753)  callers 1  calls 1
+023d7e (2042:075e)  callers 3  calls 2
+023ddd (2042:07bd)  callers 0  calls 0
+023de7 (2042:07c7)  callers 0  calls 0
+023df1 (2042:07d1)  callers 0  calls 1
+023e02 (2042:07e2)  callers 0  calls 1
+023e1f (2042:07ff)  callers 1  calls 1
+023e2a (2042:080a)  callers 4  calls 0
+023e4e (2042:082e)  callers 0  calls 2
+023e63 (2042:0843)  callers 1  calls 1
+023e6e (2042:084e)  callers 1  calls 1
+023e82 (2042:0862)  callers 1  calls 1
+023e8c (2042:086c)  callers 5  calls 0
+023ea9 (2042:0889)  callers 1  calls 2
+023ec8 (2042:08a8)  callers 1  calls 1
+023ed2 (2042:08b2)  callers 2  calls 0
+023eef (2042:08cf)  callers 1  calls 2
+023f0e (2042:08ee)  callers 1  calls 1
+023f18 (2042:08f8)  callers 3  calls 1
+023f62 (2042:0942)  callers 1  calls 1
+023f6d (2042:094d)  callers 3  calls 0
+023f7c (2042:095c)  callers 0  calls 0
+023f86 (2042:0966)  callers 0  calls 2
+023fa3 (2042:0983)  callers 1  calls 1
+023fae (2042:098e)  callers 0  calls 1
+023fdf (2042:09bf)  callers 1  calls 1
+023ff4 (2042:09d4)  callers 1  calls 1
+023ffe (2042:09de)  callers 2  calls 1
+02407d (2042:0a5d)  callers 1  calls 1
+024088 (2042:0a68)  callers 0  calls 0
+0240ab (2042:0a8b)  callers 1  calls 1
+0240b6 (2042:0a96)  callers 4  calls 0
+0240ba (2042:0a9a)  callers 0  calls 0
+0240c4 (2042:0aa4)  callers 0  calls 1
+0240dc (2042:0abc)  callers 2  calls 0
+0240e2 (2042:0ac2)  callers 2  calls 3
+024137 (2042:0b17)  callers 0  calls 3
+024183 (2042:0b63)  callers 1  calls 1
+02418e (2042:0b6e)  callers 1  calls 1
+0241c1 (2042:0ba1)  callers 1  calls 0
+0241c7 (2042:0ba7)  callers 2  calls 0
+0241cd (2042:0bad)  callers 2  calls 0
+0241df (2042:0bbf)  callers 1  calls 0
+0241e5 (2042:0bc5)  callers 1  calls 0
+02420f (2042:0bef)  callers 1  calls 0
+024215 (2042:0bf5)  callers 1  calls 0
+02421b (2042:0bfb)  callers 1  calls 0
+024221 (2042:0c01)  callers 1  calls 0
+024227 (2042:0c07)  callers 1  calls 0
+02422d (2042:0c0d)  callers 1  calls 0
+024233 (2042:0c13)  callers 1  calls 0
+024245 (2042:0c25)  callers 2  calls 0
+02424b (2042:0c2b)  callers 3  calls 0
+024251 (2042:0c31)  callers 3  calls 0
+02425d (2042:0c3d)  callers 2  calls 0
+02426f (2042:0c4f)  callers 3  calls 0
+024275 (2042:0c55)  callers 1  calls 0
+02429f (2042:0c7f)  callers 5  calls 0
+0242bd (2042:0c9d)  callers 2  calls 0
+0242c9 (2042:0ca9)  callers 4  calls 0
+0242d5 (210d:0005)  callers 3  calls 0
+024377 (210d:00a7)  callers 1  calls 2
+02441a (2121:000a)  callers 2  calls 1
+024493 (2121:0083)  callers 1  calls 2
+0246e2 (2121:02d2)  callers 1  calls 9
+024876 (2121:0466)  callers 1  calls 7
+024ac9 (2121:06b9)  callers 1  calls 8
+024cb5 (2121:08a5)  callers 2  calls 10
+    items: ff(a_Ylem stone) 1cf(a_moving door)
+025039 (2121:0c29)  callers 1  calls 3
+    items: 100(a_key)
+025158 (2121:0d48)  callers 1  calls 1
+0251ac (2121:0d9c)  callers 2  calls 8
+025288 (2121:0e78)  callers 2  calls 4
+025326 (2121:0f16)  callers 1  calls 3
+025406 (2121:0ff6)  callers 1  calls 1
+025526 (2121:1116)  callers 1  calls 2
+025562 (2121:1152)  callers 2  calls 1
+025593 (2121:1183)  callers 4  calls 2
+0255ca (2121:11ba)  callers 2  calls 10
+    items: 64(a_ghost)
+0258cf (2121:14bf)  callers 1  calls 6
+0259ee (2121:15de)  callers 1  calls 4
+025b05 (2121:16f5)  callers 0  calls 1
+025b35 (2121:1725)  callers 1  calls 5
+025bbd (229b:000d)  callers 1  calls 3
+025c4b (229b:009b)  callers 1  calls 1
+025c86 (229b:00d6)  callers 1  calls 13
+    items: d5(a_pile of debris&p) d6(a_pile of debris&p) 15b(a_barrel) 15d(a_chest)
+025eaf (229b:02ff)  callers 7  calls 1
+025f0a (229b:035a)  callers 15  calls 4
+025f97 (229b:03e7)  callers 1  calls 2
+    items: 140(a_door) 147(a_secret door)
+0260ff (22ef:000f)  callers 1  calls 1
+026122 (22ef:0032)  callers 0  calls 5
+    msg 69: It has been an uncountable number of days since you entered the Abyss.\n
+    items: 64(a_ghost)
+0261ff (22ef:010f)  callers 0  calls 8
+02635f (22ef:026f)  callers 1  calls 1
+026401 (22ef:0311)  callers 1  calls 1
+02643d (22ef:034d)  callers 1  calls 8
+026481 (22ef:0391)  callers 1  calls 3
+026494 (22ef:03a4)  callers 2  calls 2
+0264f7 (22ef:0407)  callers 1  calls 9
+0265f6 (22ef:0506)  callers 1  calls 3
+02661b (22ef:052b)  callers 4  calls 1
+02674d (22ef:065d)  callers 1  calls 1
+    items: 164(a_bridge)
+0267a8 (22ef:06b8)  callers 3  calls 2
+    items: 90(a_lantern)
+0269ba (22ef:08ca)  callers 1  calls 3
+    items: c0(a_plant) fa(a_Sanct stone)
+026ac0 (22ef:09d0)  callers 2  calls 3
+026b3e (22ef:0a4e)  callers 1  calls 3
+026b8e (22ef:0a9e)  callers 1  calls 16
+    msg 95: That is too heavy for you to pick up.\n
+    msg 96: You cannot pick that up.\n
+    items: 1ca(a_silver tree)
+026ddc (22ef:0cec)  callers 1  calls 2
+026dfa (22ef:0d0a)  callers 3  calls 1
+026e10 (22ef:0d20)  callers 0  calls 11
+026f2f (22ef:0e3f)  callers 2  calls 5
+    msg 185: You are unable to use that from here.\n
+    items: 16e(special tmap obj)
+026fa9 (22ef:0eb9)  callers 0  calls 1
+026fef (22ef:0eff)  callers 0  calls 11
+    msg 94: You cannot reach that.\n
+02718b (22ef:109b)  callers 1  calls 5
+0272a0 (22ef:11b0)  callers 0  calls 1
+0272ae (22ef:11be)  callers 0  calls 3
+0272ef (22ef:11ff)  callers 1  calls 5
+02740d (22ef:131d)  callers 0  calls 3
+027439 (22ef:1349)  callers 4  calls 3
+02747f (22ef:138f)  callers 3  calls 3
+0274c5 (22ef:13d5)  callers 0  calls 11
+027621 (22ef:1531)  callers 1  calls 6
+0276b0 (22ef:15c0)  callers 5  calls 4
+0276f8 (22ef:1608)  callers 2  calls 2
+027717 (22ef:1627)  callers 1  calls 2
+027750 (22ef:1660)  callers 1  calls 1
+02776d (2456:000d)  callers 3  calls 1
+    items: 71(a_dire ghost) ac(a_gold plate)
+0277ff (2456:009f)  callers 1  calls 7
+    msg 254: You need more space to fire that weapon.\n
+0279c2 (2456:0262)  callers 1  calls 1
+027a11 (2456:02b1)  callers 1  calls 2
+027ab5 (2456:0355)  callers 1  calls 10
+    msg 253: There is no space to drop that.\n
+027e9c (2456:073c)  callers 1  calls 1
+027ef1 (2456:0791)  callers 5  calls 8
+    items: 50(a_goblin) 100(a_key)
+0282b1 (2456:0b51)  callers 1  calls 5
+028494 (2529:0004)  callers 2  calls 0
+028635 (2529:01a5)  callers 1  calls 0
+02869d (2529:020d)  callers 1  calls 1
+    items: 80(a_sack)
+028754 (2529:02c4)  callers 1  calls 1
+    items: 80(a_sack)
+028809 (2529:0379)  callers 9  calls 5
+028c86 (2529:07f6)  callers 1  calls 0
+028ef0 (2529:0a60)  callers 1  calls 1
+029086 (2529:0bf6)  callers 8  calls 4
+    items: 40(a_rotworm)
+0292ea (2529:0e5a)  callers 1  calls 1
+02934f (2529:0ebf)  callers 7  calls 1
+029498 (2529:1008)  callers 11  calls 4
+    items: 7f(an_adventurer) 80(a_sack) 100(a_key)
+0296bb (2529:122b)  callers 7  calls 5
+029775 (2529:12e5)  callers 6  calls 1
+0297cf (2529:133f)  callers 2  calls 7
+02994b (2674:000b)  callers 2  calls 1
+029a57 (2674:0117)  callers 3  calls 2
+029ae6 (2674:01a6)  callers 1  calls 0
+029b66 (2674:0226)  callers 6  calls 6
+029c29 (2674:02e9)  callers 1  calls 2
+029c69 (2674:0329)  callers 2  calls 4
+    items: 40(a_rotworm)
+029d86 (2674:0446)  callers 12  calls 2
+029e1d (2674:04dd)  callers 35  calls 3
+029ea1 (2674:0561)  callers 38  calls 1
+029f0f (2674:05cf)  callers 9  calls 2
+029f99 (2674:0659)  callers 35  calls 1
+02a01d (2674:06dd)  callers 15  calls 5
+02a0b2 (2674:0772)  callers 8  calls 5
+02a171 (2674:0831)  callers 7  calls 3
+02a1cd (2674:088d)  callers 82  calls 0
+    items: 100(a_key)
+02a236 (2674:08f6)  callers 66  calls 1
+02a280 (2674:0940)  callers 52  calls 0
+    items: 100(a_key)
+02a2c1 (2674:0981)  callers 6  calls 3
+02a392 (2674:0a52)  callers 19  calls 0
+02a3b0 (2674:0a70)  callers 1  calls 0
+02a3c3 (2674:0a83)  callers 1  calls 0
+02a40f (2674:0acf)  callers 0  calls 0
+    items: ff(a_Ylem stone)
+02a476 (2674:0b36)  callers 18  calls 2
+02a576 (2674:0c36)  callers 2  calls 1
+02a5df (2674:0c9f)  callers 3  calls 1
+    items: 40(a_rotworm)
+02a684 (2674:0d44)  callers 2  calls 5
+02a76d (2674:0e2d)  callers 2  calls 5
+02a839 (2674:0ef9)  callers 1  calls 2
+02a86e (2674:0f2e)  callers 0  calls 2
+02a897 (2674:0f57)  callers 2  calls 4
+    items: 40(a_rotworm) ff(a_Ylem stone)
+02aa24 (2674:10e4)  callers 1  calls 5
+02ab8c (2798:000c)  callers 2  calls 1
+02acbd (2798:013d)  callers 1  calls 13
+    items: 50(a_goblin) ff(a_Ylem stone)
+02af36 (2798:03b6)  callers 2  calls 2
+02b02e (2798:04ae)  callers 1  calls 5
+    items: 78(a_fire elemental) 8c(an_urn)
+02b109 (2798:0589)  callers 2  calls 2
+    items: 40(a_rotworm) 80(a_sack)
+02b213 (2801:0003)  callers 1  calls 2
+    items: 80(a_sack)
+02b2bd (2801:00ad)  callers 1  calls 2
+    items: c0(a_plant)
+02b383 (2801:0173)  callers 2  calls 4
+    items: 100(a_key)
+02b5dc (2801:03cc)  callers 3  calls 2
+02b82a (2801:061a)  callers 3  calls 10
+    items: 100(a_key)
+02bc2f (2801:0a1f)  callers 2  calls 8
+02bd4a (2801:0b3a)  callers 2  calls 0
+02be7f (2801:0c6f)  callers 2  calls 13
+    msg 278: A rending sound fills the air.\n
+02c21b (2801:100b)  callers 1  calls 1
+02c25d (2801:104d)  callers 9  calls 10
+02c59b (2939:000b)  callers 2  calls 4
+02c621 (2939:0091)  callers 1  calls 0
+02c69c (2939:010c)  callers 3  calls 3
+    items: ff(a_Ylem stone)
+02c9a0 (2939:0410)  callers 2  calls 8
+02cd18 (2939:0788)  callers 3  calls 1
+02cd4d (2939:07bd)  callers 2  calls 0
+02cd8e (2939:07fe)  callers 1  calls 1
+02ce34 (2939:08a4)  callers 2  calls 0
+02cfcd (2939:0a3d)  callers 0  calls 0
+02cfd7 (2939:0a47)  callers 1  calls 1
+02d16f (2939:0bdf)  callers 1  calls 4
+02d1d9 (2939:0c49)  callers 1  calls 1
+    items: eb(a_Des stone)
+02d223 (2939:0c93)  callers 1  calls 7
+    items: 8d(a_quiver) ff(a_Ylem stone)
+02d56f (2939:0fdf)  callers 1  calls 5
+02d6ef (2939:115f)  callers 3  calls 6
+02d782 (2939:11f2)  callers 3  calls 0
+02d7e9 (2939:1259)  callers 2  calls 5
+    items: 7f(an_adventurer) ff(a_Ylem stone)
+02dbd0 (2939:1640)  callers 1  calls 6
+02dc9c (2939:170c)  callers 1  calls 1
+02dd85 (2939:17f5)  callers 3  calls 1
+02ddad (2aba:000d)  callers 1  calls 4
+02de39 (2aba:0099)  callers 1  calls 1
+02df29 (2aba:0189)  callers 0  calls 0
+02df33 (2aba:0193)  callers 0  calls 0
+02df9c (2aba:01fc)  callers 1  calls 5
+02dfe6 (2aba:0246)  callers 3  calls 0
+02dff9 (2aba:0259)  callers 1  calls 6
+02e046 (2aba:02a6)  callers 1  calls 5
+02e099 (2aba:02f9)  callers 6  calls 6
+02e0f1 (2aba:0351)  callers 2  calls 5
+02e136 (2aba:0396)  callers 2  calls 2
+02e24b (2aba:04ab)  callers 2  calls 1
+02e354 (2aba:05b4)  callers 1  calls 1
+02e41f (2aba:067f)  callers 4  calls 0
+02e445 (2aba:06a5)  callers 3  calls 0
+02e46b (2aba:06cb)  callers 3  calls 2
+02e891 (2aba:0af1)  callers 1  calls 3
+02ea39 (2aba:0c99)  callers 1  calls 5
+02edb0 (2aba:1010)  callers 1  calls 4
+02eefe (2aba:115e)  callers 1  calls 2
+02efba (2aba:121a)  callers 2  calls 4
+02efd5 (2bdd:0005)  callers 1  calls 7
+    items: c0(a_plant) e0(a_runestone)
+02f567 (2bdd:0597)  callers 2  calls 5
+02fc26 (2bdd:0c56)  callers 1  calls 3
+    items: ff(a_Ylem stone)
+030229 (2d02:0009)  callers 1  calls 2
+03030d (2d02:00ed)  callers 1  calls 0
+030363 (2d02:0143)  callers 1  calls 0
+03037e (2d02:015e)  callers 2  calls 1
+030453 (2d02:0233)  callers 1  calls 2
+0304a1 (2d02:0281)  callers 1  calls 2
+030549 (2d02:0329)  callers 1  calls 0
+0305ed (2d02:03cd)  callers 1  calls 0
+030626 (2d02:0406)  callers 1  calls 1
+03065b (2d02:043b)  callers 2  calls 12
+    items: 164(a_bridge) 16e(special tmap obj) 1c0(some_blood) 1cf(a_moving door)
+030bc0 (2d9c:0000)  callers 1  calls 3
+030c0e (2d9c:004e)  callers 1  calls 2
+030d9a (2d9c:01da)  callers 2  calls 0
+030ef4 (2d9c:0334)  callers 0  calls 5
+030fc6 (2d9c:0406)  callers 0  calls 3
+    items: 40(a_rotworm)
+0310d8 (2d9c:0518)  callers 2  calls 6
+031184 (2d9c:05c4)  callers 1  calls 1
+0311c4 (2d9c:0604)  callers 2  calls 4
+0312d3 (2d9c:0713)  callers 1  calls 2
+    items: c8(a_broken axe) ff(a_Ylem stone)
+031458 (2d9c:0898)  callers 1  calls 0
+0314fd (2d9c:093d)  callers 2  calls 3
+    items: 50(a_goblin)
+03172a (2d9c:0b6a)  callers 5  calls 0
+    items: 40(a_rotworm)
+031759 (2d9c:0b99)  callers 1  calls 1
+031a69 (2e86:0009)  callers 62  calls 0
+031a9e (2e86:003e)  callers 21  calls 1
+031bae (2e9a:000e)  callers 3  calls 4
+031c53 (2e9a:00b3)  callers 2  calls 3
+031ca7 (2e9a:0107)  callers 1  calls 2
+031d0e (2e9a:016e)  callers 2  calls 12
+031f5d (2e9a:03bd)  callers 1  calls 0
+031f75 (2e9a:03d5)  callers 1  calls 1
+031f7f (2e9a:03df)  callers 17  calls 1
+032145 (2e9a:05a5)  callers 0  calls 2
+03228c (2e9a:06ec)  callers 0  calls 7
+0325c0 (2e9a:0a20)  callers 0  calls 5
+032c20 (2e9a:1080)  callers 0  calls 2
+032cad (2e9a:110d)  callers 0  calls 3
+032d53 (2e9a:11b3)  callers 0  calls 2
+032da7 (2e9a:1207)  callers 0  calls 1
+032e66 (2e9a:12c6)  callers 0  calls 1
+032ebe (2e9a:131e)  callers 0  calls 0
+032ee7 (2e9a:1347)  callers 1  calls 0
+032f0c (2e9a:136c)  callers 1  calls 5
+033068 (2e9a:14c8)  callers 1  calls 1
+0330c9 (2e9a:1529)  callers 0  calls 2
+033265 (2e9a:16c5)  callers 3  calls 4
+033312 (2e9a:1772)  callers 3  calls 5
+0333bb (2e9a:181b)  callers 1  calls 5
+033471 (2e9a:18d1)  callers 1  calls 10
+0335c5 (2e9a:1a25)  callers 2  calls 7
+033640 (2e9a:1aa0)  callers 2  calls 1
+033675 (2e9a:1ad5)  callers 1  calls 11
+033cdb (2e9a:213b)  callers 1  calls 1
+033eaf (2e9a:230f)  callers 1  calls 0
+033ffd (2e9a:245d)  callers 2  calls 5
+    items: ff(a_Ylem stone)
+03415a (2e9a:25ba)  callers 6  calls 2
+03416f (2e9a:25cf)  callers 1  calls 1
+034183 (2e9a:25e3)  callers 1  calls 1
+03419c (30f9:000c)  callers 16  calls 1
+0341d8 (30f9:0048)  callers 5  calls 4
+034349 (30f9:01b9)  callers 5  calls 7
+0343a4 (311a:0004)  callers 4  calls 1
+0343c7 (311a:0027)  callers 2  calls 1
+034418 (311a:0078)  callers 3  calls 17
+    msg 228: Your vision distorts and you feel light headed.\n
+034656 (311a:02b6)  callers 4  calls 2
+0346c2 (311a:0322)  callers 3  calls 2
+03475a (311a:03ba)  callers 2  calls 1
+0347cc (311a:042c)  callers 1  calls 2
+034813 (311a:0473)  callers 4  calls 2
+03488e (311a:04ee)  callers 2  calls 3
+    msg 255: There is not enough room to release that spell.\n
+034904 (311a:0564)  callers 2  calls 2
+    items: 80(a_sack)
+034963 (311a:05c3)  callers 0  calls 2
+034a0e (311a:066e)  callers 0  calls 7
+034a9b (311a:06fb)  callers 0  calls 7
+034b8a (311a:07ea)  callers 0  calls 3
+034bd4 (311a:0834)  callers 0  calls 4
+034c29 (311a:0889)  callers 3  calls 3
+    items: ff(a_Ylem stone)
+034c98 (311a:08f8)  callers 0  calls 3
+034d13 (311a:0973)  callers 0  calls 1
+034d2f (311a:098f)  callers 0  calls 1
+034d4b (311a:09ab)  callers 0  calls 1
+034d67 (311a:09c7)  callers 2  calls 4
+    items: 40(a_rotworm) 80(a_sack) c0(a_plant)
+035017 (311a:0c77)  callers 6  calls 3
+    items: 100(a_key)
+0350ee (311a:0d4e)  callers 4  calls 1
+03515a (311a:0dba)  callers 1  calls 2
+0351a0 (311a:0e00)  callers 1  calls 1
+0351e5 (311a:0e45)  callers 1  calls 10
+    items: 7b() 7c()
+0355b1 (311a:1211)  callers 0  calls 4
+03569d (311a:12fd)  callers 1  calls 2
+0356ee (311a:134e)  callers 2  calls 6
+    msg 62: You detect no monster activity.\n
+035900 (311a:1560)  callers 0  calls 7
+    msg 271: The spell has no discernable effect.\n
+0359e5 (311a:1645)  callers 1  calls 19
+    msg 273: The moonstone is not available.\n
+035bca (311a:182a)  callers 3  calls 5
+035c83 (32a8:0003)  callers 1  calls 2
+035d03 (32a8:0083)  callers 1  calls 1
+035d0d (32a8:008d)  callers 54  calls 1
+035d96 (32a8:0116)  callers 7  calls 0
+035e9a (32a8:021a)  callers 1  calls 0
+035f15 (32a8:0295)  callers 1  calls 0
+035fa6 (32a8:0326)  callers 17  calls 3
+    items: f0(an_In stone)
+03605e (32a8:03de)  callers 3  calls 2
+036114 (32a8:0494)  callers 61  calls 2
+03613d (32a8:04bd)  callers 2  calls 4
+0361b7 (32a8:0537)  callers 1  calls 7
+036264 (32a8:05e4)  callers 1  calls 2
+036284 (32a8:0604)  callers 1  calls 3
+    items: 7c() ff(a_Ylem stone)
+036404 (32a8:0784)  callers 1  calls 1
+036435 (32a8:07b5)  callers 1  calls 1
+    items: ff(a_Ylem stone)
+036497 (32a8:0817)  callers 2  calls 0
+0364da (32a8:085a)  callers 2  calls 0
+03651d (32a8:089d)  callers 1  calls 0
+03658e (32a8:090e)  callers 14  calls 0
+0365e2 (333e:0002)  callers 7  calls 20
+    msg 9: As you reach for the tree, it withers away, revealing a silver seed.\n
+    items: e7(the_Key of Infinit) 12e(a_fountain)
+036934 (333e:0354)  callers 9  calls 7
+036a18 (333e:0438)  callers 4  calls 2
+036a78 (333e:0498)  callers 0  calls 4
+    msg 121: You succeed in picking the lock.\n
+036afd (333e:051d)  callers 0  calls 3
+036b55 (333e:0575)  callers 1  calls 1
+    items: 101(a_lockpick) 10f(a_lock)
+036b9a (333e:05ba)  callers 6  calls 6
+036c42 (333e:0662)  callers 0  calls 3
+    msg 128: You can only spike closed doors.\n
+    msg 129: The door is now spiked closed.\n
+    items: 140(a_door) 147(a_secret door)
+036cd9 (333e:06f9)  callers 1  calls 1
+036cf9 (333e:0719)  callers 0  calls 7
+    msg 132: It seems to have no effect.\n
+    msg 134: You thoughtfully give the bones a final resting place.\n
+    msg 259: The bones do not seem at rest in the grave, and you take them back.\n
+    items: 165(a_gravestone)
+036e62 (333e:0882)  callers 0  calls 3
+    msg 157: Using the pole you trigger the switch.\n
+    msg 158: The pole cannot be used on that.\n
+036eaf (333e:08cf)  callers 0  calls 2
+036ef9 (333e:0919)  callers 1  calls 3
+    items: c2(a_skull) c6(a_pile of bones&pi) ce(a_plant) cf(a_plant) d7(an_anvil) d8(a_pole) d9(a_dead rotworm)
+036fca (333e:09ea)  callers 0  calls 0
+036ff2 (333e:0a12)  callers 1  calls 7
+    msg 132: It seems to have no effect.\n
+    msg 133: The orb is destroyed!\n
+    items: 117(an_orb)
+0370df (333e:0aff)  callers 0  calls 4
+    msg 132: It seems to have no effect.\n
+    items: 16e(special tmap obj)
+037164 (333e:0b84)  callers 1  calls 8
+037266 (333e:0c86)  callers 1  calls 8
+    msg 123: Lights may only be used if equipped.\n
+    msg 124: That light is already used up.\n
+    msg 246: Your hands are full.\n
+    items: 90(a_lantern) 91(a_torch&torches) 92(a_candle) 93(a_taper)
+037401 (333e:0e21)  callers 1  calls 6
+    msg 125: With a loud <SNAP!>, the wand cracks.\n
+0374ee (333e:0f0e)  callers 4  calls 19
+    msg 119: You can only use those individually.  Take one from this group if you wish to use it.\n
+    msg 126: You are too full to eat that now.\n
+    msg 127: You are unable to open the wine bottle.\n
+    msg 241: As the alcohol hits you, you stumble and collapse into sleep.\n
+    msg 242: The drink makes you feel a little better for now.\n
+    msg 243: You wake feeling somewhat unstable but better.\n
+    items: 92(a_candle) b8(a_mushroom) b9(a_toadstool) ba(a_bottle of ale&bo) bb(a_red potion) bc(a_green potion) bd(a_bottle of water&) be(a_flask of port&fl) bf(a_bottle of wine&b) ce(a_plant) cf(a_plant) d9(a_dead rotworm) ff(a_Ylem stone) 11b(some_rotworm stew&) 125(some_leeches&bunch)
+03797e (333e:139e)  callers 0  calls 12
+    msg 132: It seems to have no effect.\n
+    msg 135: The rock breaks into smaller pieces.\n
+    items: 153(a_large boulder) 156(a_small boulder)
+037b60 (333e:1580)  callers 0  calls 5
+    msg 177: You cannot use oil on that.\n
+    msg 181: Dousing a cloth with oil and applying it to the wood, you make a torch.\n
+    items: 90(a_lantern) 91(a_torch&torches) 94(a_lit lantern) 95(a_lit torch) cc(a_piece of wood&pi) cd(a_piece of wood&pi)
+037ca4 (333e:16c4)  callers 1  calls 16
+    msg 274: The cauldron is empty.\n
+    items: 129(a_glowing rock) 12e(a_fountain) 12f(a_cauldron)
+037f88 (333e:19a8)  callers 1  calls 12
+    items: 100(a_key) 13b(a_map)
+038115 (333e:1b35)  callers 1  calls 11
+    items: 7f(an_adventurer)
+03831b (333e:1d3b)  callers 6  calls 5
+0384e4 (333e:1f04)  callers 4  calls 4
+    items: 98(a_wand) 9b(a_wand)
+0385d6 (333e:1ff6)  callers 11  calls 4
+0386ad (333e:20cd)  callers 2  calls 2
+03870e (333e:212e)  callers 3  calls 2
+0387c6 (333e:21e6)  callers 6  calls 4
+    items: 1cf(a_moving door)
+0388dd (333e:22fd)  callers 6  calls 3
+    items: 1cf(a_moving door)
+038997 (333e:23b7)  callers 2  calls 2
+0389cc (333e:23ec)  callers 2  calls 7
+038a74 (333e:2494)  callers 3  calls 7
+038b2b (333e:254b)  callers 1  calls 3
+038b5c (333e:257c)  callers 6  calls 4
+038cd0 (333e:26f0)  callers 1  calls 0
+038d03 (333e:2723)  callers 1  calls 6
+038dd2 (35bd:0002)  callers 2  calls 0
+038e1d (35bd:004d)  callers 9  calls 1
+038eb8 (35bd:00e8)  callers 1  calls 0
+038eee (35bd:011e)  callers 14  calls 3
+038f35 (35d3:0005)  callers 1  calls 11
+039015 (35d3:00e5)  callers 2  calls 3
+039048 (35d3:0118)  callers 1  calls 0
+0390c0 (35d3:0190)  callers 1  calls 0
+0390cb (35d3:019b)  callers 11  calls 0
+0390f1 (35d3:01c1)  callers 7  calls 3
+039153 (35d3:0223)  callers 27  calls 2
+0391a6 (35d3:0276)  callers 7  calls 2
+    items: ff(a_Ylem stone)
+039236 (3603:0006)  callers 1  calls 2
+03925f (3603:002f)  callers 3  calls 1
+03927e (3603:004e)  callers 14  calls 0
+039294 (3603:0064)  callers 5  calls 0
+0392aa (3603:007a)  callers 6  calls 0
+0392c0 (3603:0090)  callers 5  calls 5
+03934e (3603:011e)  callers 3  calls 1
+039393 (3603:0163)  callers 2  calls 1
+0393fa (3603:01ca)  callers 2  calls 6
+039487 (3603:0257)  callers 1  calls 5
+03951a (3603:02ea)  callers 56  calls 8
+03964a (3603:041a)  callers 1  calls 2
+    items: 6d(a_mage)
+03969c (3603:046c)  callers 1  calls 2
+0396ef (3603:04bf)  callers 2  calls 7
+    items: 50(a_goblin) 5c(a_dread spider) 6d(a_mage) 70(a_great troll)
+0398d9 (3603:06a9)  callers 1  calls 4
+0399d1 (3603:07a1)  callers 1  calls 2
+039a23 (3603:07f3)  callers 0  calls 4
+039b1b (3603:08eb)  callers 12  calls 8
+039bab (3603:097b)  callers 1  calls 5
+039c21 (3603:09f1)  callers 3  calls 4
+039c8e (3603:0a5e)  callers 4  calls 12
+    items: 7e() 8c(an_urn) 8f(a_rune bag) 91(a_torch&torches) 92(a_candle) 96(a_lit candle) a5(a_large blue gem) a8(an_amulet) a9(a_goblet) aa(a_sceptre) 161(a_lever) 162(a_switch&switches) 164(a_bridge) 165(a_gravestone) 166(some_writing) 16b()
+03a181 (3603:0f51)  callers 2  calls 8
+    items: 4e(a_goblin) 59(a_gray lizardman&r) 6e(a_ghoul) 79(a_metal golem)
+03a274 (3707:0004)  callers 1  calls 4
+03a2ee (3707:007e)  callers 1  calls 1
+03a359 (3707:00e9)  callers 2  calls 8
+03a5e2 (3707:0372)  callers 0  calls 1
+03a61e (3707:03ae)  callers 2  calls 1
+03a68e (3707:041e)  callers 10  calls 1
+    items: 40(a_rotworm)
+03a7ac (3707:053c)  callers 2  calls 3
+    items: 1c0(some_blood)
+03a969 (3707:06f9)  callers 5  calls 3
+03aa04 (3707:0794)  callers 3  calls 9
+03abca (3707:095a)  callers 1  calls 5
+03aca3 (3707:0a33)  callers 8  calls 6
+03adf9 (3707:0b89)  callers 0  calls 6
+03af20 (3707:0cb0)  callers 2  calls 1
+03af6c (3707:0cfc)  callers 2  calls 1
+03af98 (3707:0d28)  callers 1  calls 1
+03afc0 (3707:0d50)  callers 1  calls 4
+03b163 (3707:0ef3)  callers 1  calls 1
+    items: 40(a_rotworm) 180(a_damage trap)
+03b1c4 (3707:0f54)  callers 1  calls 1
+    items: 40(a_rotworm)
+03b1fb (37ff:000b)  callers 1  calls 0
+    items: 60(a_troll) a0(a_coin)
+03b2b3 (37ff:00c3)  callers 0  calls 1
+03b2d6 (37ff:00e6)  callers 5  calls 0
+03b2ec (37ff:00fc)  callers 1  calls 0
+03b2fb (37ff:010b)  callers 1  calls 0
+03b30e (37ff:011e)  callers 3  calls 2
+    items: a0(a_coin)
+03b41c (37ff:022c)  callers 0  calls 1
+    items: 60(a_troll)
+03b43b (37ff:024b)  callers 0  calls 1
+03b462 (37ff:0272)  callers 3  calls 1
+    items: a0(a_coin)
+03b52d (37ff:033d)  callers 0  calls 0
+    items: 5f(a_fighter)
+03b577 (3836:0017)  callers 1  calls 7
+03b69c (3836:013c)  callers 2  calls 0
+03b6ed (3836:018d)  callers 0  calls 1
+03b70f (3836:01af)  callers 1  calls 1
+03b71b (3836:01bb)  callers 1  calls 1
+    items: 5c(a_dread spider)
+03b75b (3836:01fb)  callers 1  calls 1
+    items: 5c(a_dread spider)
+03b7b8 (3836:0258)  callers 3  calls 0
+03b7de (3836:027e)  callers 1  calls 0
+03b7ee (3836:028e)  callers 2  calls 1
+    items: ff(a_Ylem stone)
+03b86e (3836:030e)  callers 1  calls 3
+03b93b (3836:03db)  callers 2  calls 0
+03b974 (3836:0414)  callers 2  calls 1
+03b9b9 (3836:0459)  callers 1  calls 2
+    items: 50(a_goblin) b8(a_mushroom)
+03ba47 (3836:04e7)  callers 0  calls 1
+03baad (3836:054d)  callers 1  calls 7
+03baf7 (3836:0597)  callers 2  calls 6
+03bb72 (3836:0612)  callers 1  calls 1
+03bb8a (3836:062a)  callers 1  calls 2
+03bbc5 (3836:0665)  callers 1  calls 1
+    items: ea(a_Corp stone)
+03bbe6 (3836:0686)  callers 1  calls 0
+03bc04 (3836:06a4)  callers 2  calls 1
+    items: cd(a_piece of wood&pi)
+03bc37 (3836:06d7)  callers 2  calls 1
+    items: cd(a_piece of wood&pi)
+03bc88 (3836:0728)  callers 2  calls 1
+03bca6 (3836:0746)  callers 2  calls 1
+03bcb2 (3836:0752)  callers 2  calls 0
+03bcd8 (3836:0778)  callers 2  calls 0
+03bcf4 (3836:0794)  callers 4  calls 0
+03bd00 (3836:07a0)  callers 2  calls 0
+03bd4e (3836:07ee)  callers 0  calls 0
+03bde6 (3836:0886)  callers 0  calls 1
+    items: cd(a_piece of wood&pi)
+03be3e (3836:08de)  callers 1  calls 2
+03bf1e (3836:09be)  callers 1  calls 1
+03c008 (3836:0aa8)  callers 0  calls 2
+03c122 (3836:0bc2)  callers 1  calls 3
+03c175 (3836:0c15)  callers 2  calls 0
+03c181 (3836:0c21)  callers 2  calls 3
+03c228 (3836:0cc8)  callers 1  calls 0
+03c257 (3836:0cf7)  callers 1  calls 5
+03c2e0 (3836:0d80)  callers 1  calls 0
+    items: ff(a_Ylem stone)
+03c392 (3836:0e32)  callers 1  calls 0
+03c3f7 (3836:0e97)  callers 0  calls 0
+03c421 (3836:0ec1)  callers 1  calls 1
+    items: 80(a_sack) f9(a_Rel stone) fb(a_Tym stone) fc(an_Uus stone)
+03c5d1 (3836:1071)  callers 1  calls 0
+03c6a9 (3836:1149)  callers 0  calls 0
+03c6fd (3836:119d)  callers 2  calls 0
+04ac1a (4723:07ea)  callers 1  calls 0
+04accc (4723:089c)  callers 1  calls 0
+04b1d3 (4723:0da3)  callers 1  calls 0
+04b7b1 (4723:1381)  callers 1  calls 0
+04bf26 (4723:1af6)  callers 1  calls 0
+04bf98 (4723:1b68)  callers 1  calls 0
+04c1ed (4723:1dbd)  callers 1  calls 0
+04cbb7 (4723:2787)  callers 1  calls 7
+    items: 9d(a_broken wand)
+04d67c (4723:324c)  callers 1  calls 2
+04dbb1 (4723:3781)  callers 1  calls 1
+04dc50 (4723:3820)  callers 1  calls 2
+04e254 (4723:3e24)  callers 1  calls 2
+04e55c (4723:412c)  callers 1  calls 6
+04ead0 (4723:46a0)  callers 1  calls 2
+04ec9f (4723:486f)  callers 1  calls 2
+04f33c (4723:4f0c)  callers 1  calls 2
+04f4e4 (4723:50b4)  callers 1  calls 6
+    items: d6(a_pile of debris&p)
+050166 (4723:5d36)  callers 1  calls 6
+05085e (4723:642e)  callers 1  calls 1
+    items: f0(an_In stone)
+05168b (4723:725b)  callers 1  calls 0
+051be9 (4723:77b9)  callers 1  calls 0
+052290 (4723:7e60)  callers 1  calls 0
+053b20 (4723:96f0)  callers 1  calls 0
+053eab (4723:9a7b)  callers 1  calls 0
+0546a3 (4723:a273)  callers 1  calls 0
+055792 (4723:b362)  callers 1  calls 0
+0559f6 (4723:b5c6)  callers 1  calls 0
+055e39 (4723:ba09)  callers 1  calls 2
+    items: 8d(a_quiver) c5(a_bone)
+065710 (ovl 5950+0000)  callers 0  calls 1
+065727 (ovl 5950+0017)  callers 0  calls 0
+065750 (ovl 5953+0000)  callers 0  calls 0
+065755 (ovl 5953+0005)  callers 0  calls 1
+065763 (ovl 5953+0013)  callers 0  calls 0
+065768 (ovl 5953+0018)  callers 0  calls 0
+06576d (ovl 5953+001d)  callers 0  calls 0
+065772 (ovl 5953+0022)  callers 0  calls 0
+065777 (ovl 5953+0027)  callers 0  calls 0
+065790 (ovl 5958+0000)  callers 10  calls 7
+0658e3 (ovl 5958+0153)  callers 10  calls 6
+0659bc (ovl 5958+022c)  callers 5  calls 11
+065daa (ovl 5958+061a)  callers 6  calls 2
+065ebe (ovl 5958+072e)  callers 0  calls 3
+065f28 (ovl 5958+0798)  callers 1  calls 4
+066050 (ovl 595c+0000)  callers 0  calls 10
+0660e7 (ovl 595c+0097)  callers 2  calls 4
+06616e (ovl 595c+011e)  callers 3  calls 1
+06619e (ovl 595c+014e)  callers 1  calls 12
+066220 (ovl 595c+01d0)  callers 2  calls 1
+066235 (ovl 595c+01e5)  callers 1  calls 4
+066377 (ovl 595c+0327)  callers 1  calls 1
+06646f (ovl 595c+041f)  callers 5  calls 3
+0664db (ovl 595c+048b)  callers 1  calls 6
+0666bf (ovl 595c+066f)  callers 1  calls 1
+0667b7 (ovl 595c+0767)  callers 0  calls 1
+0667fe (ovl 595c+07ae)  callers 1  calls 2
+0668f6 (ovl 595c+08a6)  callers 0  calls 23
+    items: 52(a_bloodworm) 63(a_ghoul) 64(a_ghost) 7a(a_wisp) b7(some_popcorn&bunch) c7(some_vines&bunches) 104(a_key) 113(the_Gem Cutter of ) 13b(a_map) 140(a_door)
+066dd0 (ovl 595c+0d80)  callers 2  calls 3
+066e8c (ovl 595c+0e3c)  callers 2  calls 4
+066f5a (ovl 595c+0f0a)  callers 1  calls 4
+066fb6 (ovl 595c+0f66)  callers 2  calls 19
+067138 (ovl 595c+10e8)  callers 1  calls 6
+06718c (ovl 595c+113c)  callers 0  calls 1
+0672c0 (ovl 5964+0000)  callers 1  calls 0
+0672f1 (ovl 5964+0031)  callers 11  calls 1
+067493 (ovl 5964+01d3)  callers 12  calls 0
+06762d (ovl 5964+036d)  callers 1  calls 2
+06780a (ovl 5964+054a)  callers 2  calls 8
+06791a (ovl 5964+065a)  callers 1  calls 7
+0679d5 (ovl 5964+0715)  callers 1  calls 7
+067a87 (ovl 5964+07c7)  callers 1  calls 15
+067c70 (ovl 5964+09b0)  callers 0  calls 0
+067cb8 (ovl 5964+09f8)  callers 0  calls 4
+067d0d (ovl 5964+0a4d)  callers 0  calls 4
+067d3d (ovl 5964+0a7d)  callers 0  calls 5
+067d9b (ovl 5964+0adb)  callers 0  calls 7
+067ea7 (ovl 5964+0be7)  callers 0  calls 7
+068001 (ovl 5964+0d41)  callers 0  calls 7
+06810b (ovl 5964+0e4b)  callers 0  calls 1
+068121 (ovl 5964+0e61)  callers 0  calls 2
+06814e (ovl 5964+0e8e)  callers 0  calls 1
+068194 (ovl 5964+0ed4)  callers 0  calls 6
+0682c3 (ovl 5964+1003)  callers 0  calls 6
+068380 (ovl 5964+10c0)  callers 0  calls 6
+0683ef (ovl 5964+112f)  callers 0  calls 1
+068446 (ovl 5964+1186)  callers 0  calls 3
+06846b (ovl 5964+11ab)  callers 0  calls 3
+068490 (ovl 5964+11d0)  callers 12  calls 14
+    items: 40(a_rotworm) 43(a_giant rat) 47(a_goblin) 49(a_vampire bat) 50(a_goblin) 53(a_wolf spider)
+0686e8 (ovl 5964+1428)  callers 2  calls 5
+    items: 43(a_giant rat) 47(a_goblin) 49(a_vampire bat) 50(a_goblin) 53(a_wolf spider)
+0687eb (ovl 5964+152b)  callers 1  calls 3
+    items: 111(a_crystal splinter)
+0689ea (ovl 5964+172a)  callers 1  calls 1
+068a0d (ovl 5964+174d)  callers 1  calls 2
+068a2e (ovl 5964+176e)  callers 1  calls 24
+068e08 (ovl 5964+1b48)  callers 1  calls 0
+068e41 (ovl 5964+1b81)  callers 1  calls 0
+068e65 (ovl 5964+1ba5)  callers 1  calls 0
+068e9e (ovl 5964+1bde)  callers 1  calls 0
+068ed7 (ovl 5964+1c17)  callers 1  calls 0
+068f27 (ovl 5964+1c67)  callers 1  calls 0
+068f77 (ovl 5964+1cb7)  callers 1  calls 0
+068fbc (ovl 5964+1cfc)  callers 1  calls 0
+069001 (ovl 5964+1d41)  callers 1  calls 0
+069043 (ovl 5964+1d83)  callers 1  calls 0
+069085 (ovl 5964+1dc5)  callers 1  calls 0
+0690c7 (ovl 5964+1e07)  callers 1  calls 0
+069109 (ovl 5964+1e49)  callers 1  calls 0
+06914b (ovl 5964+1e8b)  callers 1  calls 0
+06918d (ovl 5964+1ecd)  callers 1  calls 0
+0691bb (ovl 5964+1efb)  callers 1  calls 0
+0691e3 (ovl 5964+1f23)  callers 1  calls 0
+069210 (ovl 5964+1f50)  callers 1  calls 0
+06924a (ovl 5964+1f8a)  callers 1  calls 0
+06927d (ovl 5964+1fbd)  callers 1  calls 0
+0692fa (ovl 5964+203a)  callers 1  calls 4
+0693db (ovl 5964+211b)  callers 1  calls 4
+069483 (ovl 5964+21c3)  callers 1  calls 4
+06952b (ovl 5964+226b)  callers 3  calls 0
+069540 (ovl 5964+2280)  callers 46  calls 0
+069553 (ovl 5964+2293)  callers 3  calls 0
+069569 (ovl 5964+22a9)  callers 2  calls 0
+06957f (ovl 5964+22bf)  callers 2  calls 1
+0695ed (ovl 5964+232d)  callers 2  calls 3
+069694 (ovl 5964+23d4)  callers 2  calls 1
+069713 (ovl 5964+2453)  callers 1  calls 0
+    items: 111(a_crystal splinter)
+069980 (ovl 5977+0000)  callers 0  calls 0
+0699a1 (ovl 5977+0021)  callers 0  calls 2
+0699dc (ovl 5977+005c)  callers 0  calls 3
+    items: 40(a_rotworm)
+069b53 (ovl 5977+01d3)  callers 0  calls 2
+069bb6 (ovl 5977+0236)  callers 0  calls 1
+069bff (ovl 5977+027f)  callers 0  calls 9
+    items: 40(a_rotworm)
+069dd6 (ovl 5977+0456)  callers 0  calls 2
+069e3e (ovl 5977+04be)  callers 0  calls 3
+069e72 (ovl 5977+04f2)  callers 0  calls 2
+069ebd (ovl 5977+053d)  callers 0  calls 1
+069f38 (ovl 5977+05b8)  callers 0  calls 1
+069fa4 (ovl 5977+0624)  callers 0  calls 1
+069fc9 (ovl 5977+0649)  callers 0  calls 6
+06a0ca (ovl 5977+074a)  callers 0  calls 3
+06a383 (ovl 5977+0a03)  callers 0  calls 4
+    items: 7f(an_adventurer)
+06a590 (ovl 597e+0000)  callers 0  calls 9
+06a735 (ovl 597e+01a5)  callers 1  calls 7
+06a952 (ovl 597e+03c2)  callers 1  calls 7
+06aa1c (ovl 597e+048c)  callers 0  calls 3
+06aa63 (ovl 597e+04d3)  callers 3  calls 0
+06aabf (ovl 597e+052f)  callers 2  calls 0
+06ab1b (ovl 597e+058b)  callers 1  calls 2
+06ab89 (ovl 597e+05f9)  callers 1  calls 4
+06abcd (ovl 597e+063d)  callers 0  calls 3
+06ac13 (ovl 597e+0683)  callers 3  calls 19
+    msg 252: That is too heavy to take.\n
+06af96 (ovl 597e+0a06)  callers 5  calls 9
+06b110 (ovl 597e+0b80)  callers 2  calls 8
+06b1b2 (ovl 597e+0c22)  callers 1  calls 2
+06b207 (ovl 597e+0c77)  callers 1  calls 6
+06b35a (ovl 597e+0dca)  callers 7  calls 4
+06b403 (ovl 597e+0e73)  callers 3  calls 7
+06b497 (ovl 597e+0f07)  callers 1  calls 10
+    items: a1(a_gold coin)
+06b66c (ovl 597e+10dc)  callers 1  calls 0
+06b69f (ovl 597e+110f)  callers 0  calls 8
+06b84a (ovl 597e+12ba)  callers 0  calls 8
+06ba61 (ovl 597e+14d1)  callers 0  calls 1
+06ba6e (ovl 597e+14de)  callers 0  calls 5
+06bbd7 (ovl 597e+1647)  callers 3  calls 1
+06bc41 (ovl 597e+16b1)  callers 2  calls 5
+06bd49 (ovl 597e+17b9)  callers 2  calls 3
+06bd87 (ovl 597e+17f7)  callers 5  calls 1
+06bdea (ovl 597e+185a)  callers 2  calls 3
+    items: a1(a_gold coin)
+06bf25 (ovl 597e+1995)  callers 2  calls 7
+06bf8d (ovl 597e+19fd)  callers 1  calls 3
+06c041 (ovl 597e+1ab1)  callers 1  calls 12
+06c1d2 (ovl 597e+1c42)  callers 1  calls 11
+06c327 (ovl 597e+1d97)  callers 1  calls 5
+06c48c (ovl 597e+1efc)  callers 1  calls 3
+06c50b (ovl 597e+1f7b)  callers 0  calls 1
+06c53d (ovl 597e+1fad)  callers 2  calls 1
+06c7f0 (ovl 598a+0000)  callers 0  calls 0
+06c7f5 (ovl 598a+0005)  callers 0  calls 0
+06c7fa (ovl 598a+000a)  callers 0  calls 0
+06c802 (ovl 598a+0012)  callers 0  calls 0
+06c807 (ovl 598a+0017)  callers 0  calls 0
+06c80c (ovl 598a+001c)  callers 0  calls 0
+06c811 (ovl 598a+0021)  callers 0  calls 0
+06c830 (ovl 5991+0000)  callers 3  calls 6
+06ca88 (ovl 5991+0258)  callers 1  calls 0
+06cb77 (ovl 5991+0347)  callers 1  calls 5
+06ccc7 (ovl 5991+0497)  callers 1  calls 6
+06cd85 (ovl 5991+0555)  callers 1  calls 1
+06cdb2 (ovl 5991+0582)  callers 1  calls 2
+06ce8b (ovl 5991+065b)  callers 2  calls 5
+06d17a (ovl 5991+094a)  callers 4  calls 4
+06d2df (ovl 5991+0aaf)  callers 1  calls 5
+06d474 (ovl 5991+0c44)  callers 1  calls 10
+    items: 7e() 8c(an_urn) 8d(a_quiver) 8e(a_bowl) 8f(a_rune bag) 91(a_torch&torches) 92(a_candle) 93(a_taper) 94(a_lit lantern) a5(a_large blue gem) a6(a_sapphire) 12e(a_fountain) 162(a_switch&switches) 166(some_writing) 16e(special tmap obj) 170(a_button)
+06d797 (ovl 5991+0f67)  callers 1  calls 24
+06dcdd (ovl 5991+14ad)  callers 0  calls 0
+06dcff (ovl 5991+14cf)  callers 0  calls 0
+06dd3e (ovl 5991+150e)  callers 1  calls 22
+06dfc7 (ovl 5991+1797)  callers 1  calls 3
+06e140 (ovl 5998+0000)  callers 1  calls 1
+06e156 (ovl 5998+0016)  callers 1  calls 1
+06e29a (ovl 5998+015a)  callers 1  calls 1
+06e2b9 (ovl 5998+0179)  callers 1  calls 0
+06e2f2 (ovl 5998+01b2)  callers 1  calls 8
+    msg 148: The bowl does not contain the correct ingredients.\n
+    msg 149: You mix the ingredients into a stew.\n
+06e490 (ovl 599c+0000)  callers 6  calls 6
+    msg 272: There is no reaction from the princess.\n
+    items: 8e(a_bowl) e7(the_Key of Infinit) ff(a_Ylem stone) 157(a_shrine) 16e(special tmap obj)
+06e627 (ovl 599c+0197)  callers 0  calls 0
+06e649 (ovl 599c+01b9)  callers 0  calls 0
+06e671 (ovl 599c+01e1)  callers 0  calls 32
+06ea6d (ovl 599c+05dd)  callers 1  calls 4
+06ea93 (ovl 599c+0603)  callers 0  calls 0
+06ea98 (ovl 599c+0608)  callers 1  calls 10
+06ee0d (ovl 599c+097d)  callers 2  calls 11
+06eedd (ovl 599c+0a4d)  callers 0  calls 13
+06f0bc (ovl 599c+0c2c)  callers 0  calls 13
+06f2e0 (ovl 599c+0e50)  callers 0  calls 8
+06f3dc (ovl 599c+0f4c)  callers 2  calls 6
+06f443 (ovl 599c+0fb3)  callers 0  calls 6
+06f496 (ovl 599c+1006)  callers 2  calls 6
+06f4fd (ovl 599c+106d)  callers 0  calls 10
+06f5b4 (ovl 599c+1124)  callers 0  calls 3
+06f5e7 (ovl 599c+1157)  callers 0  calls 7
+06f675 (ovl 599c+11e5)  callers 0  calls 2
+06f6fc (ovl 599c+126c)  callers 0  calls 2
+06f7aa (ovl 599c+131a)  callers 0  calls 4
+06f8f5 (ovl 599c+1465)  callers 0  calls 3
+06f9dd (ovl 599c+154d)  callers 0  calls 6
+06faaf (ovl 599c+161f)  callers 0  calls 2
+06faca (ovl 599c+163a)  callers 0  calls 2
+06faf5 (ovl 599c+1665)  callers 0  calls 2
+06fb10 (ovl 599c+1680)  callers 0  calls 2
+06fb2b (ovl 599c+169b)  callers 0  calls 2
+06fb46 (ovl 599c+16b6)  callers 0  calls 14
+    items: 61(a_ghost) 65(a_ghost) 69(a_dark ghoul) 6f(a_feral troll) 75(a_shadow beast)
+06fd38 (ovl 599c+18a8)  callers 0  calls 2
+06fd94 (ovl 599c+1904)  callers 0  calls 2
+06fdca (ovl 599c+193a)  callers 0  calls 2
+0700b0 (ovl 59a8+0000)  callers 0  calls 1
+0700c7 (ovl 59a8+0017)  callers 0  calls 1
+0700de (ovl 59a8+002e)  callers 0  calls 0
+07010e (ovl 59a8+005e)  callers 1  calls 1
+070400 (ovl 59ae+0000)  callers 1  calls 3
+070892 (ovl 59ae+0492)  callers 1  calls 3
+070af0 (ovl 59b1+0000)  callers 4  calls 1
+070b2e (ovl 59b1+003e)  callers 1  calls 1
+070bab (ovl 59b1+00bb)  callers 2  calls 0
+070c05 (ovl 59b1+0115)  callers 1  calls 8
+070efd (ovl 59b1+040d)  callers 1  calls 6
+071026 (ovl 59b1+0536)  callers 2  calls 3
+07116e (ovl 59b1+067e)  callers 0  calls 1
+0711e1 (ovl 59b1+06f1)  callers 1  calls 1
+07120c (ovl 59b1+071c)  callers 0  calls 12
+071670 (ovl 59b1+0b80)  callers 1  calls 1
+07169b (ovl 59b1+0bab)  callers 1  calls 0
+0716cf (ovl 59b1+0bdf)  callers 1  calls 0
+071713 (ovl 59b1+0c23)  callers 2  calls 1
+071727 (ovl 59b1+0c37)  callers 0  calls 5
+07193c (ovl 59b1+0e4c)  callers 2  calls 1
+071a40 (ovl 59b8+0000)  callers 2  calls 1
+071a50 (ovl 59b8+0010)  callers 5  calls 2
+071a94 (ovl 59b8+0054)  callers 2  calls 1
+071a9e (ovl 59b8+005e)  callers 0  calls 1
+071ada (ovl 59b8+009a)  callers 1  calls 0
+071b7d (ovl 59b8+013d)  callers 1  calls 1
+071be4 (ovl 59b8+01a4)  callers 1  calls 2
+071c2c (ovl 59b8+01ec)  callers 1  calls 2
+071cb5 (ovl 59b8+0275)  callers 1  calls 0
+    items: 100(a_key)
+071d21 (ovl 59b8+02e1)  callers 1  calls 2
+071deb (ovl 59b8+03ab)  callers 1  calls 0
+071df6 (ovl 59b8+03b6)  callers 1  calls 3
+    items: 140(a_door)
+071ff6 (ovl 59b8+05b6)  callers 0  calls 0
+072005 (ovl 59b8+05c5)  callers 0  calls 0
+07200d (ovl 59b8+05cd)  callers 0  calls 0
+07203a (ovl 59b8+05fa)  callers 0  calls 0
+072081 (ovl 59b8+0641)  callers 0  calls 0
+0720c2 (ovl 59b8+0682)  callers 0  calls 0
+0720d1 (ovl 59b8+0691)  callers 0  calls 0
+0720e5 (ovl 59b8+06a5)  callers 0  calls 0
+07210c (ovl 59b8+06cc)  callers 0  calls 0
+072159 (ovl 59b8+0719)  callers 0  calls 2
+0721bc (ovl 59b8+077c)  callers 0  calls 0
+0721de (ovl 59b8+079e)  callers 0  calls 0
+072200 (ovl 59b8+07c0)  callers 0  calls 0
+07223d (ovl 59b8+07fd)  callers 0  calls 0
+07225b (ovl 59b8+081b)  callers 0  calls 1
+072270 (ovl 59b8+0830)  callers 1  calls 3
+0722a9 (ovl 59b8+0869)  callers 1  calls 35
+    items: 40(a_rotworm) c7(some_vines&bunches) c8(a_broken axe) 140(a_door)
+072e42 (ovl 59b8+1402)  callers 16  calls 9
+    items: 100(a_key) 103(a_key)
+072f23 (ovl 59b8+14e3)  callers 1  calls 0
+072f36 (ovl 59b8+14f6)  callers 2  calls 6
+073079 (ovl 59b8+1639)  callers 1  calls 1
+073140 (ovl 59c5+0000)  callers 1  calls 1
+07315b (ovl 59c5+001b)  callers 14  calls 0
+073160 (ovl 59c5+0020)  callers 0  calls 0
+073170 (ovl 59c8+0000)  callers 2  calls 7
+073ab9 (ovl 59c8+0949)  callers 4  calls 2
+073b68 (ovl 59c8+09f8)  callers 3  calls 5
+073e22 (ovl 59c8+0cb2)  callers 1  calls 3
+073ee4 (ovl 59c8+0d74)  callers 3  calls 2
+073f34 (ovl 59c8+0dc4)  callers 1  calls 4
+    msg 99: You catch a lovely fish.\n
+    msg 101: You cannot fish there.  Perhaps somewhere else.\n
+074011 (ovl 59c8+0ea1)  callers 2  calls 2
+    msg 192: There is an empty clicking sound.\n
+    msg 193: A voice utters the words "Reset Activated."\n
+07417b (ovl 59c8+100b)  callers 1  calls 6
+074329 (ovl 59c8+11b9)  callers 1  calls 1
+074342 (ovl 59c8+11d2)  callers 1  calls 2
+    items: 68(a_fighter)
+0743c9 (ovl 59c8+1259)  callers 2  calls 8
+074489 (ovl 59c8+1319)  callers 1  calls 3
+0744e3 (ovl 59c8+1373)  callers 1  calls 2
+0744fa (ovl 59c8+138a)  callers 0  calls 2
+074541 (ovl 59c8+13d1)  callers 1  calls 6
+    items: 1a0(a_move trigger)
+07460f (ovl 59c8+149f)  callers 2  calls 4
+    items: 6e(a_ghoul) 8e(a_bowl) e7(the_Key of Infinit)
+07473f (ovl 59c8+15cf)  callers 2  calls 0
+0747ac (ovl 59c8+163c)  callers 1  calls 3
+0748c4 (ovl 59c8+1754)  callers 1  calls 16
+    msg 83: .\n
+    msg 142: You cannot repair that.\n
+    msg 216: You think it will be 
+    msg 217:  to repair the 
+074ab6 (ovl 59c8+1946)  callers 0  calls 1
+074b2c (ovl 59c8+19bc)  callers 1  calls 2
+    items: 40(a_rotworm)
+074c70 (ovl 59d3+0000)  callers 1  calls 6
+074cba (ovl 59d3+004a)  callers 1  calls 36
+074e24 (ovl 59d3+01b4)  callers 5  calls 9
+074e64 (ovl 59d3+01f4)  callers 1  calls 2
+074e7c (ovl 59d3+020c)  callers 1  calls 4
+074f10 (ovl 59d3+02a0)  callers 1  calls 0
+074f1b (ovl 59d3+02ab)  callers 2  calls 2
+074f34 (ovl 59d3+02c4)  callers 2  calls 0
+074f6f (ovl 59d3+02ff)  callers 7  calls 2
+074fde (ovl 59d3+036e)  callers 0  calls 0
+074feb (ovl 59d3+037b)  callers 0  calls 15
+075098 (ovl 59d3+0428)  callers 0  calls 3
+0750ac (ovl 59d3+043c)  callers 2  calls 6
+07516b (ovl 59d3+04fb)  callers 2  calls 12
+075244 (ovl 59d3+05d4)  callers 0  calls 1
+07524e (ovl 59d3+05de)  callers 1  calls 4
+07529d (ovl 59d3+062d)  callers 2  calls 8
+0753b0 (ovl 59d3+0740)  callers 1  calls 4
+0754f0 (ovl 59db+0000)  callers 1  calls 2
+07559b (ovl 59db+00ab)  callers 8  calls 3
+0755b7 (ovl 59db+00c7)  callers 13  calls 5
+075643 (ovl 59db+0153)  callers 1  calls 4
+0756c0 (ovl 59e1+0000)  callers 0  calls 5
+075809 (ovl 59e1+0149)  callers 1  calls 0
+075854 (ovl 59e1+0194)  callers 2  calls 2
+075883 (ovl 59e1+01c3)  callers 1  calls 3
+    items: fe(a_Wis stone)
+075963 (ovl 59e1+02a3)  callers 1  calls 5
+075ae0 (ovl 59e1+0420)  callers 1  calls 1
+    items: c7(some_vines&bunches) 140(a_door)
+075b90 (ovl 59e5+0000)  callers 2  calls 8
+    items: 80(a_sack) a0(a_coin)
+075d5e (ovl 59e5+01ce)  callers 1  calls 1
+    items: 80(a_sack)
+075dba (ovl 59e5+022a)  callers 1  calls 0
+    items: 80(a_sack) ff(a_Ylem stone)
+075e32 (ovl 59e5+02a2)  callers 2  calls 1
+    items: ff(a_Ylem stone)
+075eeb (ovl 59e5+035b)  callers 1  calls 5
+    items: ff(a_Ylem stone)
+075f5d (ovl 59e5+03cd)  callers 1  calls 3
+075ff0 (ovl 59e9+0000)  callers 1  calls 6
+076025 (ovl 59e9+0035)  callers 19  calls 6
+0760ad (ovl 59e9+00bd)  callers 1  calls 2
+0760bc (ovl 59e9+00cc)  callers 6  calls 5
+0760eb (ovl 59e9+00fb)  callers 4  calls 4
+07614a (ovl 59e9+015a)  callers 6  calls 2
+076178 (ovl 59e9+0188)  callers 2  calls 2
+0761a3 (ovl 59e9+01b3)  callers 5  calls 1
+0762a9 (ovl 59e9+02b9)  callers 4  calls 1
+076391 (ovl 59e9+03a1)  callers 2  calls 4
+0763d4 (ovl 59e9+03e4)  callers 2  calls 8
+07646a (ovl 59e9+047a)  callers 5  calls 1
+076481 (ovl 59e9+0491)  callers 3  calls 1
+076498 (ovl 59e9+04a8)  callers 0  calls 1
+0764af (ovl 59e9+04bf)  callers 0  calls 1
+0764c6 (ovl 59e9+04d6)  callers 4  calls 4
+0764ee (ovl 59e9+04fe)  callers 1  calls 5
+0765c0 (ovl 59f1+0000)  callers 1  calls 3
+076649 (ovl 59f1+0089)  callers 2  calls 9
+07676b (ovl 59f1+01ab)  callers 2  calls 2
+076786 (ovl 59f1+01c6)  callers 1  calls 3
+07683f (ovl 59f1+027f)  callers 0  calls 1
+076893 (ovl 59f1+02d3)  callers 0  calls 1
+0768d4 (ovl 59f1+0314)  callers 0  calls 0
+076914 (ovl 59f1+0354)  callers 0  calls 0
+076983 (ovl 59f1+03c3)  callers 0  calls 0
+0769f8 (ovl 59f1+0438)  callers 0  calls 0
+076a03 (ovl 59f1+0443)  callers 0  calls 0
+076a0f (ovl 59f1+044f)  callers 0  calls 3
+076a8c (ovl 59f1+04cc)  callers 0  calls 2
+076ae5 (ovl 59f1+0525)  callers 12  calls 3
+076bb6 (ovl 59f1+05f6)  callers 1  calls 1
+076be4 (ovl 59f1+0624)  callers 1  calls 1
+076c08 (ovl 59f1+0648)  callers 1  calls 1
+076c2e (ovl 59f1+066e)  callers 1  calls 5
+    items: 40(a_rotworm)
+076d31 (ovl 59f1+0771)  callers 1  calls 1
+076d5f (ovl 59f1+079f)  callers 0  calls 1
+076d9c (ovl 59f1+07dc)  callers 7  calls 1
+076dd3 (ovl 59f1+0813)  callers 4  calls 1
+076dfe (ovl 59f1+083e)  callers 1  calls 8
+076f93 (ovl 59f1+09d3)  callers 1  calls 2
+077070 (ovl 59fb+0000)  callers 0  calls 1
+0770aa (ovl 59fb+003a)  callers 0  calls 0
+077110 (ovl 59fe+0000)  callers 3  calls 11
+0772a2 (ovl 59fe+0192)  callers 2  calls 1
+0772ef (ovl 59fe+01df)  callers 2  calls 2
+07737b (ovl 59fe+026b)  callers 4  calls 6
+077431 (ovl 59fe+0321)  callers 2  calls 7
+0774fa (ovl 59fe+03ea)  callers 10  calls 6
+0775ae (ovl 59fe+049e)  callers 10  calls 2
+07778c (ovl 59fe+067c)  callers 1  calls 15
+077b3c (ovl 59fe+0a2c)  callers 1  calls 2
+077b60 (ovl 59fe+0a50)  callers 1  calls 4
+077c3d (ovl 59fe+0b2d)  callers 1  calls 13
+    msg 247: You can only put runes in the rune bag.\n
+    items: 8f(a_rune bag) 94(a_lit lantern) 98(a_wand)
+077f59 (ovl 59fe+0e49)  callers 1  calls 11
+0780e1 (ovl 59fe+0fd1)  callers 4  calls 2
+078270 (ovl 5a05+0000)  callers 1  calls 5
+07839c (ovl 5a05+012c)  callers 3  calls 10
+078476 (ovl 5a05+0206)  callers 2  calls 5
+078556 (ovl 5a05+02e6)  callers 1  calls 0
+0785aa (ovl 5a05+033a)  callers 1  calls 0
+0785c4 (ovl 5a05+0354)  callers 1  calls 0
+0785e6 (ovl 5a05+0376)  callers 1  calls 0
+0785f5 (ovl 5a05+0385)  callers 1  calls 0
+07863b (ovl 5a05+03cb)  callers 2  calls 6
+07872e (ovl 5a05+04be)  callers 4  calls 4
+0787e3 (ovl 5a05+0573)  callers 1  calls 3
+0788a9 (ovl 5a05+0639)  callers 3  calls 14
+078a40 (ovl 5a0b+0000)  callers 1  calls 1
+078aa4 (ovl 5a0b+0064)  callers 1  calls 0
+078abd (ovl 5a0b+007d)  callers 1  calls 3
+078b1f (ovl 5a0b+00df)  callers 0  calls 3
+078b80 (ovl 5a0b+0140)  callers 2  calls 2
+078bae (ovl 5a0b+016e)  callers 1  calls 4
+078cf8 (ovl 5a0b+02b8)  callers 1  calls 1
+078d09 (ovl 5a0b+02c9)  callers 0  calls 7
+078dd9 (ovl 5a0b+0399)  callers 0  calls 4
+078ea5 (ovl 5a0b+0465)  callers 1  calls 2
+078ec8 (ovl 5a0b+0488)  callers 1  calls 5
+    msg 214: The spell backfires.\n
+079070 (ovl 5a11+0000)  callers 6  calls 1
+079085 (ovl 5a11+0015)  callers 7  calls 1
+07909c (ovl 5a11+002c)  callers 0  calls 0
+0790c7 (ovl 5a11+0057)  callers 2  calls 6
+0791ba (ovl 5a11+014a)  callers 4  calls 3
+07928c (ovl 5a11+021c)  callers 5  calls 2
+0794bc (ovl 5a11+044c)  callers 3  calls 2
+0795af (ovl 5a11+053f)  callers 3  calls 3
+079614 (ovl 5a11+05a4)  callers 1  calls 1
+07962b (ovl 5a11+05bb)  callers 1  calls 1
+079640 (ovl 5a11+05d0)  callers 5  calls 1
+079655 (ovl 5a11+05e5)  callers 3  calls 12
+079805 (ovl 5a11+0795)  callers 1  calls 5
+07988d (ovl 5a11+081d)  callers 1  calls 5
+079915 (ovl 5a11+08a5)  callers 4  calls 2
+079945 (ovl 5a11+08d5)  callers 2  calls 8
+079c12 (ovl 5a11+0ba2)  callers 2  calls 0
+079c7f (ovl 5a11+0c0f)  callers 1  calls 16
+    items: 73(a_mage)
+079e4d (ovl 5a11+0ddd)  callers 8  calls 1
+079ee4 (ovl 5a11+0e74)  callers 4  calls 1
+079fa0 (ovl 5a1a+0000)  callers 3  calls 1
+079fe8 (ovl 5a1a+0048)  callers 2  calls 5
+07a185 (ovl 5a1a+01e5)  callers 1  calls 0
+07a18a (ovl 5a1a+01ea)  callers 2  calls 0
+07a1e1 (ovl 5a1a+0241)  callers 4  calls 18
+    msg 186: You cannot barter a container.  Instead, remove the contents you want to trade.\n
+07a523 (ovl 5a1a+0583)  callers 1  calls 8
+07a5d7 (ovl 5a1a+0637)  callers 1  calls 1
+07a611 (ovl 5a1a+0671)  callers 2  calls 12
+07a83c (ovl 5a1a+089c)  callers 11  calls 4
+07a8fa (ovl 5a1a+095a)  callers 2  calls 9
+07a9b4 (ovl 5a1a+0a14)  callers 3  calls 7
+07aaeb (ovl 5a1a+0b4b)  callers 5  calls 10
+    msg 247: You can only put runes in the rune bag.\n
+    msg 248: That item does not fit.\n
+    msg 258: There is no place to put that.\n
+    items: 92(a_candle) ce(a_plant) cf(a_plant) d9(a_dead rotworm) 11b(some_rotworm stew&) 125(some_leeches&bunch)
+07b0ab (ovl 5a1a+110b)  callers 2  calls 2
+07b0ff (ovl 5a1a+115f)  callers 2  calls 4
+07b14f (ovl 5a1a+11af)  callers 2  calls 0
+07b2bb (ovl 5a1a+131b)  callers 1  calls 17
+07b5c0 (ovl 5a1a+1620)  callers 6  calls 3
+07b606 (ovl 5a1a+1666)  callers 8  calls 10
+07b7c7 (ovl 5a1a+1827)  callers 3  calls 4
+07b84c (ovl 5a1a+18ac)  callers 4  calls 0
+    items: 8b(an_open gold coffe) 98(a_wand) be(a_flask of port&fl) c1(some_grass&bunches)
+07ba10 (ovl 5a23+0000)  callers 3  calls 16
+    items: 61(a_ghost) 65(a_ghost) 69(a_dark ghoul) 6f(a_feral troll) 75(a_shadow beast)
+07bd5a (ovl 5a23+034a)  callers 2  calls 2
+07bdbc (ovl 5a23+03ac)  callers 2  calls 8
+07bf96 (ovl 5a23+0586)  callers 1  calls 8
+    msg 151: Enscribed upon the scroll is your map.\n
+    items: ff(a_Ylem stone) 13b(a_map)
+07c0d1 (ovl 5a23+06c1)  callers 2  calls 12
+    msg 171: You see a bridge.\n
+07c32b (ovl 5a23+091b)  callers 1  calls 3
+    items: c6(a_pile of bones&pi)
+07c406 (ovl 5a23+09f6)  callers 1  calls 2
+07c448 (ovl 5a23+0a38)  callers 1  calls 5
+    items: 61(a_ghost) 65(a_ghost) 69(a_dark ghoul) 6f(a_feral troll) 75(a_shadow beast) f0(an_In stone) ff(a_Ylem stone)
+07c621 (ovl 5a23+0c11)  callers 1  calls 4
+    msg 131: The door is spiked.\n
+    items: c2(a_skull) c6(a_pile of bones&pi)
+07c6d3 (ovl 5a23+0cc3)  callers 1  calls 1
+    msg 260: You see 
+    items: 93(a_taper) 97(a_lit taper) ae(a_shiny cup) bf(a_bottle of wine&b) 11f(a_standard) 136(a_book)
+07c830 (ovl 5a29+0000)  callers 1  calls 3
+07c867 (ovl 5a29+0037)  callers 0  calls 0
+07c8a6 (ovl 5a29+0076)  callers 1  calls 6
+07c99e (ovl 5a29+016e)  callers 1  calls 6
+07cac0 (ovl 5a2f+0000)  callers 0  calls 1
+07cafa (ovl 5a2f+003a)  callers 0  calls 0
+07cb50 (ovl 5a32+0000)  callers 1  calls 2
+07cb70 (ovl 5a35+0000)  callers 0  calls 0
+07cb90 (ovl 5a3a+0000)  callers 1  calls 6
+07cc7e (ovl 5a3a+00ee)  callers 0  calls 0
+07cc85 (ovl 5a3a+00f5)  callers 2  calls 1
+07cce0 (ovl 5a3d+0000)  callers 3  calls 13
+    items: 6c(a_mage) 8d(a_quiver) 93(a_taper) a6(a_sapphire) ab(a_gold chain)
+07ce01 (ovl 5a3d+0121)  callers 5  calls 2
+07ce2b (ovl 5a3d+014b)  callers 3  calls 2
+07ce66 (ovl 5a3d+0186)  callers 9  calls 1
+07ce9e (ovl 5a3d+01be)  callers 7  calls 5
+07cef4 (ovl 5a3d+0214)  callers 0  calls 2
+07cf12 (ovl 5a3d+0232)  callers 0  calls 7
+07cf6c (ovl 5a3d+028c)  callers 0  calls 2
+07cf8a (ovl 5a3d+02aa)  callers 2  calls 5
+07d033 (ovl 5a3d+0353)  callers 0  calls 4
+07d095 (ovl 5a3d+03b5)  callers 0  calls 4
+07d0ed (ovl 5a3d+040d)  callers 0  calls 4
+07d145 (ovl 5a3d+0465)  callers 0  calls 9
+07d1f7 (ovl 5a3d+0517)  callers 0  calls 4
+07d24e (ovl 5a3d+056e)  callers 0  calls 8
+07d2f8 (ovl 5a3d+0618)  callers 0  calls 8
+07d353 (ovl 5a3d+0673)  callers 5  calls 0
+07d369 (ovl 5a3d+0689)  callers 2  calls 6
+07d3b6 (ovl 5a3d+06d6)  callers 2  calls 1
+07d3d2 (ovl 5a3d+06f2)  callers 2  calls 7
+    items: 164(a_bridge) 166(some_writing)
+07d4c8 (ovl 5a3d+07e8)  callers 0  calls 3
+    msg 160: You cannot select options partway through an action.\n
+07d5b0 (ovl 5a46+0000)  callers 1  calls 1
+07d78d (ovl 5a46+01dd)  callers 0  calls 2
+07d7bd (ovl 5a46+020d)  callers 1  calls 4
+    items: 7a(a_wisp)
+07d892 (ovl 5a46+02e2)  callers 1  calls 1
+07d925 (ovl 5a46+0375)  callers 4  calls 5
+07da4c (ovl 5a46+049c)  callers 2  calls 8
+07db91 (ovl 5a46+05e1)  callers 1  calls 4
+07dcc0 (ovl 5a4d+0000)  callers 0  calls 0
+07dcc5 (ovl 5a4d+0005)  callers 1  calls 4
+07ddc0 (ovl 5a4d+0100)  callers 1  calls 6
+07dea4 (ovl 5a4d+01e4)  callers 1  calls 1
+07df1c (ovl 5a4d+025c)  callers 1  calls 1
+    items: ff(a_Ylem stone)
+07df59 (ovl 5a4d+0299)  callers 1  calls 4
+07e007 (ovl 5a4d+0347)  callers 1  calls 2
+07e23e (ovl 5a4d+057e)  callers 2  calls 1
+07e2c2 (ovl 5a4d+0602)  callers 2  calls 1
+07e31d (ovl 5a4d+065d)  callers 1  calls 3
+07e3ed (ovl 5a4d+072d)  callers 1  calls 0
+07e444 (ovl 5a4d+0784)  callers 28  calls 14
+07e830 (ovl 5a53+0000)  callers 2  calls 3
+07e852 (ovl 5a53+0022)  callers 1  calls 0
+07e902 (ovl 5a53+00d2)  callers 1  calls 5
+07ef0b (ovl 5a53+06db)  callers 1  calls 3
+07f168 (ovl 5a53+0938)  callers 2  calls 2
+07f1d6 (ovl 5a53+09a6)  callers 0  calls 1
+07f243 (ovl 5a53+0a13)  callers 0  calls 2
+    msg 275: Ultima Underworld: The Stygian Abyss v
+07f25e (ovl 5a53+0a2e)  callers 2  calls 2
+    items: 100(a_key)
+07f327 (ovl 5a53+0af7)  callers 1  calls 2
+    items: 180(a_damage trap)
+07f3df (ovl 5a53+0baf)  callers 6  calls 2
+    items: 100(a_key)
+07f4d8 (ovl 5a53+0ca8)  callers 1  calls 2
+07f4ee (ovl 5a53+0cbe)  callers 1  calls 3
+07f582 (ovl 5a53+0d52)  callers 1  calls 7
+    items: 40(a_rotworm)
+07f676 (ovl 5a53+0e46)  callers 2  calls 2
+07f6d1 (ovl 5a53+0ea1)  callers 0  calls 1
+07f6f6 (ovl 5a53+0ec6)  callers 0  calls 1
+07f8b0 (ovl 5a5e+0000)  callers 0  calls 0
+07f8c0 (ovl 5a61+0000)  callers 0  calls 0
+07f8e2 (ovl 5a61+0022)  callers 0  calls 0
+07f954 (ovl 5a61+0094)  callers 3  calls 2
+07f98d (ovl 5a61+00cd)  callers 1  calls 2
+07f9bc (ovl 5a61+00fc)  callers 3  calls 6
+    items: 13e(a_scroll)
+07fb08 (ovl 5a61+0248)  callers 2  calls 42
+07fe31 (ovl 5a61+0571)  callers 1  calls 6
+080028 (ovl 5a61+0768)  callers 2  calls 6
+    items: 8c(an_urn) 8d(a_quiver) 8e(a_bowl) 8f(a_rune bag) 91(a_torch&torches) 92(a_candle) 93(a_taper) 94(a_lit lantern) a5(a_large blue gem) a6(a_sapphire) 162(a_switch&switches) 166(some_writing) 16e(special tmap obj) 170(a_button)
+0801e5 (ovl 5a61+0925)  callers 1  calls 11
+080400 (ovl 5a66+0000)  callers 0  calls 0
+080410 (ovl 5a69+0000)  callers 1  calls 6
+0804a2 (ovl 5a69+0092)  callers 3  calls 10
+08053d (ovl 5a69+012d)  callers 2  calls 9
+080639 (ovl 5a69+0229)  callers 5  calls 7
+080715 (ovl 5a69+0305)  callers 1  calls 4
+0807ad (ovl 5a69+039d)  callers 1  calls 9
+08085b (ovl 5a69+044b)  callers 2  calls 11
+    msg 166: Restoring Game 
+    msg 170: ...
+080924 (ovl 5a69+0514)  callers 1  calls 16
+    msg 167: Saving Game 
+    msg 168: \\6     Please enter a save file description:\n
+    msg 170: ...
+080a79 (ovl 5a69+0669)  callers 5  calls 6
+080afc (ovl 5a69+06ec)  callers 3  calls 7
+080bcb (ovl 5a69+07bb)  callers 2  calls 6
+080c91 (ovl 5a69+0881)  callers 1  calls 5
+080d16 (ovl 5a69+0906)  callers 3  calls 4
+080ef0 (ovl 5a70+0000)  callers 5  calls 11
+081010 (ovl 5a73+0000)  callers 3  calls 7
+08112a (ovl 5a73+011a)  callers 1  calls 3
+081191 (ovl 5a73+0181)  callers 1  calls 4
+081270 (ovl 5a76+0000)  callers 1  calls 3
+0812e0 (ovl 5a76+0070)  callers 0  calls 1
+081305 (ovl 5a76+0095)  callers 5  calls 0
+08138a (ovl 5a76+011a)  callers 1  calls 4
+    msg 147: You have attained experience level 
+081402 (ovl 5a76+0192)  callers 2  calls 0
+08141f (ovl 5a76+01af)  callers 1  calls 5
+0814e1 (ovl 5a76+0271)  callers 2  calls 3
+081630 (ovl 5a76+03c0)  callers 1  calls 3
+    msg 27: You cannot advance any further in that skill.\n
+    msg 28: You have advanced greatly in 
+081676 (ovl 5a76+0406)  callers 1  calls 3
+    msg 29: You have advanced in 
+    msg 30: None of your skills improved.\n
+    items: ff(a_Ylem stone)
+0816fd (ovl 5a76+048d)  callers 2  calls 21
+    msg 24: You are not ready to advance.\n
+    msg 25: That is not a mantra.\n
+    msg 26: Knowledge and Understanding fill you.\n
+    msg 30: None of your skills improved.\n
+    msg 31: 
+    items: 4d(a_goblin)
+0819df (ovl 5a76+076f)  callers 1  calls 10
+081de3 (ovl 5a76+0b73)  callers 1  calls 2
+081eea (ovl 5a76+0c7a)  callers 1  calls 4
+081f8f (ovl 5a76+0d1f)  callers 3  calls 26
+    msg 14: There are hostile creatures near!\n
+    msg 15: You make camp.\n
+    msg 16: You go to sleep.\n
+    msg 17: You are starving.\n
+    msg 20: You can't go to sleep here!\n
+    msg 21: Your sleep is interrupted!\n
+    items: 40(a_rotworm)
+082345 (ovl 5a76+10d5)  callers 0  calls 2
+082377 (ovl 5a76+1107)  callers 3  calls 1
+    items: ff(a_Ylem stone)
+0823f6 (ovl 5a76+1186)  callers 0  calls 19
+    msg 279: The Slasher of Veils is dragged from this world.\n
+    msg 280: You are sucked through the moongate . . . . .\n
+08256b (ovl 5a76+12fb)  callers 1  calls 8
+08271d (ovl 5a76+14ad)  callers 2  calls 2
+082791 (ovl 5a76+1521)  callers 0  calls 6
+082864 (ovl 5a76+15f4)  callers 0  calls 1
+082880 (ovl 5a76+1610)  callers 1  calls 19
+082a99 (ovl 5a76+1829)  callers 2  calls 3
+082b3d (ovl 5a76+18cd)  callers 2  calls 10
+082f30 (ovl 5a80+0000)  callers 0  calls 0
+082f40 (ovl 5a83+0000)  callers 1  calls 8
+083033 (ovl 5a83+00f3)  callers 1  calls 3
+08308f (ovl 5a83+014f)  callers 2  calls 4
+083103 (ovl 5a83+01c3)  callers 2  calls 4
+083176 (ovl 5a83+0236)  callers 2  calls 4
+0831c4 (ovl 5a83+0284)  callers 2  calls 6
+08329f (ovl 5a83+035f)  callers 0  calls 11
+083385 (ovl 5a83+0445)  callers 1  calls 6
+08343b (ovl 5a83+04fb)  callers 3  calls 1
+0834b0 (ovl 5a88+0000)  callers 0  calls 0
+0834e0 (ovl 5a8f+0000)  callers 0  calls 1
+083500 (ovl 5a92+0000)  callers 2  calls 3
+08362e (ovl 5a92+012e)  callers 1  calls 1
+08365a (ovl 5a92+015a)  callers 1  calls 4
+0837bb (ovl 5a92+02bb)  callers 1  calls 3
+083821 (ovl 5a92+0321)  callers 1  calls 3
+    items: c0(a_plant)
+083942 (ovl 5a92+0442)  callers 1  calls 3
+083a16 (ovl 5a92+0516)  callers 5  calls 4
+083ae0 (ovl 5a99+0000)  callers 0  calls 0
+083ae5 (ovl 5a99+0005)  callers 0  calls 1
+083af3 (ovl 5a99+0013)  callers 0  calls 0
+083b00 (ovl 5a9c+0000)  callers 0  calls 1
+083b17 (ovl 5a9c+0017)  callers 0  calls 0
+083b3b (ovl 5a9c+003b)  callers 8  calls 6
+    items: 7f(an_adventurer)
+083d4a (ovl 5a9c+024a)  callers 3  calls 1
+083d96 (ovl 5a9c+0296)  callers 4  calls 36
+0848c2 (ovl 5a9c+0dc2)  callers 2  calls 4
+084983 (ovl 5a9c+0e83)  callers 5  calls 4
+084a41 (ovl 5a9c+0f41)  callers 0  calls 2
+084a7b (ovl 5a9c+0f7b)  callers 1  calls 11
+084c0a (ovl 5a9c+110a)  callers 1  calls 5
+084e5c (ovl 5a9c+135c)  callers 1  calls 5
+084f02 (ovl 5a9c+1402)  callers 1  calls 2
+084f3d (ovl 5a9c+143d)  callers 0  calls 0
+084f8e (ovl 5a9c+148e)  callers 1  calls 1
+084fc4 (ovl 5a9c+14c4)  callers 2  calls 0
+085017 (ovl 5a9c+1517)  callers 2  calls 5
+0850c4 (ovl 5a9c+15c4)  callers 1  calls 8
+085290 (ovl 5aa4+0000)  callers 0  calls 0
+0852a7 (ovl 5aa4+0017)  callers 0  calls 0
+08530c (ovl 5aa4+007c)  callers 2  calls 0
+085391 (ovl 5aa4+0101)  callers 1  calls 1
+0853ab (ovl 5aa4+011b)  callers 3  calls 3
+08546b (ovl 5aa4+01db)  callers 0  calls 2
+08552c (ovl 5aa4+029c)  callers 2  calls 1
+085561 (ovl 5aa4+02d1)  callers 1  calls 3
+085581 (ovl 5aa4+02f1)  callers 0  calls 1
+085598 (ovl 5aa4+0308)  callers 1  calls 1
+0855c3 (ovl 5aa4+0333)  callers 1  calls 2
+085604 (ovl 5aa4+0374)  callers 1  calls 3
+085637 (ovl 5aa4+03a7)  callers 1  calls 5
+0856de (ovl 5aa4+044e)  callers 1  calls 3
+085734 (ovl 5aa4+04a4)  callers 8  calls 3
+085787 (ovl 5aa4+04f7)  callers 25  calls 1
+0857d4 (ovl 5aa4+0544)  callers 9  calls 1
+085821 (ovl 5aa4+0591)  callers 1  calls 1
+    items: 50(a_goblin)
+08589d (ovl 5aa4+060d)  callers 1  calls 1
+    items: 50(a_goblin)
+085921 (ovl 5aa4+0691)  callers 0  calls 3

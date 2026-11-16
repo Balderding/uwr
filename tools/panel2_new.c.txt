@@ -1,0 +1,290 @@
+/* --- the panel ----------------------------------------------------------------------------------------------
+ * A grey board at the right, the height of the screen. At the top the body: the figure, and round it the worn
+ * things' holes, each with its name in the background and the thing over it. Below, one grid of all that is
+ * carried, as in World of Warcraft's combined bags: first the pack's own holes (the 8 of the original, less the
+ * bags), then the contents of each bag that is shown (each from a new row, with room to drop more in). At the
+ * bottom the bag bar: the bags in the pack; a left click shows or hides a bag's part of the grid. */
+#define PW 188
+#define BODY 32  /* a body hole */
+#define CELL 24  /* a grid hole */
+#define PITCH 26 /* a grid hole and the gap */
+#define COLS 7
+enum { C_BODY, C_PACK, C_BAG, C_BAR, C_UP, C_DOWN };
+typedef struct {
+    int x, y, w, h, kind, slot, bag, thing;
+} Cell;
+static Cell g_cell[512];
+static int g_ncell, g_grid_rows, g_scroll_max;
+
+static void panel_origin(int *x, int *y) {
+    Overlay *o = ui_overlay();
+    *x = o->w - PW - 4, *y = 4;
+}
+static int panel_h(void) { return ui_overlay()->h - 8; }
+static void cell_add(int x, int y, int w, int h, int kind, int slot, int bag, int thing) {
+    if (g_ncell >= COUNT(g_cell)) return;
+    g_cell[g_ncell++] = (Cell){x, y, w, h, kind, slot, bag, thing};
+}
+static bool is_bag(int p) { return p && obj_info(I.pool[p].item)->container; }
+
+/* the grid's rows: rows[r][c] = (kind, bag, thing); each section from a new row */
+typedef struct {
+    int kind, slot, bag, thing;
+} GridItem;
+static GridItem g_grid[64][COLS];
+static int g_rows;
+static void grid_section_bag(int b, int depth) {
+    int c = 0;
+    for (int q = I.pool[b].link, guard = 0; q && guard < POOL && g_rows < 64; q = I.pool[q].next, guard++) {
+        g_grid[g_rows][c] = (GridItem){C_BAG, -1, b, q};
+        if (++c == COLS) c = 0, g_rows++;
+    }
+    /* room to drop more in: the rest of the row (a whole row when the last one is full) */
+    if (g_rows < 64) {
+        do g_grid[g_rows][c] = (GridItem){C_BAG, -1, b, 0};
+        while (++c < COLS);
+        g_rows++;
+    }
+    /* bags in this bag that are shown: their own sections after */
+    for (int q = I.pool[b].link, guard = 0; q && guard < POOL && depth < 4; q = I.pool[q].next, guard++)
+        if (is_bag(q) && !I.hidden[q]) grid_section_bag(q, depth + 1);
+}
+static void grid_build(void) {
+    g_rows = 0;
+    memset(g_grid, 0, sizeof g_grid);
+    int c = 0;
+    for (int s = INV_BODY; s < INV_SLOTS; s++) {
+        if (is_bag(I.slot[s])) continue; /* the bags are in the bar */
+        g_grid[g_rows][c] = (GridItem){C_PACK, s, 0, I.slot[s]};
+        if (++c == COLS) c = 0, g_rows++;
+    }
+    if (c) {
+        while (c < COLS) g_grid[g_rows][c++] = (GridItem){-1, 0, 0, 0};
+        g_rows++;
+    }
+    for (int s = INV_BODY; s < INV_SLOTS; s++)
+        if (is_bag(I.slot[s]) && !I.hidden[I.slot[s]]) grid_section_bag(I.slot[s], 0);
+}
+
+/* the cells of the panel this frame */
+static void cells_build(void) {
+    int px, py, ph = panel_h();
+    panel_origin(&px, &py);
+    g_ncell = 0;
+    /* the body: outer columns shoulders, hands, rings; inner left helm, chest, hands; inner right legs, feet */
+    static const int COL[INV_BODY] = {1, 1, 1, 3, 3, 0, 4, 0, 4, 0, 4};
+    static const int ROW[INV_BODY] = {0, 1, 2, 1, 2, 0, 0, 1, 1, 2, 2};
+    static const int CX[5] = {4, 38, 0, 116, 150};
+    for (int s = 0; s < INV_BODY; s++)
+        cell_add(px + CX[COL[s]], py + 6 + ROW[s] * (BODY + 2), BODY, BODY, C_BODY, s, 0, I.slot[s]);
+    /* the bag bar at the bottom, the grid between */
+    int bar_y = py + ph - 44, grid_y = py + 6 + 3 * (BODY + 2) + 6;
+    int bx = px + 4;
+    for (int s = INV_BODY; s < INV_SLOTS; s++)
+        if (is_bag(I.slot[s])) cell_add(bx, bar_y, CELL, CELL, C_BAR, s, I.slot[s], I.slot[s]), bx += PITCH;
+    grid_build();
+    g_grid_rows = MAX(1, (bar_y - 6 - grid_y) / PITCH);
+    g_scroll_max = MAX(0, g_rows - g_grid_rows);
+    I.scroll = MIN(I.scroll, g_scroll_max);
+    for (int r = 0; r < g_grid_rows && r + I.scroll < g_rows; r++)
+        for (int c = 0; c < COLS; c++) {
+            const GridItem *g = &g_grid[r + I.scroll][c];
+            if (g->kind < 0) continue;
+            cell_add(px + 4 + c * PITCH, grid_y + r * PITCH, CELL, CELL, g->kind, g->slot, g->bag, g->thing);
+        }
+    if (g_scroll_max) { /* scroll arrows at the right of the bag bar */
+        cell_add(px + PW - 34, bar_y + 4, 14, 16, C_UP, 0, 0, 0);
+        cell_add(px + PW - 18, bar_y + 4, 14, 16, C_DOWN, 0, 0, 0);
+    }
+}
+static int cell_at(int mx, int my) {
+    for (int k = 0; k < g_ncell; k++)
+        if (mx >= g_cell[k].x && mx < g_cell[k].x + g_cell[k].w && my >= g_cell[k].y && my < g_cell[k].y + g_cell[k].h) return k;
+    return -1;
+}
+
+bool inv_mouse_over(int x, int y) {
+    int px, py;
+    panel_origin(&px, &py);
+    return x >= px && x < px + PW && y >= py && y < py + panel_h();
+}
+
+/* where a thing goes on the body: armour by the armour table, rings a ring (the free one), weapons the right
+ * hand (0x00-0x0F hand weapons, 0x18-0x1F bows and slings), shields the left, lights a free shoulder; -1 none */
+static int body_slot_for(int p) {
+    int item = I.pool[p].item & 511, a = obj_info(item)->armour;
+    if (a == 9) return !I.slot[9] ? 9 : !I.slot[10] ? 10 : 9;
+    if (a >= 0) return a;
+    if (item < 0x10 || (item >= 0x18 && item < 0x20)) return 7;
+    if (item >= 0x37 && item <= 0x3f && obj_info(item)->armour < 0) return 8; /* shields */
+    if (is_light(item)) return !I.slot[5] ? 5 : !I.slot[6] ? 6 : 5;
+    return -1;
+}
+
+/* the held thing onto the body; what was in that slot comes onto the pointer */
+static void equip_held(void) {
+    int s = body_slot_for(I.held);
+    char name[96];
+    obj_name(&I.pool[I.held], name, sizeof name);
+    if (s < 0) return game_message("You cannot wear %s.", name);
+    int old = I.slot[s];
+    I.slot[s] = I.held, I.held = old;
+    static const char *const WHERE[INV_BODY] = {"on thy head", "on thy body", "on thy hands", "on thy legs", "on thy feet",
+                                                "on thy right shoulder", "on thy left shoulder", "in thy right hand",
+                                                "in thy left hand", "on thy right hand", "on thy left hand"};
+    game_message("You put %s %s.", name, WHERE[s]);
+}
+
+/* takes p out of wherever it is (a slot or a container) */
+static void take_out(int p) {
+    for (int s = 0; s < INV_SLOTS; s++)
+        if (I.slot[s] == p) I.slot[s] = 0;
+    for (int s = 0; s < INV_SLOTS; s++)
+        if (I.slot[s] && holds(&I.pool[I.slot[s]])) unlink_from(I.slot[s], p);
+}
+
+/* Right click never drops. On something worn or held (the body): off to the pack (a free hole, else a bag it
+ * fits in). On a bag: shows or hides it in the grid. On something usable (a light, food, drink, a book, a
+ * scroll): used. On anything else: into the first bag in the pack that takes it (not the one it is in). */
+static void right_click(int p) {
+    int s = slot_of(p);
+    const Object *o = &I.pool[p];
+    char name[96];
+    obj_name(o, name, sizeof name);
+    if (s >= 0 && s < INV_BODY) {
+        if (is_light(o->item) && s >= 5 && s <= 8) return use_thing(p); /* a light in a hand: light / put out */
+        take_out(p);
+        if (place_new(p)) return game_message("You put %s in thy pack.", name);
+        I.slot[s] = p;
+        return game_message("There is no place to put that.");
+    }
+    int item = o->item & 511;
+    if (obj_info(item)->container) {
+        I.hidden[p] = !I.hidden[p];
+        return;
+    }
+    if (is_light(item) || (item >> 4) == 0xb || (item >= 0x130 && item <= 0x13f) || item == 0x92 || item == 0xce || item == 0xcf ||
+        item == 0xd9 || item == 0x11b || item == 0x125)
+        return use_thing(p);
+    for (int k = INV_BODY; k < INV_SLOTS; k++) {
+        int c = I.slot[k];
+        if (!is_bag(c) || c == p) continue;
+        bool inside = false; /* already in this one */
+        for (int q = I.pool[c].link, guard = 0; q && guard < POOL && !inside; q = I.pool[q].next, guard++) inside = q == p;
+        if (inside) continue;
+        char msg[128];
+        if (!obj_fits(I.pool[c].item, o, contents_mass(c), msg, sizeof msg)) continue;
+        take_out(p);
+        put_in(c, p, false);
+        char bag[64];
+        obj_noun(&I.pool[c], bag, sizeof bag);
+        return game_message("You put %s in the %s.", name, bag);
+    }
+}
+
+/* the held thing onto thing `under` of the same kind: one stack (true) */
+static bool stack_onto(int under) {
+    Object *a = &I.pool[under], *b = &I.pool[I.held];
+    if (a->item != b->item || !obj_stacks(a->item) || a->quality != b->quality) return false;
+    int n = obj_quantity(a) + obj_quantity(b);
+    if (n >= 0x200) return false;
+    a->flags |= 0x40, a->link = (u16)n;
+    free_tree(I.held);
+    I.held = 0;
+    return true;
+}
+
+bool inv_update(Level *lv, const InvInput *in, const float eye[3], const float fwd[3]) {
+    I.mouse_x = in->mouse_x, I.mouse_y = in->mouse_y, I.shift = in->shift;
+    cells_build();
+    int k = cell_at(in->mouse_x, in->mouse_y);
+    I.hover = k;
+    const Cell *c = k >= 0 ? &g_cell[k] : NULL;
+    int under = c ? c->thing : 0;
+    if (in->look && under) {
+        char line[300];
+        obj_describe(&I.pool[under], line, sizeof line);
+        game_message("%s", line);
+    }
+    if (!inv_mouse_over(in->mouse_x, in->mouse_y)) return false;
+    /* the figure: how the player is; a thing dropped on it is worn where it belongs */
+    int px, py;
+    panel_origin(&px, &py);
+    int fx = px + (PW - 36) / 2, fy = py + 6;
+    bool on_figure = in->mouse_x >= fx && in->mouse_x < fx + 36 && in->mouse_y >= fy && in->mouse_y < fy + 69;
+    if (on_figure && in->click_left && I.held) return equip_held(), true;
+    if (on_figure && (in->click_left || in->click_right) && !I.held) {
+        char st[160];
+        inv_status(st, sizeof st);
+        game_message("%s", st);
+        return true;
+    }
+    if (!c) return true;
+    if (c->kind == C_UP && in->click_left) return I.scroll = MAX(0, I.scroll - 1), true;
+    if (c->kind == C_DOWN && in->click_left) return I.scroll = MIN(g_scroll_max, I.scroll + 1), true;
+    if (in->click_right && under) {
+        if (in->shift) { /* shift + right click: put it down in the world */
+            take_out(under);
+            I.held = under;
+            drop_held(lv, eye, fwd);
+            return true;
+        }
+        right_click(under);
+        return true;
+    }
+    if (!in->click_left) return true;
+    if (c->kind == C_BAR) { /* a bag in the bar: something held goes in; shift picks the bag up; else show / hide */
+        if (I.held) {
+            if (put_in(c->bag, I.held, true)) I.held = 0;
+        } else if (in->shift) take_out(c->bag), I.held = c->bag;
+        else I.hidden[c->bag] = !I.hidden[c->bag];
+        return true;
+    }
+    if (!I.held) { /* pick up what is in the hole */
+        if (!under) return true;
+        take_out(under);
+        I.held = under;
+        return true;
+    }
+    /* put the held thing down here */
+    if (under && is_bag(under) && under != I.held) {
+        if (put_in(under, I.held, true)) I.held = 0;
+        return true;
+    }
+    if (under && stack_onto(under)) return true;
+    if (c->kind == C_BAG) { /* into this bag */
+        if (put_in(c->bag, I.held, true)) I.held = 0;
+        return true;
+    }
+    if (c->kind == C_BODY && !slot_ok(c->slot, I.held)) return game_message("That does not go there."), true;
+    if (under) take_out(under); /* swap */
+    I.slot[c->slot] = I.held, I.held = under;
+    return true;
+}
+
+/* a hole: dark, sunk into the board (shadow above and left, light below and right) */
+static void draw_hole(int x, int y, int w, int h, bool hot) {
+    ui_fill(x, y, w, h, 96, 96, 96, 255);
+    ui_fill(x + 1, y + 1, w - 2, h - 2, hot ? 92 : 58, hot ? 88 : 58, hot ? 70 : 60, 255);
+    ui_fill(x, y, w, 1, 36, 36, 38, 255);
+    ui_fill(x, y, 1, h, 36, 36, 38, 255);
+    ui_fill(x, y + h - 1, w, 1, 176, 176, 172, 255);
+    ui_fill(x + w - 1, y, 1, h, 176, 176, 172, 255);
+}
+/* a thing in a hole of size w (its picture twice the size when that fits), with its count */
+static void draw_thing_in(int p, int x, int y, int w) {
+    const Object *o = &I.pool[p];
+    const Pic *pic = ui_pic("sprites\\objects", o->item & 511);
+    if (pic) {
+        int s = pic->w * 2 <= w - 2 && pic->h * 2 <= w - 2 ? 2 : 1;
+        ui_draw(pic, x + (w - pic->w * s) / 2, y + (w - pic->h * s) / 2, s);
+    }
+    int q = obj_quantity(o);
+    if (q > 1) {
+        char t[8];
+        snprintf(t, sizeof t, "%d", q);
+        ui_text(FONT_NORMAL, t, x + w - 2 - ui_text_width(FONT_NORMAL, t), y + w - 8, 255, 240, 200);
+    }
+}
+static void draw_thing(int p, int x, int y) { draw_thing_in(p, x, y, CELL); }
+

@@ -1,0 +1,15 @@
+# Line endings. Tools write text files with LF; the repository stores LF.
+# Text is detected automatically; Windows scripts always check out with CRLF.
+* text=auto
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Never treat these as text.
+*.png binary
+*.dll binary
+*.exe binary
+*.gguf binary
+*.rom binary
+*.wav binary
+*.mp4 binary
+*.zip binary

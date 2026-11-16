@@ -1,0 +1,112 @@
+ULTIMA UNDERWORLD (uw-new.exe): KEYS AND WHAT IS IN THIS FOLDER
+=================================================================
+
+Start uw-new.exe (or Play.cmd). Your saved games and settings are kept in home\.
+
+
+MOVING
+------
+  W or Up arrow ........ walk forward (hold Shift to run)
+  S or Down arrow ...... walk back
+  A / D ................ step left / right
+  Left / Right arrow ... turn
+  Space ................ jump  (Ctrl+Space: standing long jump)
+  Shift ................ run
+  Mouse ................ look around (mouse-look)
+  PageUp / PageDown .... look up / down
+  1 / 3 ................ tilt the view up or down a step
+  Keypad 5 ............. look straight ahead again
+  `  (the key under Esc)  mouse-look on / off
+
+
+ACTING IN THE WORLD
+-------------------
+  Left click ........... look at what is under the crosshair
+  Left click and hold .. pick a thing up; let go to throw it (a quick tap puts it in your pack)
+  Right click .......... use: talk, open / close a door, pull a lever, take
+  E .................... use (the same as a right click)
+  L .................... look
+  C .................... fight mode on / off; in fight mode the left button attacks
+                         (hold it to wind up, let go to strike)
+  Q .................... cast the spell on the rune shelf
+  Ctrl+Alt+letter ...... put that rune on the shelf (Ctrl+Alt+Backspace takes one off,
+                         Ctrl+Alt+Space casts)
+  K .................... track (the tracking skill)
+  Z .................... sleep
+  M .................... the map (Esc closes it)
+
+
+PANELS
+------
+  I or Tab ............. the inventory panel
+  R .................... the rune bag
+  , (comma) ............ the character page
+  F .................... the statistics page
+  V / B ................ scroll the inventory down / up
+  G .................... read the compass
+  H .................... check your health and mana flasks
+  F7 ................... flip the right-hand panel (the chain)
+
+
+THE MAP (after M)
+-----------------
+  Mouse ................ the quill: click to write a note
+  W / S ................ the level above / below
+  C .................... back to the level you are on
+  Esc .................. close the map
+
+
+CONVERSATIONS
+-------------
+  Click an answer, or press its number.
+
+
+SAVING, LOADING, MENUS
+----------------------
+  Esc .................. our menu (save, load, settings, level hunters, quit)
+  F5 ................... save page
+  F9 ................... load page
+  F11 .................. settings
+  F1 ................... the original's options panel (F1 or Esc closes it)
+  Ctrl+S / Ctrl+R ...... the original's save / restore
+  Ctrl+M / Ctrl+F ...... music / sound effects on or off
+  Ctrl+D ............... detail level
+  Ctrl+Q ............... quit
+  F2 / F3 / F4 ......... the original's talk / get / look icons
+
+
+PICTURE, SCREENSHOTS AND EXTRAS
+-------------------------------
+  P .................... screenshot (to the clipboard)
+  Shift+P .............. record 15 seconds of video
+  ;  (semicolon) ....... ray tracing on / off
+  '  (apostrophe) ...... DLSS 5 on / off (needs an NVIDIA RTX card; off by default)
+  ]  ................... DLSS 5's style
+  F6 ................... the textures' surface detail (normal maps) on / off
+  .  or Shift+O ........ the objects' shadows on / off
+  Shift+L .............. full bright (light everywhere) on / off
+  Ctrl+L ............... the AI log: what the clever creatures are thinking
+
+
+WHAT IS IN THIS FOLDER
+----------------------
+  uw-new.exe ........... the game, with our renderer and controls
+  uw-original.exe ...... the game as it was in 1992 (UW-Original.cmd starts it)
+  Play.cmd, UW-New.cmd . start uw-new.exe, writing its log to home\logs
+  uwview.dll ........... our Direct3D 12 renderer (ray tracing, DLSS)
+  game\ ................ the original game's data (UW1)
+  data\ ................ our textures, models, lights, sounds, music and settings.txt
+                         (the picture settings; DLSS 5 is off)
+  home\ ................ your settings (uw1port.cfg) and, once you save, your saved games
+  roms\ ................ the Roland MT-32 / CM-32L ROMs: the music as the Roland played it
+  mt32emu.dll .......... the Roland emulator
+  bin\ ................. OpenAL Soft and Steam Audio: 3D sound with HRTF for headphones
+  dlss\, uw_nvngx.dll .. NVIDIA DLSS (used only on an NVIDIA RTX card)
+  llm\bin\ ............. the language model runner (llama.cpp, Vulkan for the graphics card)
+  llm\models\ .......... the language models the level hunters plan with:
+                           Qwen3.5-2B (the default, loaded into the graphics card's memory),
+                           LFM2.5-1.2B-Instruct and LFM2.5-350M (choose in Esc > Language model)
+
+Needs Windows 10 or 11 (64-bit) and a graphics card with Direct3D 12. Without one the game
+draws the same picture with plain Windows drawing. Without a graphics card that can hold the
+model, the language model runs on the processor instead.

@@ -1,0 +1,68 @@
+void inv_draw(void) {
+    int px, py, ph = panel_h();
+    panel_origin(&px, &py);
+    cells_build();
+    /* the board, with a raised edge */
+    ui_fill(px, py, PW, ph, 128, 128, 126, 240);
+    ui_fill(px, py, PW, 1, 190, 190, 186, 255);
+    ui_fill(px, py, 1, ph, 190, 190, 186, 255);
+    ui_fill(px, py + ph - 1, PW, 1, 60, 60, 60, 255);
+    ui_fill(px + PW - 1, py, 1, ph, 60, 60, 60, 255);
+    /* the figure */
+    const Pic *body = ui_pic("ui\\bodies", 0);
+    if (body) ui_draw(body, px + (PW - body->w) / 2, py + 6, 1);
+    /* the slots' names, in the background of their holes (one or two lines) */
+    static const char *const NAME1[INV_BODY] = {"Helm", "Chest", "Hands", "Legs", "Feet", "Right", "Left", "Right", "Left", "Right", "Left"};
+    static const char *const NAME2[INV_BODY] = {"", "", "", "", "", "Shldr", "Shldr", "Hand", "Hand", "Ring", "Ring"};
+    static const char *const FULL[INV_BODY] = {"Helm", "Chest", "Hands (gloves)", "Legs", "Feet (boots)", "Right shoulder", "Left shoulder",
+                                               "Right hand (weapon)", "Left hand (shield)", "Right ring", "Left ring"};
+    int last_bag = -1, grid_top = 1 << 30;
+    for (int k = 0; k < g_ncell; k++) {
+        const Cell *c = &g_cell[k];
+        bool hot = k == I.hover;
+        if (c->kind == C_UP || c->kind == C_DOWN) {
+            ui_fill(c->x, c->y, c->w, c->h, hot ? 90 : 70, hot ? 90 : 70, hot ? 90 : 70, 255);
+            ui_text(FONT_NORMAL, c->kind == C_UP ? "^" : "v", c->x + 5, c->y + 5, 255, 230, 160);
+            continue;
+        }
+        if (c->kind == C_BAG || c->kind == C_PACK) {
+            grid_top = MIN(grid_top, c->y);
+            /* a thin line where a bag's part of the grid begins */
+            if (c->kind == C_BAG && c->bag != last_bag && c->x == px + 4) ui_fill(px + 4, c->y - 2, COLS * PITCH - 2, 1, 70, 70, 70, 255);
+            last_bag = c->kind == C_BAG ? c->bag : -1;
+        }
+        draw_hole(c->x, c->y, c->w, c->h, hot);
+        if (c->kind == C_BODY) {
+            int lh = ui_font_height(FONT_NORMAL) + 1, two = NAME2[c->slot][0] != 0;
+            int ty = c->y + c->h / 2 - (two ? lh : lh / 2);
+            ui_text(FONT_NORMAL, NAME1[c->slot], c->x + c->w / 2 - ui_text_width(FONT_NORMAL, NAME1[c->slot]) / 2, ty, 104, 104, 100);
+            if (two) ui_text(FONT_NORMAL, NAME2[c->slot], c->x + c->w / 2 - ui_text_width(FONT_NORMAL, NAME2[c->slot]) / 2, ty + lh, 104, 104, 100);
+        }
+        if (c->kind == C_BAR && I.hidden[c->bag]) ui_fill(c->x + 1, c->y + 1, c->w - 2, c->h - 2, 20, 20, 20, 255);
+        if (c->thing) draw_thing_in(c->thing, c->x, c->y, c->w);
+        if (c->kind == C_BAR && I.hidden[c->bag]) ui_fill(c->x + 1, c->y + 1, c->w - 2, c->h - 2, 0, 0, 0, 120); /* hidden: dimmed */
+    }
+    /* the bag bar's line, and the weight carried */
+    ui_text(FONT_NORMAL, "Bags (click: show / hide)", px + 6, py + ph - 54, 40, 40, 40);
+    int m = 0;
+    for (int s = 0; s < INV_SLOTS; s++)
+        if (I.slot[s]) m += tree_mass(I.slot[s]);
+    char w[48];
+    snprintf(w, sizeof w, "Carrying %d.%d stones", m / 10, m % 10);
+    ui_text(FONT_NORMAL, w, px + 6, py + ph - 14, 30, 30, 30);
+    (void)grid_top;
+    /* what the mouse is over: an empty body hole its full name; a thing its tooltip */
+    const Cell *c = I.hover >= 0 ? &g_cell[I.hover] : NULL;
+    if (c && !c->thing && c->kind == C_BODY && !I.held) {
+        const char *t = FULL[c->slot];
+        ui_fill(c->x - ui_text_width(FONT_NORMAL, t) - 12, c->y + 8, ui_text_width(FONT_NORMAL, t) + 8, 12, 8, 10, 24, 235);
+        ui_text(FONT_NORMAL, t, c->x - ui_text_width(FONT_NORMAL, t) - 8, c->y + 11, 230, 230, 230);
+    }
+    if (c && c->thing && !I.held) tooltips(c->thing, I.shift);
+    /* the pointer, or the thing held on it */
+    if (I.held) draw_thing(I.held, I.mouse_x - CELL / 2, I.mouse_y - CELL / 2);
+    else {
+        const Pic *cur = ui_pic("ui\\cursors", 10);
+        if (cur) ui_draw(cur, I.mouse_x - cur->w / 2, I.mouse_y - cur->h / 2, 1);
+    }
+}

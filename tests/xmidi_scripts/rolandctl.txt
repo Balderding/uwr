@@ -1,0 +1,20 @@
+# the Roland controllers: sysex queues (32-46), patch reverb / bender, reverb, rhythm timbre, timbre protect, indirect
+reg O:/uw/uo-new/game/SOUND/UW03.XMI 0
+start 0
+at 200
+setctl 0 2 32 16
+setctl 0 2 33 0
+setctl 0 2 34 1
+setctl 0 2 35 3
+setctl 0 2 35 4
+setctl 0 2 36 5
+setctl 0 3 59 1
+setctl 0 3 60 12
+setctl 0 4 61 2
+setctl 0 4 62 5
+setctl 0 4 63 6
+setctl 0 10 58 40
+setctl 0 2 113 70
+setctl 0 2 115 3
+setctl 0 2 7 99
+at 400

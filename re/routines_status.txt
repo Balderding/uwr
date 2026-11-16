@@ -1,0 +1,14 @@
+# Hand-kept routine statuses for tools/checklist.py. "<file offset> <status> <note>", or a whole segment / overlay:
+# "seg <para> <status> <note>". Status: ported, replaced (graphics / sound / input / interface done our way),
+# notneeded (DOS, memory, hardware, C runtime plumbing), todo. A routine line wins over its segment's.
+seg 0000 notneeded program start (Borland C0: stack, DGROUP, the C runtime's start)
+seg 004e notneeded program start helpers
+seg 0086 notneeded program start helper
+seg 0090 replaced VGA mode X drawing (retrace 0x3da, plane registers 0x3c4/0x3cf)
+seg 0ec5 notneeded Borland C runtime (DOS file calls, malloc, string, long arithmetic, timer)
+seg 1ac1 notneeded EMS memory (int 67h)
+seg 1dae replaced VGA palette and registers
+seg 1f32 replaced VGA register
+seg 1f3a replaced keyboard (int 16h, ports 60h/64h), BIOS video (int 10h), mouse (int 33h), timer
+seg 3836 notneeded EMS / XMS memory manager (int 67h, int 2fh)
+034349 replaced the stats panel number redraw (ours: the character panel draws every frame)

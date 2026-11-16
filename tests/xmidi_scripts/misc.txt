@@ -1,0 +1,23 @@
+# display, raw sysex, timbre protection, shutdown with two songs registered
+reg O:/uw/uo-new/game/SOUND/UW04.XMI 0
+reg O:/uw/uo-new/game/SOUND/UW07.XMI 0
+start 0
+at 100
+display
+sysex 16 0 1
+inst 1 5
+inst 1 9
+protect 1 5
+tstat 1 5
+unprotect 1 5
+protect 255 255
+unprotect 255 255
+lock
+cv 184 114 1
+cv 200 5 0
+cv 152 60 80
+at 150
+cv 184 113 100
+start 1
+at 300
+shutdown

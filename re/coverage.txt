@@ -1,0 +1,144 @@
+# UW.EXE messages (block 1) by the routine printing them; ok = uo-new prints it too
+# 15 ok, 75 missing
+
+020115 (1bd8:1195)  items: 40(a_rotworm) ff(a_Ylem stone)
+  MISS 250: You play the instrument.  (Use 0-9 to play, or ESC to return to game)
+  MISS 251: You put the instrument down.
+020443 (1bd8:14c3)
+  MISS 136: An object appears in the air and falls into your hand...
+026122 (22ef:0032)  items: 64(a_ghost)
+  MISS  69: It has been an uncountable number of days since you entered the Abyss.
+026b8e (22ef:0a9e)  items: 1ca(a_silver tree)
+  ok    95: That is too heavy for you to pick up.
+  ok    96: You cannot pick that up.
+026f2f (22ef:0e3f)  items: 16e(special tmap obj)
+  MISS 185: You are unable to use that from here.
+026fef (22ef:0eff)
+  MISS  94: You cannot reach that.
+0277ff (2456:009f)
+  MISS 254: You need more space to fire that weapon.
+027ab5 (2456:0355)
+  ok   253: There is no space to drop that.
+02be7f (2801:0c6f)
+  MISS 278: A rending sound fills the air.
+034418 (311a:0078)
+  MISS 228: Your vision distorts and you feel light headed.
+03488e (311a:04ee)
+  MISS 255: There is not enough room to release that spell.
+0356ee (311a:134e)
+  MISS  62: You detect no monster activity.
+035900 (311a:1560)
+  MISS 271: The spell has no discernable effect.
+0359e5 (311a:1645)
+  MISS 273: The moonstone is not available.
+0365e2 (333e:0002)  items: e7(the_Key of Infinit) 12e(a_fountain)
+  MISS   9: As you reach for the tree, it withers away, revealing a silver seed.
+036a78 (333e:0498)
+  MISS 121: You succeed in picking the lock.
+036c42 (333e:0662)  items: 140(a_door) 147(a_secret door)
+  MISS 128: You can only spike closed doors.
+  MISS 129: The door is now spiked closed.
+036cf9 (333e:0719)  items: 165(a_gravestone)
+  MISS 132: It seems to have no effect.
+  MISS 134: You thoughtfully give the bones a final resting place.
+  MISS 259: The bones do not seem at rest in the grave, and you take them back.
+036e62 (333e:0882)
+  MISS 157: Using the pole you trigger the switch.
+  MISS 158: The pole cannot be used on that.
+036ff2 (333e:0a12)  items: 117(an_orb)
+  MISS 132: It seems to have no effect.
+  MISS 133: The orb is destroyed!
+0370df (333e:0aff)  items: 16e(special tmap obj)
+  MISS 132: It seems to have no effect.
+037266 (333e:0c86)  items: 90(a_lantern) 91(a_torch&torches) 92(a_candle) 93(a_taper)
+  ok   123: Lights may only be used if equipped.
+  ok   124: That light is already used up.
+  ok   246: Your hands are full.
+037401 (333e:0e21)
+  MISS 125: With a loud <SNAP!>, the wand cracks.
+0374ee (333e:0f0e)  items: 92(a_candle) b8(a_mushroom) b9(a_toadstool) ba(a_bottle of ale&bo) bb(a_red potion) bc(a_green potion) bd(a_bottle of water&) be(a_flask of port&fl) bf(a_bottle of wine&b) ce(a_plant) cf(a_plant) d9(a_dead rotworm) ff(a_Ylem stone) 11b(some_rotworm stew&) 125(some_leeches&bunch)
+  MISS 119: You can only use those individually.  Take one from this group if you wish to use it.
+  ok   126: You are too full to eat that now.
+  ok   127: You are unable to open the wine bottle.
+  MISS 241: As the alcohol hits you, you stumble and collapse into sleep.
+  MISS 242: The drink makes you feel a little better for now.
+  MISS 243: You wake feeling somewhat unstable but better.
+03797e (333e:139e)  items: 153(a_large boulder) 156(a_small boulder)
+  MISS 132: It seems to have no effect.
+  MISS 135: The rock breaks into smaller pieces.
+037b60 (333e:1580)  items: 90(a_lantern) 91(a_torch&torches) 94(a_lit lantern) 95(a_lit torch) cc(a_piece of wood&pi) cd(a_piece of wood&pi)
+  MISS 177: You cannot use oil on that.
+  MISS 181: Dousing a cloth with oil and applying it to the wood, you make a torch.
+037ca4 (333e:16c4)  items: 129(a_glowing rock) 12e(a_fountain) 12f(a_cauldron)
+  MISS 274: The cauldron is empty.
+06ac13 (ovl 597e+0683)
+  ok   252: That is too heavy to take.
+06e2f2 (ovl 5998+01b2)
+  MISS 148: The bowl does not contain the correct ingredients.
+  MISS 149: You mix the ingredients into a stew.
+06e490 (ovl 599c+0000)  items: 8e(a_bowl) e7(the_Key of Infinit) ff(a_Ylem stone) 157(a_shrine) 16e(special tmap obj)
+  MISS 272: There is no reaction from the princess.
+073f34 (ovl 59c8+0dc4)
+  MISS  99: You catch a lovely fish.
+  MISS 101: You cannot fish there.  Perhaps somewhere else.
+074011 (ovl 59c8+0ea1)
+  MISS 192: There is an empty clicking sound.
+  MISS 193: A voice utters the words "Reset Activated."
+0748c4 (ovl 59c8+1754)
+  MISS  83: .
+  MISS 142: You cannot repair that.
+  MISS 216: You think it will be
+  MISS 217: to repair the
+077c3d (ovl 59fe+0b2d)  items: 8f(a_rune bag) 94(a_lit lantern) 98(a_wand)
+  ok   247: You can only put runes in the rune bag.
+078ec8 (ovl 5a0b+0488)
+  MISS 214: The spell backfires.
+07a1e1 (ovl 5a1a+0241)
+  MISS 186: You cannot barter a container.  Instead, remove the contents you want to trade.
+07aaeb (ovl 5a1a+0b4b)  items: 92(a_candle) ce(a_plant) cf(a_plant) d9(a_dead rotworm) 11b(some_rotworm stew&) 125(some_leeches&bunch)
+  ok   247: You can only put runes in the rune bag.
+  ok   248: That item does not fit.
+  ok   258: There is no place to put that.
+07bf96 (ovl 5a23+0586)  items: ff(a_Ylem stone) 13b(a_map)
+  MISS 151: Enscribed upon the scroll is your map.
+07c0d1 (ovl 5a23+06c1)
+  ok   171: You see a bridge.
+07c621 (ovl 5a23+0c11)  items: c2(a_skull) c6(a_pile of bones&pi)
+  MISS 131: The door is spiked.
+07c6d3 (ovl 5a23+0cc3)  items: 93(a_taper) 97(a_lit taper) ae(a_shiny cup) bf(a_bottle of wine&b) 11f(a_standard) 136(a_book)
+  MISS 260: You see
+07d4c8 (ovl 5a3d+07e8)
+  MISS 160: You cannot select options partway through an action.
+07f243 (ovl 5a53+0a13)
+  MISS 275: Ultima Underworld: The Stygian Abyss v
+08085b (ovl 5a69+044b)
+  MISS 166: Restoring Game
+  MISS 170: ...
+080924 (ovl 5a69+0514)
+  MISS 167: Saving Game
+  MISS 168: \\6     Please enter a save file description:
+  MISS 170: ...
+08138a (ovl 5a76+011a)
+  ok   147: You have attained experience level
+081630 (ovl 5a76+03c0)
+  MISS  27: You cannot advance any further in that skill.
+  MISS  28: You have advanced greatly in
+081676 (ovl 5a76+0406)  items: ff(a_Ylem stone)
+  MISS  29: You have advanced in
+  MISS  30: None of your skills improved.
+0816fd (ovl 5a76+048d)  items: 4d(a_goblin)
+  MISS  24: You are not ready to advance.
+  MISS  25: That is not a mantra.
+  MISS  26: Knowledge and Understanding fill you.
+  MISS  30: None of your skills improved.
+  MISS  31: 
+081f8f (ovl 5a76+0d1f)  items: 40(a_rotworm)
+  MISS  14: There are hostile creatures near!
+  MISS  15: You make camp.
+  MISS  16: You go to sleep.
+  MISS  17: You are starving.
+  MISS  20: You can't go to sleep here!
+  MISS  21: Your sleep is interrupted!
+0823f6 (ovl 5a76+1186)
+  MISS 279: The Slasher of Veils is dragged from this world.
+  MISS 280: You are sucked through the moongate . . . . .

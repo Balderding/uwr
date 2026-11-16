@@ -1,0 +1,28 @@
+# volume and tempo fades, stop / resume, controllers
+reg O:/uw/uo-new/game/SOUND/UW05.XMI 0
+start 0
+at 600
+vol 0 40 3000
+at 1200
+status 0
+vol 0 90 1000
+at 1800
+tempo 0 150 2000
+at 2600
+tempo 0 70 0
+at 3200
+beat 0
+bar 0
+stop 0
+at 3300
+resume 0
+at 4000
+ctl 0 2 7
+setctl 0 2 7 50
+setctl 0 3 10 20
+at 4200
+notes 0 2
+stop 0
+release 0
+status 0
+at 4300

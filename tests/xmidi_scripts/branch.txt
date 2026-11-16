@@ -1,0 +1,18 @@
+# branch markers
+reg O:/uw/uo-new/game/SOUND/UW11.XMI 0
+start 0
+at 400
+branch 0 0
+at 800
+branch 0 1
+at 1300
+branch 0 2
+at 2000
+stop 0
+reg O:/uw/uo-new/game/SOUND/UW13.XMI 0
+start 1
+at 2400
+branch 1 0
+at 2800
+branch 1 1
+at 3500

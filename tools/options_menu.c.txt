@@ -1,0 +1,154 @@
+/* --- the options menu: Esc when nothing else is open; Esc again (or Resume) closes it --------------------------
+ * Each change takes effect at once where it can and is written back to data\settings.txt (only that value; the
+ * comments stay). DLSS 5 is only offered when it started on this card (an RTX 20-series card does not try it). */
+static bool g_menu;
+static int g_menu_sel, g_menu_hover = -1;
+static char g_settings_path[700];
+enum { OPT_RESUME, OPT_DLSS, OPT_DLSS5, OPT_STYLE, OPT_RT, OPT_BOUNCE, OPT_RELIEF, OPT_MUSIC, OPT_VOLUME, OPT_MOUSE, OPT_FOV, OPT_QUIT, OPTS };
+
+/* the value of one setting in settings.txt (the rest of the line, a comment, stays) */
+static void settings_save(const char *key, const char *value) {
+    size_t mark = arena_mark();
+    Bytes f = file_read(g_settings_path);
+    size_t cap = f.size + 256, n = 0;
+    char *out = arena_alloc(cap);
+    size_t klen = strlen(key);
+    bool done = false;
+    for (size_t i = 0; i < f.size;) {
+        size_t e = i;
+        while (e < f.size && f.data[e] != '\n') e++;
+        const char *line = (const char *)f.data + i;
+        if (!done && e - i > klen && !memcmp(line, key, klen) && line[klen] == ' ') {
+            /* key, the new value, then the comment (from '#') padded to where it was */
+            const char *hash = memchr(line, '#', e - i);
+            int col = hash ? (int)(hash - line) : 0;
+            int w = snprintf(out + n, cap - n, "%s %s", key, value);
+            n += (size_t)w;
+            if (hash) {
+                for (int k = w; k < col; k++) out[n++] = ' ';
+                if (w >= col) out[n++] = ' ';
+                size_t hl = (size_t)((const char *)f.data + e - hash);
+                memcpy(out + n, hash, hl), n += hl;
+            } else if (e > i && line[e - i - 1] == '\r') out[n++] = '\r';
+            done = true;
+        } else memcpy(out + n, line, e - i), n += e - i;
+        if (e < f.size) out[n++] = '\n';
+        i = e + 1;
+    }
+    if (!done) n += (size_t)snprintf(out + n, cap - n, "%s%s %s\r\n", n && out[n - 1] != '\n' ? "\r\n" : "", key, value);
+    file_write(g_settings_path, out, n);
+    arena_reset(mark);
+}
+static void save_int(const char *key, int v) {
+    char t[32];
+    snprintf(t, sizeof t, "%d", v);
+    settings_save(key, t);
+}
+static void save_float(const char *key, float v) {
+    char t[32];
+    snprintf(t, sizeof t, "%.2f", v);
+    settings_save(key, t);
+}
+
+static bool opt_shown(int id, const Settings *s) {
+    (void)s;
+    if (id == OPT_DLSS) return render_dlss_available();
+    if (id == OPT_DLSS5 || id == OPT_STYLE) return render_dlss5_available();
+    return true;
+}
+static void opt_text(int id, const Settings *s, const Look *look, char *label, char *value) {
+    static const char *const STYLE[3] = {"A - Default", "B - Natural", "C - Cinematic"};
+    value[0] = 0;
+    switch (id) {
+    case OPT_RESUME: strcpy(label, "Resume"); break;
+    case OPT_DLSS: strcpy(label, "DLSS"), strcpy(value, render_dlss_on() ? "On" : "Off"); break;
+    case OPT_DLSS5: strcpy(label, "DLSS 5"), strcpy(value, render_dlss5_on() ? "On" : "Off"); break;
+    case OPT_STYLE: strcpy(label, "DLSS 5 style"), sprintf(value, "%s%s", STYLE[MAX(0, MIN(2, s->dlss5_style))], s->dlss5_style != g_start_style ? " (restart)" : ""); break;
+    case OPT_RT:
+        strcpy(label, "Ray tracing");
+        sprintf(value, "%s%s", s->raytracing ? "On" : "Off", (s->raytracing != 0) != render_raytracing() ? " (restart)" : "");
+        break;
+    case OPT_BOUNCE: strcpy(label, "Bounced light"), strcpy(value, look->bounce > 0 ? "On" : "Off"); break;
+    case OPT_RELIEF: strcpy(label, "Stone relief"), strcpy(value, look->normal_maps ? "On" : "Off"); break;
+    case OPT_MUSIC: strcpy(label, "Music"), strcpy(value, s->music ? "On" : "Off"); break;
+    case OPT_VOLUME: strcpy(label, "Music volume"), sprintf(value, "%d%%", (int)(s->music_volume * 100 + 0.5f)); break;
+    case OPT_MOUSE: strcpy(label, "Mouse sensitivity"), sprintf(value, "%.1f", s->mouse); break;
+    case OPT_FOV: strcpy(label, "Field of view"), sprintf(value, "%d", (int)(s->fov + 0.5f)); break;
+    case OPT_QUIT: strcpy(label, "Quit the game"); break;
+    }
+}
+/* a click / Enter / Right (dir +1), a right click / Left (dir -1) */
+static void opt_change(int id, int dir, Settings *s, Look *look, const char *data_dir) {
+    switch (id) {
+    case OPT_RESUME: g_menu = false; break;
+    case OPT_DLSS: render_set_dlss(!render_dlss_on()), save_int("dlss", render_dlss_on()), show_title(); break;
+    case OPT_DLSS5: render_set_dlss5(!render_dlss5_on()), save_int("dlss5", render_dlss5_on()), show_title(); break;
+    case OPT_STYLE: s->dlss5_style = (s->dlss5_style + dir + 3) % 3, save_int("dlss5_style", s->dlss5_style); break;
+    case OPT_RT: s->raytracing = !s->raytracing, save_int("raytracing", s->raytracing); break;
+    case OPT_BOUNCE: look->bounce = look->bounce > 0 ? 0.0f : 1.0f, s->bounce = look->bounce, save_float("bounce", look->bounce); break;
+    case OPT_RELIEF: look->normal_maps = !look->normal_maps, s->normal_maps = look->normal_maps, save_int("normal_maps", s->normal_maps); break;
+    case OPT_MUSIC:
+        s->music = !s->music;
+        if (s->music) music_start(data_dir, s->music_volume);
+        else music_stop();
+        save_int("music", s->music);
+        break;
+    case OPT_VOLUME:
+        s->music_volume = MAX(0.0f, MIN(1.0f, s->music_volume + dir * 0.1f));
+        music_volume(s->music_volume), save_float("music_volume", s->music_volume);
+        break;
+    case OPT_MOUSE: s->mouse = MAX(0.2f, MIN(4.0f, s->mouse + dir * 0.1f)), save_float("mouse_sensitivity", s->mouse); break;
+    case OPT_FOV: s->fov = MAX(50.0f, MIN(110.0f, s->fov + dir * 5.0f)), save_int("fov", (int)s->fov); break;
+    case OPT_QUIT: g_quit = true; break;
+    }
+}
+
+/* the rows shown, in order */
+static int opt_rows(const Settings *s, int *ids) {
+    int n = 0;
+    for (int id = 0; id < OPTS; id++)
+        if (opt_shown(id, s)) ids[n++] = id;
+    return n;
+}
+#define MENU_W 220
+#define MENU_ROW 13
+static void menu_rect(int rows, int *x, int *y, int *w, int *h) {
+    Overlay *o = ui_overlay();
+    *w = MENU_W, *h = 30 + rows * MENU_ROW, *x = (o->w - *w) / 2, *y = MAX(4, (o->h - *h) / 2);
+}
+static void menu_update(Settings *s, Look *look, const char *data_dir, int mx, int my, bool click_l, bool click_r) {
+    int ids[OPTS], n = opt_rows(s, ids), x, y, w, h;
+    menu_rect(n, &x, &y, &w, &h);
+    g_menu_sel = MAX(0, MIN(n - 1, g_menu_sel));
+    g_menu_hover = -1;
+    if (mx >= x && mx < x + w && my >= y + 22 && my < y + 22 + n * MENU_ROW) g_menu_hover = (my - y - 22) / MENU_ROW, g_menu_sel = g_menu_hover;
+    if (g_focus && (GetAsyncKeyState(VK_UP) & 1)) g_menu_sel = (g_menu_sel + n - 1) % n;
+    if (g_focus && (GetAsyncKeyState(VK_DOWN) & 1)) g_menu_sel = (g_menu_sel + 1) % n;
+    int dir = 0;
+    if (g_focus && ((GetAsyncKeyState(VK_RETURN) & 1) || (GetAsyncKeyState(VK_RIGHT) & 1))) dir = 1;
+    if (g_focus && (GetAsyncKeyState(VK_LEFT) & 1)) dir = -1;
+    if (click_l && g_menu_hover >= 0) dir = 1;
+    if (click_r && g_menu_hover >= 0) dir = -1;
+    if (dir) opt_change(ids[g_menu_sel], dir, s, look, data_dir);
+}
+static void menu_draw(const Settings *s, const Look *look) {
+    int ids[OPTS], n = opt_rows(s, ids), x, y, w, h;
+    menu_rect(n, &x, &y, &w, &h);
+    ui_fill(0, 0, ui_overlay()->w, ui_overlay()->h, 0, 0, 0, 110); /* the game behind, dimmed (paused) */
+    ui_fill(x, y, w, h, 8, 10, 24, 240);
+    ui_fill(x, y, w, 1, 150, 150, 160, 255), ui_fill(x, y + h - 1, w, 1, 150, 150, 160, 255);
+    ui_fill(x, y, 1, h, 150, 150, 160, 255), ui_fill(x + w - 1, y, 1, h, 150, 150, 160, 255);
+    ui_text(FONT_NORMAL, "Options", x + w / 2 - ui_text_width(FONT_NORMAL, "Options") / 2, y + 6, 255, 210, 90);
+    for (int r = 0; r < n; r++) {
+        char label[48], value[48];
+        opt_text(ids[r], s, look, label, value);
+        int ry = y + 22 + r * MENU_ROW;
+        bool sel = r == g_menu_sel;
+        if (sel) ui_fill(x + 3, ry - 2, w - 6, MENU_ROW, 50, 56, 90, 255);
+        ui_text(FONT_NORMAL, label, x + 10, ry + 1, sel ? 255 : 220, sel ? 240 : 220, sel ? 200 : 220);
+        if (value[0]) ui_text(FONT_NORMAL, value, x + w - 10 - ui_text_width(FONT_NORMAL, value), ry + 1, 255, 210, 90);
+    }
+    const char *hint = "Click: change   Right click: back   Esc: close";
+    ui_text(FONT_NORMAL, hint, x + w / 2 - ui_text_width(FONT_NORMAL, hint) / 2, y + h - 10, 150, 150, 165);
+}
+
