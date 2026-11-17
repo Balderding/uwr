@@ -139,25 +139,10 @@ ray tracing, upscaled textures, relief maps and the effects on. Click a picture 
   is built by `tools/portwin32.py`.
 - `src/render.c`, `src/render_vk*.c`, `src/render.h` and `src/shaders/` are not described in a guide yet; the Vulkan
   renderer's plan and ledger are in `docs/superpowers/plans/2026-11-15-vulkan-renderer.md`.
-
-## Known mismatches and open questions
-
-The eight listed here until 2026-11-16 were checked against the source and the original's disassembly, and put right:
-
-- Fixed in the code: the inventory panel's "Carrying" weight now counts the item on the pointer, as the carry limit
-  does; `main.c`'s two options that were tested twice have names of their own (`--conv=N`, `--frame-picks=`), so
-  the later branches can be reached. `run-tests.cmd`'s chargen line still passes `--picks=` and behaves as before.
-- Fixed in the comments (the code was right): only `data/lights.txt` is read (`lights.h`, `main.c`); `Mesh.grid`
-  byte 2 is the floor's terrain (`level.h`); creatures are hostile by their attitude bits (`game.c`); `core.py`
-  takes no argument; `tools/relief_section.c.txt` is marked as history (relief v4; `src/normals.c` has v7).
-- Not mismatches after all: the two songs' addresses in `songs.h` and `songs.c` are both in UW.EXE (a block's start
-  and the lines inside it; the header now names both), and `sfx_stop`'s test of slots 0-7 matches the original's
-  8-bit mask (four slots are ever set).
-- Still as it was: `tools/laigter-cli/pixelart.preset` is not used by `make-normals.cmd`; it is kept as the
-  settings `sprite_op.preset` was made from.
-
-The per-area guides list more ("UNSURE" at the end of `src/README-src-a.md` and `src/README-src-b.md`); those have
-not been checked yet.
+- The per-area guides end with their own lists of points not yet checked against the code ("UNSURE" in
+  `src/README-src-a.md`, "Open questions" in `src/README-src-b.md`); entries settled since are marked there.
+- `tools/laigter-cli/pixelart.preset` is not used by `make-normals.cmd`; it is kept as the settings
+  `sprite_op.preset` was made from.
 
 ## Licence
 
