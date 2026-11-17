@@ -297,6 +297,7 @@ int world_creature_card_mv(const Mesh *m, int k, int fr, const float pos[3], con
     return 6;
 }
 
+int world_glow_things = 1;
 int world_sprites(const Level *lv, const Mesh *m, const Light *l, int nl, Vertex *out, int cap) {
     int n = 0;
     for (int tz = 0; tz < 64; tz++)
@@ -313,6 +314,9 @@ int world_sprites(const Level *lv, const Mesh *m, const Light *l, int nl, Vertex
                     world_object_pos(lv, tx, tz, o, pos);
                     /* what burns glows (self-lit, kind 4): a lit lantern, torch, candle or taper (0x94-0x97), a campfire */
                     bool glow = (o->item >= 0x94 && o->item <= 0x97) || o->item == 0x12A || o->item == 0xAD;   /* the ankh (0xAD): a holy gold glow (the user) */
+                    /* a glowing rock (0x129) and an orb (0x117) glow of themselves too (the user, 2026-11-17; the Esc row
+                       Glowing stones: world_glow_things) */
+                    if (world_glow_things && (o->item == 0x129 || o->item == 0x117)) glow = true;
                     /* glass (ale, the potions, water, port, wine 0x0BA-0x0BF, an oil flask 0x12D): light through it,
                        tinted (the shadow rays, kind 3.3) */
                     bool glass = (o->item >= 0x0BA && o->item <= 0x0BF) || o->item == 0x12D;

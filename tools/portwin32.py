@@ -34,6 +34,12 @@ if '--backend' in sys.argv:
         sys.exit('portwin32.py: --backend win32 or sdl3')
 SDL3 = r'O:\appsnotonc\sdl3\SDL3-3.4.18\x86_64-w64-mingw32'
 OUT_NAME = 'port' if BACKEND == 'win32' else 'port-sdl3'
+# UWR_AREA=NAME (the user, 2026-11-17: every session builds in its own private area): the program and its objects go
+# to underworld-exhumed/uw1/build/port-NAME and the renderer to build/areas/NAME (tools/buildview.cmd reads the same
+# variable), so sessions build at the same time and need no build lock. Unset: the shared build/port, as before.
+AREA = os.environ.get('UWR_AREA', '').strip()
+if AREA:
+    OUT_NAME += '-' + AREA
 UW1 = os.path.join(HERE, 'exhumed-original' if PLAIN else 'underworld-exhumed', 'uw1')
 LLVM_BIN = r'O:\appsnotonc\llvm\23.1.4\bin'
 LLVM_TMP = r'O:\appsnotonc\llvm\tmp'
@@ -136,6 +142,9 @@ def port(cfg):
         p.backend = BACKEND
     except AttributeError:
         p = p._replace(backend=BACKEND)
+    if AREA and BACKEND != 'sdl3':   # a private area: a build directory of its own
+        p.out = os.path.join(os.path.dirname(p.out), OUT_NAME)
+        p.out_name = OUT_NAME
     if BACKEND == 'sdl3':
         # our plat_sdl3.c in place of the runtime's own (both under a platform\sdl3), into a program of its own
         p.runtime_exclude = list(p.runtime_exclude) + [os.path.join(p.runtime_port, 'platform', 'sdl3', 'plat_sdl3.c')]
@@ -176,13 +185,14 @@ def deploy():
     if not os.path.isdir(out):
         return
     b = os.path.join(HERE, 'build')
-    pairs = [(os.path.join(b, 'uwview.dll'), os.path.join(out, 'uwview.dll')),
-             (os.path.join(b, 'uw_nvngx_port.dll'), os.path.join(out, 'uw_nvngx.dll'))]
+    v = os.path.join(b, 'areas', AREA) if AREA else b   # the renderer's (buildview.cmd's %B%)
+    pairs = [(os.path.join(v, 'uwview.dll'), os.path.join(out, 'uwview.dll')),
+             (os.path.join(v, 'uw_nvngx_port.dll'), os.path.join(out, 'uw_nvngx.dll'))]
     if BACKEND == 'sdl3':
         pairs.append((os.path.join(SDL3, 'bin', 'SDL3.dll'), os.path.join(out, 'SDL3.dll')))
     # the Vulkan renderer beside it (docs\superpowers\plans\2026-11-15-vulkan-renderer.md): loaded for renderer vulkan
-    if os.path.isfile(os.path.join(b, 'uwview_vk.dll')):
-        pairs.append((os.path.join(b, 'uwview_vk.dll'), os.path.join(out, 'uwview_vk.dll')))
+    if os.path.isfile(os.path.join(v, 'uwview_vk.dll')):
+        pairs.append((os.path.join(v, 'uwview_vk.dll'), os.path.join(out, 'uwview_vk.dll')))
     d = os.path.join(HERE, 'dlss')
     if PLAIN:   # uw-original: no renderer, no DLSS; the Roland (Munt and the ROMs) only
         pairs = []

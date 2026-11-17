@@ -55,6 +55,12 @@ static struct {
     float dlss5_intensity, dlss5_structure, dlss5_tone, dlss5_saturation, exposure, gamma, normal_strength, bounce, sheen, ray_length, sprite_strength, mouse, fov, sprite_ao, sprite_height, texture_ao, texture_shadow;
 } S = {1, 1, DLSS_Q_QUALITY, 0, 1, 1, 0, 1, 1, 0, DLSS_Q_DLAA, 1, 0, 1, 1, 1, 1.15f, 2, 1, 1, 1, 0, 8, 0.5f, 1, 85, 0.5f, 0, 1, 3}; /* normal strength 1, no sheen: the user
                                                                             * wants no shiny walls ("sheen" turns it on) */
+/* The glowing things (the user, 2026-11-17; each its own Esc row): glow_things, the glowing rocks, orbs and orb rocks
+ * glow a foot round them (light_glowing_things); moonstone, the moonstone's deep blue light flooding its room, as a
+ * share of a candle (light_moonstone, 0.10); elemental, a fire elemental's smouldering light, the same way
+ * (light_fire_elemental, 0.30); camp_smoke, smoke rising from the campfires and thinning out (fx_campfire_smoke);
+ * water_mist, fog lying over the water (fx_water_mist). The last two are particles: they need fx_particles. */
+static struct { int glow_things; float moonstone, elemental; int camp_smoke, water_mist; } GL = {1, 0.10f, 0.30f, 1, 1};
 /* Textures (the Esc menu, the user 2026-11-14): the walls' and floors' own (0) or upscaled, 256 or 512 (settings.txt
  * texture_res; data\upscaled, tools\make_upscaled_data.py); hires_apply makes the renderer's copy when it changes */
 static int tex_res;
@@ -180,6 +186,11 @@ static void read_settings(const char *path)
         else if (!strcmp(key, "acoustics_quality")) ac_quality_set = (int)v < 0 ? 0 : (int)v > 3 ? 3 : (int)v;
         else if (!strcmp(key, "fx_fog")) FX.fog = (int)v < 0 ? 0 : (int)v > 3 ? 3 : (int)v;   /* fog and light shafts, quality 1-3 */
         else if (!strcmp(key, "fx_particles")) FX.particles = (int)v != 0;
+        else if (!strcmp(key, "light_glowing_things")) GL.glow_things = (int)v != 0, world_glow_things = GL.glow_things;
+        else if (!strcmp(key, "light_moonstone")) GL.moonstone = v < 0 ? 0 : v > 1 ? 1 : v;
+        else if (!strcmp(key, "light_fire_elemental")) GL.elemental = v < 0 ? 0 : v > 1 ? 1 : v;
+        else if (!strcmp(key, "fx_campfire_smoke")) GL.camp_smoke = (int)v != 0;
+        else if (!strcmp(key, "fx_water_mist")) GL.water_mist = (int)v != 0;
         else if (!strcmp(key, "fx_decals")) FX.decals = (int)v != 0;
         else if (!strcmp(key, "fx_water")) FX.water = (int)v != 0;
     }
@@ -1058,6 +1069,7 @@ static unsigned burning_find(void)
     static const float C[4][3] = {{1.0f, 0.84f, 0.58f}, {1.0f, 0.70f, 0.40f}, {1.0f, 0.78f, 0.50f}, {1.0f, 0.80f, 0.55f}};
     if (!light_table_read) read_light_table();
     unsigned sig = 2166136261u;
+    sig = (sig ^ (unsigned)(GL.glow_things + (int)(GL.moonstone * 1000.0f) * 2 + (int)(GL.elemental * 1000.0f) * 4096)) * 16777619u;   /* (the Esc rows) */
     nburning = 0;
     for (int t = 0; t < 4096; t++)
         for (int i = lv.tile[t].first_object, guard = 0; i > 0 && i < 1024 && guard < 1024 && nburning < 256; i = lv.obj[i].next, guard++) {
@@ -1093,6 +1105,48 @@ static unsigned burning_find(void)
                 L->flame = spark ? 0.01f : 0.3f;   /* a spark crackles fast; an explosion billows */
                 L->kelvin = spark ? 2600.0f : 2200.0f;   /* hot metal / a fireball, whiter than a flame */
                 sig = (sig ^ (unsigned)(i * 131 + o->item)) * 16777619u;
+                continue;
+            }
+            else if ((o->item == 0x129 || o->item == 0x117 || o->item == 0x112) && GL.glow_things) {
+                /* a glowing rock, an orb, an orb rock (the user, 2026-11-17: "should glow a foot away"): a steady glow
+                   in the picture's own colour reaching a foot (a quarter of a tile: 1.2 m a tile) */
+                static const float GC[3][3] = {{0.45f, 0.65f, 1.0f}, {0.3f, 0.8f, 0.95f}, {0.75f, 0.75f, 0.95f}};
+                Light *L = &burning[nburning++];
+                memset(L, 0, sizeof *L);
+                world_object_pos(&lv, t % 64, t / 64, o, L->pos);
+                L->pos[1] += o->item == 0x117 ? 0.2f : 0.12f;   /* (an orb sits on its stand) */
+                memcpy(L->color, GC[o->item == 0x129 ? 0 : o->item == 0x117 ? 1 : 2], 12);
+                L->intensity = 1.5f, L->range = 0.25f, L->kind = LIGHT_GLOW;
+                sig = (sig ^ (unsigned)(i * 131 + o->item)) * 16777619u;
+                sig = (sig ^ (unsigned)(t * 8 + o->x + o->y * 64 + o->z * 4096)) * 16777619u;
+                continue;
+            }
+            else if (o->item == 0x126 && GL.moonstone > 0) {
+                /* the moonstone (the user: "a deep blue light that floods the room ... like a liquid", a tenth of a
+                   candle): LIGHT_FLOOD, every open tile near it lit alike, round corners too (lights.c). A candle is
+                   0.5 + 0.4 x 1 = 0.9 */
+                Light *L = &burning[nburning++];
+                memset(L, 0, sizeof *L);
+                world_object_pos(&lv, t % 64, t / 64, o, L->pos);
+                L->pos[1] += 0.1f;
+                L->color[0] = 0.12f, L->color[1] = 0.25f, L->color[2] = 1.0f;
+                L->intensity = 0.9f * GL.moonstone, L->range = 7.0f, L->kind = LIGHT_FLOOD;
+                sig = (sig ^ (unsigned)(i * 131 + o->item)) * 16777619u;
+                sig = (sig ^ (unsigned)(t * 8 + o->x + o->y * 64 + o->z * 4096)) * 16777619u;
+                continue;
+            }
+            else if (o->item == 0x78 && GL.elemental > 0) {
+                /* a fire elemental (the user: "a smoldering orange/yellow 30% of a candle"): a low flame's light going
+                   about with it, a candle's reach (3 tiles), 1500 K (a smouldering orange-yellow), flickering */
+                Light *L = &burning[nburning++];
+                memset(L, 0, sizeof *L);
+                world_object_pos(&lv, t % 64, t / 64, o, L->pos);
+                L->pos[1] += 0.5f;
+                L->color[0] = 1.0f, L->color[1] = 0.62f, L->color[2] = 0.22f;
+                L->intensity = 0.9f * GL.elemental, L->range = 3.0f, L->kind = LIGHT_WALL_TORCH;
+                L->flame = 0.05f, L->kelvin = 1500.0f;
+                sig = (sig ^ (unsigned)(i * 131 + o->item)) * 16777619u;
+                sig = (sig ^ (unsigned)(t * 8 + o->x + o->y * 64 + o->z * 4096)) * 16777619u;
                 continue;
             }
             else continue;
@@ -2734,6 +2788,32 @@ UWV_API int uwv_option(int id, int step, char *value, int n)
         if (!FX.particles) render_particles_clear();
         snprintf(value, (size_t)n, "%s", FX.particles ? "On" : "Off");
         return 1;
+    case 80:  /* Glowing stones (the user, 2026-11-17): the glowing rocks, orbs and orb rocks glow a foot round them */
+        if (step) GL.glow_things = !GL.glow_things, world_glow_things = GL.glow_things, settings_save("light_glowing_things", GL.glow_things ? "1" : "0");
+        snprintf(value, (size_t)n, "%s", GL.glow_things ? "On" : "Off");
+        return 1;
+    case 81:    /* Moonstone light: Off, then 5 to 50 % of a candle (10) */
+    case 82: {  /* Fire elemental light: Off, then 10 to 100 % of a candle (30) */
+        float *f = id == 81 ? &GL.moonstone : &GL.elemental;
+        int by = id == 81 ? 5 : 10, top = id == 81 ? 50 : 100, pc = (int)(*f * 100.0f + 0.5f);
+        if (step) {
+            pc += step > 0 ? by : -by;
+            pc = pc < 0 ? 0 : pc > top ? top : pc;
+            *f = (float)pc / 100.0f;
+            snprintf(t, sizeof t, "%.2f", *f), settings_save(id == 81 ? "light_moonstone" : "light_fire_elemental", t);
+        }
+        if (pc <= 0) snprintf(value, (size_t)n, "Off");
+        else snprintf(value, (size_t)n, "%d%% of a candle", pc);
+        return 1;
+    }
+    case 83:  /* Campfire smoke (particles) */
+        if (step) GL.camp_smoke = !GL.camp_smoke, settings_save("fx_campfire_smoke", GL.camp_smoke ? "1" : "0");
+        snprintf(value, (size_t)n, "%s", GL.camp_smoke ? "On" : "Off");
+        return 1;
+    case 84:  /* Water fog (particles) */
+        if (step) GL.water_mist = !GL.water_mist, settings_save("fx_water_mist", GL.water_mist ? "1" : "0");
+        snprintf(value, (size_t)n, "%s", GL.water_mist ? "On" : "Off");
+        return 1;
     case 11:  /* the effects' decals (render_decals.c) */
         if (step) FX.decals = !FX.decals, settings_save("fx_decals", FX.decals ? "1" : "0"),
                   render_set_fx(FX.particles, FX.decals, FX.water, FX.fog);
@@ -3328,6 +3408,42 @@ static void fx_frame(void)
             float v[3] = {(frand() - 0.5f) * (spark ? 0.9f : 0.25f), spark ? 0.6f + frand() * 0.6f : 0.35f + frand() * 0.45f, (frand() - 0.5f) * (spark ? 0.9f : 0.25f)};
             float c[3] = {1.0f, 0.55f + frand() * 0.2f, 0.18f};
             gpu_part(base, v, spark ? 0.7f + frand() * 0.5f : 0.9f + frand() * 0.9f, 0.006f + frand() * 0.005f, c, 1, spark ? 3.0f : -0.35f, spark ? 0.3f : 1.2f);
+        }
+        /* a campfire's smoke (the user, 2026-11-17: "smoke from the campfires that dissipates over time"): grey puffs
+           rising from above the flames, slowing, widening and thinning out over 5 to 8 seconds, lit from below by the
+           fire while young (particles.hlsl's kind 5); under the ceiling they spread */
+        if (GL.camp_smoke && L->flame >= 0.4f) {
+            static float sacc[MAX_LIGHTS];
+            sacc[k] += dt * 5.0f;
+            while (sacc[k] >= 1.0f) {
+                sacc[k] -= 1.0f;
+                float a = frand() * 6.2831853f, sp = frand() * 0.07f;
+                float base[3] = {L->pos[0] + (frand() - 0.5f) * 0.16f, L->pos[1] + 0.22f + frand() * 0.12f, L->pos[2] + (frand() - 0.5f) * 0.16f};
+                float v[3] = {cosf(a) * sp, 0.26f + frand() * 0.16f, sinf(a) * sp};
+                float g = 0.26f + frand() * 0.08f, c[3] = {g, g * 0.97f, g * 0.93f};
+                gpu_part(base, v, 5.0f + frand() * 3.0f, 0.06f + frand() * 0.04f, c, 5, -0.03f, 0.25f);
+            }
+        }
+    }
+    /* the fog over the water (the user, 2026-11-17: "fog over the water"): soft pale wisps lying just above every
+       water tile within 7 tiles of the eye, drifting slowly, each coming and going over 7 to 12 seconds (kind 4) */
+    if (GL.water_mist) {
+        static float macc;
+        static u16 wt[225];
+        int nw = 0, cx = (int)cam.pos[0], cz = (int)cam.pos[2];
+        for (int z = cz - 7; z <= cz + 7; z++)
+            for (int x = cx - 7; x <= cx + 7; x++)
+                if (x >= 0 && x < 64 && z >= 0 && z < 64 && m.grid[(z * 64 + x) * 4 + 2] == 1) wt[nw++] = (u16)(z * 64 + x);
+        macc += dt * (float)nw * 0.8f;
+        if (!nw) macc = 0;
+        while (macc >= 1.0f && nw) {
+            macc -= 1.0f;
+            int t = wt[rand() % nw];
+            float p[3] = {(float)(t % 64) + frand(), 0, (float)(t / 64) + frand()};
+            p[1] = level_floor_y(&lv, p[0], p[2]) + 0.14f + frand() * 0.2f;
+            float v[3] = {(frand() - 0.5f) * 0.07f, (frand() - 0.5f) * 0.01f, (frand() - 0.5f) * 0.07f};
+            static const float MIST[3] = {0.72f, 0.78f, 0.84f};
+            gpu_part(p, v, 7.0f + frand() * 5.0f, 0.2f + frand() * 0.12f, MIST, 4, 0.0f, 0.0f);
         }
     }
     if (log && now - log_t > 1000) log_t = now, fprintf(stderr, "uwview: particles: %d live, %d flames, the nearest in view at %.3f %.3f\n",

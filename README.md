@@ -83,6 +83,14 @@ ray tracing, upscaled textures, relief maps and the effects on. Click a picture 
   Every part has its own row in the Esc menu ([docs/ESC_MENU.md](docs/ESC_MENU.md), "AI"). The choices are made by
   a built-in rulebook, or optionally by a small language model run on the player's own machine. Every decision is
   written to the log file with its reason, and each part counts how often it was used.
+- **A language model we trained, then set aside.** We fine-tuned Liquid AI's LFM2.5-350M into a creature decider,
+  **LFM2.5-350M-UW**: LoRA with Unsloth on 6,958 labelled questions, about 15 minutes on one RTX 4090 for the
+  final run. It gave the rulebook's answer on 294 of 311 questions it had never seen (94.5%) and on all 50 of a
+  hand-written test set. We then dropped it for rules: the model was only imitating a rulebook we had written,
+  and code follows that rulebook exactly, at once, with no graphics memory. The game's Creature AI is that code
+  now; a model can still be switched in (Esc menu, AI, **Decisions by**). The whole story, the numbers and the
+  scripts to train one yourself are in [tools/finetune/README.md](tools/finetune/README.md). The model file is
+  not in this repository or the download.
 - **The original's 3D models** (doors, portcullises, bridges, weapons on the floor) decoded from UW.EXE and drawn.
 
 ## Where it is going
@@ -111,6 +119,7 @@ ray tracing, upscaled textures, relief maps and the effects on. Click a picture 
 | use the proof, patch and build scripts | [tools/README-tools-a.md](tools/README-tools-a.md), [tools/README-tools-b.md](tools/README-tools-b.md) |
 | make normal maps | [tools/laigter-cli/README.md](tools/laigter-cli/README.md) |
 | learn about the AI-driven creatures / models | [LLM_NPC_AI.md](LLM_NPC_AI.md), [docs/MODELS.md](docs/MODELS.md) |
+| train a creature model yourself, and how ours did | [tools/finetune/README.md](tools/finetune/README.md) |
 | see design plans and specs | [docs/superpowers/](docs/superpowers/) |
 | see third-party credits | [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) |
 

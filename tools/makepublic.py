@@ -98,3 +98,27 @@ with open(os.path.join(OUT, 'VERSION.txt'), 'w', newline='\r\n') as f:
                git(os.path.join(HERE, 'underworld-exhumed'), 'rev-parse', '--short', 'HEAD').decode().strip()))
     f.write('Source: https://github.com/Balderding/uwr\n')
 print('makepublic.py: %d files, %d MB -> %s' % (len(pairs) + 3, total >> 20, OUT))
+
+# the download itself: one zip beside the folder, with "uwr/" as its top folder. Written here (not by a zip tool) so
+# that the Linux programs keep their "may be run" mark when the zip is made on Windows; unzip on Linux restores it.
+import zipfile
+RUN = {'uwr', 'uwr.sh', 'hdrprobe', 'hdrprobe.sh', 'laigter-cli'}
+ZIP = os.path.join(HERE, 'release', NAME, 'uwr-%s.zip' % NAME)
+with zipfile.ZipFile(ZIP, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+    for root, dirs, files in os.walk(OUT):
+        dirs.sort()
+        for f in sorted(files):
+            a = os.path.join(root, f)
+            rel = 'uwr/' + os.path.relpath(a, OUT).replace(os.sep, '/')
+            zi = zipfile.ZipInfo.from_file(a, rel)
+            zi.compress_type = zipfile.ZIP_DEFLATED
+            zi.create_system = 3                                        # (Unix: the mode below is read)
+            zi.external_attr = (0o100755 if f in RUN or '.so' in f else 0o100644) << 16
+            with open(a, 'rb') as src:
+                z.writestr(zi, src.read(), compresslevel=9)
+with zipfile.ZipFile(ZIP) as z:
+    bad = z.testzip()
+    if bad:
+        sys.exit('makepublic.py: the zip is damaged at ' + bad)
+    n = len(z.namelist())
+print('makepublic.py: %s (%d files, %d MB)' % (ZIP, n, os.path.getsize(ZIP) >> 20))

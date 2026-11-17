@@ -2,7 +2,9 @@
 // compute pass a frame (gravity, drag, the floor, their end) and drawn as soft dots facing the camera into the
 // scene's colour, depth-tested against the level (never through a wall), no depth written. Kinds: 1 glowing (sparks,
 // embers: added light, cooling to red), 2 lit (blood, drops, dust: the torch's light and a little of their own),
-// 3 smoke and mist (lit, growing, rising, alpha).
+// 3 smoke and mist (lit, growing, rising, alpha), 4 the fog over water (faint, wide, hardly growing, coming and going
+// slowly), 5 a campfire's smoke (thinning out steadily as it rises and widens, lit from below by its fire while young;
+// it spreads under the ceiling).
 #pragma pack_matrix(row_major)
 cbuffer PC : register(b0) {
     float4x4 vp;     // the scene's view-projection (jittered as the scene's)
@@ -42,6 +44,7 @@ void cs_update(uint3 id : SV_DispatchThreadID) {
     p.vel.y -= p.grav * dt;
     p.vel *= exp(-p.drag * dt);
     p.pos += p.vel * dt;
+    if (p.kind > 4.5 && p.pos.y > 4.0 - p.size) { p.pos.y = 4.0 - p.size; p.vel.y = 0; }   // smoke under the ceiling (CEIL)
     if (p.kind < 2.5 && p.pos.y < p.floor_y + p.size) {
         if (p.kind < 1.5 && p.vel.y < -0.3) {   // a spark bounces off the floor, losing most of its speed
             p.pos.y = p.floor_y + p.size, p.vel.y = -p.vel.y * 0.35, p.vel.xz *= 0.6;
@@ -64,6 +67,8 @@ VO vs(uint id : SV_VertexID) {
     if (p.life <= 0 || p.age >= p.life) { o.pos = float4(2, 2, 2, 1); o.col = 0; return o; }
     float f = p.age / p.life, fade = f < 0.7 ? 1 : (1 - f) / 0.3;
     float s = p.size * (p.kind > 2.5 ? 1 + f * 1.5 : 1);
+    if (p.kind > 3.5 && p.kind < 4.5) fade = saturate(f / 0.2) * saturate((1 - f) / 0.35), s = p.size * (1 + f * 0.6);   // fog: in and out slowly
+    if (p.kind > 4.5) fade = saturate(f / 0.06) * pow(1 - f, 1.5), s = p.size * (1 + f * 3.0);                          // smoke: thinning all the way
     float3 w = p.pos + (right.xyz * c.x + up.xyz * c.y) * s;
     o.pos = mul(vp, float4(w, 1));
     float3 col = p.col;
@@ -73,8 +78,9 @@ VO vs(uint id : SV_VertexID) {
     } else {               // lit: the player's light by its distance, and a little ambient
         float d = distance(p.pos, torch.xyz);
         float l = 0.06 + saturate(1 - d / max(torch.w, 0.5)) * 1.0;
-        float a = (p.kind > 2.5 ? 0.45 : 0.9) * fade;
-        o.col = float4(col * (torchc.rgb * l + 0.04) * eye.w * a, a);
+        float a = (p.kind > 4.5 ? 0.4 : p.kind > 3.5 ? 0.16 : p.kind > 2.5 ? 0.45 : 0.9) * fade;
+        float3 own = p.kind > 4.5 ? float3(1.0, 0.5, 0.2) * 0.6 * pow(1 - f, 3) : 0;   // its fire's light from below
+        o.col = float4(col * (torchc.rgb * l + 0.04 + own) * eye.w * a, a);
     }
     return o;
 }

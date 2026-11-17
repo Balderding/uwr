@@ -897,7 +897,7 @@ void render_set_lights(const Light *l, int n, const u32 *tiles)
         memcpy(g->pr, l[i].pos, 12), g->pr[3] = l[i].range * RENDER_LIGHT_REACH;
         for (int j = 0; j < 3; j++) g->col[j] = l[i].color[j] * l[i].intensity;
         g->col[3] = 1;
-        g->info[0] = 0;
+        g->info[0] = 0, g->info[2] = l[i].kind == LIGHT_FLOOD ? 1.0f : 0.0f;   /* (z: it floods its room, common.hlsli light_term) */
     }
     /* the tile lists name placed lights from 0; in the buffer they follow the torch */
     u32 *tp = V.tiles.ptr;

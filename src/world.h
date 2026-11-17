@@ -11,6 +11,7 @@
 bool world_item_shown(const Object *o);
 /* the cards (6 vertices each) of the level's items and the wall torches; returns the vertex count */
 int world_sprites(const Level *lv, const Mesh *m, const Light *l, int nl, Vertex *out, int cap);
+extern int world_glow_things;   /* 1: a glowing rock and an orb are drawn glowing (uwview.c, the Esc row Glowing stones) */
 /* where an object stands in the world (x, y of its bottom, z) */
 void world_object_pos(const Level *lv, int tile_x, int tile_z, const Object *o, float pos[3]);
 /* wall decorations (writing, gravestones): their picture's sprite cell (TMOBJ.GR), or -1; and where they hang:

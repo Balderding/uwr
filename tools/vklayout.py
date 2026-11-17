@@ -21,7 +21,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DXC = r'O:\appsnotonc\dxc\v1.9.2609\bin\x64\dxc.exe'
 DIS = r'O:\appsnotonc\vulkan-sdk\1.4.363.1\Bin\spirv-dis.exe'
 SPV = '-spirv -fspv-target-env=vulkan1.3 -fvk-use-dx-layout -fvk-b-shift 0 0 -fvk-t-shift 16 0 -fvk-u-shift 48 0 -fvk-s-shift 64 0'.split()
-WORK = os.path.join(ROOT, 'build', 'gen', 'vklayout')
+WORK = os.path.join(ROOT, 'build', *((['areas', os.environ['UWR_AREA']]) if os.environ.get('UWR_AREA') else []), 'gen', 'vklayout')   # (UWR_AREA: a session's private build area)
 
 PROBE = r'''
 #include <math.h>

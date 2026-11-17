@@ -165,7 +165,12 @@ PO ps(VO i) {
     // (the user, 2026-11-16: the water is the original texture, flat and still, and only the rings of what touches
     // it move on it: no normal map on it, no swell, no travelling waves bending the bed, no caustics; its sheen and
     // its reflection only on the rings. false: the water as it was before)
+    // (the user, 2026-11-17: "we need those water effects and the water needs to be opaque but seem like we are looking
+    // into it, not the surface but below it": with the Water row on (fxw.x) the travelling waves and the caustics are
+    // back, on the pond below: the waves bend the view of the bed, more the deeper it lies, the caustics play on the
+    // bed, and the surface itself shows little (a faint glint, the Fresnel reflection). Water off: still, as above)
     static const bool WATER_PLAIN = true;
+    float wdeep = 0;         // the bed's depth under the surface here, tiles
     float wring = 0;   // how much of a ring is here (0: still water)
     // (the user, 2026-11-16: "like looking at a pond: the surface reflects but you are seeing into the water too"):
     // the texture is the pond's BED, a quarter of a tile under a flat surface: seen by the view ray bent into the
@@ -200,6 +205,7 @@ PO ps(VO i) {
                 }
             float shore = smoothstep(0.0, 0.7, sd);
             float wd = WATER_DEPTH * (0.06 + 0.94 * shore);
+            wdeep = wd;
             float down = max(-dot(Rr, Ng), 0.3), path = wd / down;
             float3 s = (Rr - Ng * dot(Rr, Ng)) * path;
             wbed = float2(dot(s, T) / max(dot(T, T), 1e-12), dot(s, B) / max(dot(B, B), 1e-12));
@@ -237,7 +243,7 @@ PO ps(VO i) {
             float t = fxw.z;
             float2 g = 0;
             static const float4 WV[4] = {float4(0.8, 0.6, 7.0, 1.1), float4(-0.5, 0.86, 11.0, 1.7), float4(0.2, -0.98, 17.0, 2.3), float4(-0.95, -0.3, 23.0, 2.9)};
-            if (!WATER_PLAIN) [unroll] for (int k = 0; k < 4; k++) g += WV[k].xy * cos(dot(WV[k].xy, w) * WV[k].z + t * WV[k].w) * (0.9 / (k + 1));
+            [unroll] for (int k = 0; k < 4; k++) g += WV[k].xy * cos(dot(WV[k].xy, w) * WV[k].z + t * WV[k].w) * (0.9 / (k + 1));
             int nr = (int)fxw.y;
             float crest = 0;   // the rings' crests, lighter (the light caught on their slopes)
             for (int j = 0; j < nr && j < 16; j++) {
@@ -250,11 +256,11 @@ PO ps(VO i) {
             N = normalize(N + float3(-g.x, 0, -g.y) * 0.2);
             // the bed seen through the bent surface: the texture displaced (refraction), a little lighter where the
             // waves face the eye and on the rings' crests
-            c = (i.rect.z > 0 ? bed_at(i.rect, uv + wbed + N.xz * 14.0, wsoft) : float4(1, 1, 1, 1)) * float4(i.col.rgb, 1);
+            c = (i.rect.z > 0 ? bed_at(i.rect, uv + wbed + N.xz * (WATER_PLAIN ? 28.0 * wdeep : 14.0), wsoft) : float4(1, 1, 1, 1)) * float4(i.col.rgb, 1);
             c.rgb *= wdim * (1.0 + 0.35 * dot(g, normalize(eye.xz - w + 1e-4)) / 2.0) + 0.0;
             c.rgb *= 1.0 + 1.5 * saturate(crest);
             wring = saturate(crest * 2 + length(g) * 0.3);
-            if (WATER_PLAIN) shine = 0.5 * wring; else shine *= 1.6;
+            if (WATER_PLAIN) shine = 0.08 + 0.5 * wring; else shine *= 1.6;
         }
     }
     if (water && WATER_PLAIN) c.rgb = lerp(c.rgb, WATER_MURK * i.col.rgb * (1 - wfr), wmurk);
@@ -300,9 +306,10 @@ PO ps(VO i) {
         if (lum(e) < 1e-5) continue;
         float3 j = float3(rnd(seed), rnd(seed), rnd(seed)) * 2 - 1;
         float3 target = src + normalize(j + 1e-4) * look.x * (lights[k].info.x > 0.5 ? 0.3 : 1) * rnd(seed);   // a flame: its puff
-        float3 vis = k == 0 && rtlim.w < 0 ? 1 : shadow(pl, target);   // full bright: no shadow from the torch
+        bool flood = k != 0 && lights[k].info.z > 0.5;   // a flooding light (the moonstone): no shadow, no relief shadow
+        float3 vis = (k == 0 && rtlim.w < 0) || flood ? 1 : shadow(pl, target);   // full bright: no shadow from the torch
         // the texture's relief in the light's way (sprite.w: its depth for a 64 texel texture; a floor's 32 half that)
-        if (sprite.w > 0 && texrelief && !(k == 0 && rtlim.w < 0))
+        if (sprite.w > 0 && texrelief && !(k == 0 && rtlim.w < 0) && !flood)
             vis *= relief_shadow(i.rect, uv, float3(dot(L, normalize(T)), dot(L, normalize(B)), dot(L, Ng)), sprite.w * i.rect.z / 64.0);
         acc += e * vis;
         // the sheen: a soft highlight (Blinn-Phong) of the light that reaches here, by the mapped normal; it moves
@@ -358,10 +365,10 @@ PO ps(VO i) {
 #ifdef RT
     // the effects' water: the caustics, the lights that reach it focused by its waves into bright threads on what lies
     // under (the ray-traced builds only: the light arriving is the traced light)
-    if (!WATER_PLAIN && water && fxw.x > 0.5) {
-        float2 q = i.wpos.xz * 3.1 + float2(fxw.z * 0.35, fxw.z * 0.27);
+    if (water && fxw.x > 0.5) {
+        float2 q = (i.wpos.xz + N.xz * wdeep) * 3.1 + float2(fxw.z * 0.35, fxw.z * 0.27);
         float k = abs(sin(q.x + sin(q.y * 1.3 + fxw.z * 0.8))) * abs(sin(q.y * 1.1 + sin(q.x * 0.9 - fxw.z * 0.6)));
-        acc *= 0.75 + 1.1 * pow(1 - k, 6);
+        acc *= WATER_PLAIN ? lerp(1.0, 0.8 + 1.1 * pow(1 - k, 6), saturate(wdeep * 4)) : 0.75 + 1.1 * pow(1 - k, 6);   // (none at the shore's edge)
     }
 #endif
     // (water had a faint light of its own here, 0.03, "never black": taken out 2026-11-13 at the user's word: it must

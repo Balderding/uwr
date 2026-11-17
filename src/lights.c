@@ -68,8 +68,34 @@ int lights_load(const char *data_dir, const Level *lv, Light *out, int cap) {
     return n;
 }
 
+/* a flooding light's tiles: steps[t] = how many steps across the open floor tile t is from the light's own (255: not
+ * reached within FLOOD_STEPS) */
+static void flood_steps(const Level *lv, const Light *L, u8 *steps) {
+    static u16 queue[4096];
+    memset(steps, 255, 4096);
+    int x0 = (int)L->pos[0], z0 = (int)L->pos[2], head = 0, tail = 0;
+    if (x0 < 0 || x0 > 63 || z0 < 0 || z0 > 63 || lv->tile[z0 * 64 + x0].type == T_SOLID) return;
+    steps[z0 * 64 + x0] = 0, queue[tail++] = (u16)(z0 * 64 + x0);
+    while (head < tail) {
+        int t = queue[head++], x = t % 64, z = t / 64;
+        if (steps[t] >= FLOOD_STEPS) continue;
+        static const int DX[4] = {1, -1, 0, 0}, DZ[4] = {0, 0, 1, -1};
+        for (int k = 0; k < 4; k++) {
+            int nx = x + DX[k], nz = z + DZ[k], u = nz * 64 + nx;
+            if (nx < 0 || nx > 63 || nz < 0 || nz > 63 || steps[u] != 255 || lv->tile[u].type == T_SOLID) continue;
+            steps[u] = (u8)(steps[t] + 1), queue[tail++] = (u16)u;
+        }
+    }
+}
+
 void lights_tiles(const Level *lv, const Light *l, int n, u32 *out) {
     for (int i = 0; i < 64 * 64 * TILE_LIGHTS; i++) out[i] = NO_LIGHT;
+    /* the flooding lights (few: the moonstone): where each has run to */
+    enum { FLOODS = 4 };
+    static u8 fsteps[FLOODS][4096];
+    int fl[FLOODS], nfl = 0;
+    for (int i = 0; i < n && nfl < FLOODS; i++)
+        if (l[i].kind == LIGHT_FLOOD) fl[nfl] = i, flood_steps(lv, &l[i], fsteps[nfl]), nfl++;
     for (int z = 0; z < 64; z++)
         for (int x = 0; x < 64; x++) {
             const Tile *t = &lv->tile[z * 64 + x];
@@ -90,9 +116,17 @@ void lights_tiles(const Level *lv, const Light *l, int n, u32 *out) {
                 float d2 = dx * dx + dz * dz, reach = l[i].range * 1.3334f + 0.75f;   /* (the lights' fade ends at 4/3 of the range: common.hlsli light_fade) */
                 if (d2 > reach * reach) continue;
                 bool seen = false;
-                for (int p = 0; p < 3 && !seen; p++) seen = clear_line(lv, l[i].pos, pts[p]);
-                /* lights it can see count a hundred times more */
-                float score = l[i].intensity / (d2 + 0.5f) * (seen ? 100.0f : 1.0f);
+                float score;
+                if (l[i].kind == LIGHT_FLOOD) {   /* where it has run to, seen or not: always in the tile's list */
+                    int f = 0;
+                    while (f < nfl && fl[f] != i) f++;
+                    if (f >= nfl || fsteps[f][z * 64 + x] == 255) continue;
+                    score = 1e9f;
+                } else {
+                    for (int p = 0; p < 3 && !seen; p++) seen = clear_line(lv, l[i].pos, pts[p]);
+                    /* lights it can see count a hundred times more */
+                    score = l[i].intensity / (d2 + 0.5f) * (seen ? 100.0f : 1.0f);
+                }
                 int at = k < TILE_LIGHTS ? k++ : TILE_LIGHTS - 1;
                 if (at == TILE_LIGHTS - 1 && k == TILE_LIGHTS && score <= best[at] && o[at] != NO_LIGHT) continue;
                 while (at > 0 && best[at - 1] < score) best[at] = best[at - 1], o[at] = o[at - 1], at--;

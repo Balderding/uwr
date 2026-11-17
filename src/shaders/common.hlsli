@@ -216,6 +216,13 @@ float3 light_term(uint k, float3 p, float3 Ng, float3 N, out float3 L, out float
     }
     const bool fade = hdrout.w > 0.5;
     const float Rf = max(pr.w / LIGHT_REACH, 1e-3);   // the light's own range (pr.w is it x LIGHT_REACH)
+    if (k != 0 && lights[k].info.z > 0.5) {
+        // a light that floods its room like a liquid (the moonstone; lights.h LIGHT_FLOOD): the same on every face
+        // of the tiles it has run to (their lists), whichever way it faces and whatever stands between, thinning out
+        // from half its range to the end of its fade; no shadow (src: the point itself)
+        src = p + Ng * 0.02, L = N;
+        return lights[k].col.rgb * (1 - smoothstep(Rf * 0.5, Rf * FADE_END, d));
+    }
     if (fade ? d >= Rf * FADE_END : d > pr.w) return 0;
     float w = saturate(1 - pow(d / pr.w, 4));
     float soft = k == 0 ? 0.6 : 0.15, scale = k == 0 ? (1 + 0.6) / (1 + 0.15) : 1;

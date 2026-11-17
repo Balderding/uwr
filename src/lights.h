@@ -28,7 +28,12 @@ typedef struct {
                         deeper the bigger it is); 0: a torch's, 0.05 */
     float kelvin;    /* a flame's temperature (its colour: render_blackbody, shifting with the flicker); 0: color[] */
 } Light;
-enum { LIGHT_ORB, LIGHT_WALL_TORCH };
+/* LIGHT_GLOW: a steady glow with no orb drawn and no flicker (a glowing rock, an orb). LIGHT_FLOOD: a light that
+ * fills the room it lies in like a liquid (the moonstone, the user 2026-11-17): every open tile within FLOOD_STEPS
+ * steps of it across the floor takes it, round corners too, unshadowed and from every side; it thins out towards
+ * its range */
+enum { LIGHT_ORB, LIGHT_WALL_TORCH, LIGHT_GLOW, LIGHT_FLOOD };
+#define FLOOD_STEPS 12
 
 /* this level's lights (hand-placed + automatic, at most cap); -1 when the files cannot be read or written */
 int lights_load(const char *data_dir, const Level *lv, Light *out, int cap);
