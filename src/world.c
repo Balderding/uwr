@@ -185,7 +185,7 @@ int world_door_quads(const Level *lv, const Mesh *m, const Door *d, Vertex *out,
                  tv0 = m->door_top[pic], tv1 = 63.999f;
     else memcpy(rect, wrect, 16), tu0 = lx * 64, tu1 = rx * 64, tv0 = (ceil - ytop) * 64, tv1 = (ceil - y0) * 64;
     bool portcullis = k == 6;
-    float th = portcullis ? 0.02f : DOOR_THICK, W = rx - lx, a = portcullis ? 0.0f : d->open * 1.5707963f;
+    float th = portcullis ? 0.02f : DOOR_THICK, W = rx - lx, a = portcullis ? 0.0f : d->open * 1.9634954f;   /* (112.5 degrees open, as the model's leaf below) */
     float lift = portcullis ? d->open * (ytop - y0) * 0.95f : 0.0f, ya = y0 + lift, yb = ytop + lift;
     float u[3] = {-al[0] * cosf(a) + nr[0] * sinf(a), 0, -al[2] * cosf(a) + nr[2] * sinf(a)}; /* along the board */
     float w[3] = {al[0] * sinf(a) + nr[0] * cosf(a), 0, al[2] * sinf(a) + nr[2] * cosf(a)};   /* through it */
@@ -262,7 +262,7 @@ int world_door_quads_flat(const Level *lv, const Mesh *m, const Door *d, Vertex 
     float rect[4];
     if (pic >= 0 && pic < 16 && m->door_w[pic]) rect[0] = (float)(pic * 32), rect[1] = DOOR_ROW, rect[2] = 32, rect[3] = 64;
     else memcpy(rect, wrect, 16);
-    float a = d->open * 1.5707963f, hinge[3], tip[3];
+    float a = d->open * 1.9634954f, hinge[3], tip[3];   /* (112.5 degrees open) */
     AT(-hw, hinge);
     tip[0] = hinge[0] + (al[0] * cosf(a) + nrm[0] * sinf(a)) * DOOR_WIDTH;
     tip[2] = hinge[2] + (al[2] * cosf(a) + nrm[2] * sinf(a)) * DOOR_WIDTH;
@@ -425,10 +425,13 @@ int world_door_model_quads(const Level *lv, const Mesh *m, const Door *d, const 
             mi.vars[5] = st;
             mi.delta_y = 0.8125f - 0.1875f * (float)st;
         } else {
-            /* swung on its hinge by dir sixteenths of a turn: the steps (4 fully open) toward the side its door-dir
-             * bit says, as do_door's Clk(5) = dir << 12 */
+            /* swung on its hinge by dir sixteenths of a turn: the steps toward the side its door-dir bit says, as
+             * do_door's Clk(5) = dir << 12. An open swing door rests at 5 steps, 112.5 degrees (USEITEMS.C moveDoor's
+             * len 5; EFFECT.C adds a step a frame), not 4 (90 degrees, the portcullis's count): ours stood 22.5
+             * degrees off the leaf the original's pick knows, so from the side away from its swing the leaf seen
+             * could not be pointed at (the user, 2026-11-16: "cannot target the door from one side") */
             int doordir = (o->flags >> 4) & 1;
-            float dir = d->open * 4.0f * (doordir ? 1.0f : -1.0f);
+            float dir = d->open * 5.0f * (doordir ? 1.0f : -1.0f);
             mi.vars[5] = (int)(dir * 4096.0f);
             if (secret) { memcpy(mi.rect, wrect, 16); atlas_colour(m, wrect, mi.var0_rgb); }
             else {
@@ -444,6 +447,34 @@ int world_door_model_quads(const Level *lv, const Mesh *m, const Door *d, const 
 
 static void floor_rect_of(int i, float r[4]) { r[0] = (float)(i % 32 * 32), r[1] = (float)(896 + i / 32 * 32), r[2] = r[3] = 32; }
 
+int world_model_boxes(const Level *lv, int *item, float (*lo)[3], float (*hi)[3], int cap) {
+    static Vertex v[4096];
+    int n = 0;
+    if (!models_ready()) return 0;
+    for (int t = 0; t < 64 * 64 && n < cap; t++)
+        for (int i = lv->tile[t].first_object, guard = 0; i > 0 && i < 1024 && guard < 1024 && n < cap; i = lv->obj[i].next, guard++) {
+            const Object *o = &lv->obj[i];
+            if (o->item < 0x150 || o->item > 0x16C || ((o->flags >> 5) & 1)) continue;   /* (0x16D-0x16F: wall panels) */
+            if (o->item == 0x165 || o->item == 0x166) continue;                         /* gravestones, writings: decals */
+            int model = models_for_item(o->item);
+            if (model < 0 || model == 16 || model == 17) continue;                      /* (16, 17: the lever and switch plates) */
+            float pos[3];
+            ModelInst mi;
+            world_object_pos(lv, t % 64, t / 64, o, pos);
+            inst_init(&mi, model, pos, (float)o->heading / 8.0f);
+            if (models_cols(model)[0] & MCOL_DELTA) mi.delta_y = level_ceil_y() - pos[1];
+            int nv = models_place(&mi, v, 4096);
+            if (nv < 3) continue;
+            for (int k = 0; k < 3; k++) lo[n][k] = hi[n][k] = v[0].pos[k];
+            for (int j = 1; j < nv; j++)
+                for (int k = 0; k < 3; k++) {
+                    if (v[j].pos[k] < lo[n][k]) lo[n][k] = v[j].pos[k];
+                    if (v[j].pos[k] > hi[n][k]) hi[n][k] = v[j].pos[k];
+                }
+            item[n++] = o->item;
+        }
+    return n;
+}
 int world_model_quads(const Level *lv, const Mesh *m, Vertex *out, int cap) {
     static const int rect_flagcol[2] = {0xE4, 0x66};
     int n = 0;

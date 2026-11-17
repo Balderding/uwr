@@ -12,6 +12,7 @@
 #include <wchar.h>
 #include <sys/stat.h>
 #endif
+#include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -153,6 +154,7 @@ static void read_settings(const char *path)
         else if (!strcmp(key, "hdr_peak")) render_set_hdr_levels(v, render_hdr_paper());   /* nits; 0 the monitor's own */
         else if (!strcmp(key, "hdr_paper_white")) render_set_hdr_levels(render_hdr_peak_setting(), v);   /* nits (200) */
         else if (!strcmp(key, "object_shadows")) render_set_object_shadows(v != 0);
+        else if (!strcmp(key, "light_fade")) render_set_light_fade(v != 0);   /* the lights' fade by distance (1) */
         else if (!strcmp(key, "flame_breath")) render_set_breath_depth(v);   /* the fires' slow breath, 0-0.4 (0.20) */
         else if (!strcmp(key, "campfire_swell")) render_set_campfire_depth(v);   /* the campfires' own swell, 0-0.6 (0.35) */
         else if (!strcmp(key, "flame_swell")) render_set_puff_depth(v);   /* the fires' coherent swell, 0-0.5 */   /* objects, creatures, doors */                 /* uw.exe's: the vertical field of view, degrees */   /* uw.exe's: how fast the mouse turns the view */
@@ -437,9 +439,22 @@ static bool level_build(int n)
             const char *e = getenv("UWVIEW_EXTRACT_TO_DISK");
             int made;
             size_t bytes = 0;
+            clock_t t0 = clock();
+            {
+                /* where this run's files are (a folder that stands alone shows its own paths here) */
+                static const char *const ours[3] = {"settings.txt", "acoustics.txt", "laigter\\walls\\000_n.png"};
+                char p[MAX_PATH + 64], has[160] = "";
+                for (int k = 0; k < 3; k++) {
+                    snprintf(p, sizeof p, "%s\\%s", data, ours[k]);
+                    snprintf(has + strlen(has), sizeof has - strlen(has), " %s %s,", ours[k], file_exists(p) ? "there" : "MISSING");
+                }
+                fprintf(stderr, "uwview: the game's own files in %s; ours in %s:%s\n", game, data, has);
+            }
             if (!(e && *e && *e != '0')) file_memory_root(data);
+            /* (measured 2026-11-16: 0.4 s at a start; one cache file saved 0.2 s of it and was dropped) */
             made = extract_missing(data, game);
-            fprintf(stderr, "uwview: the game's files read: %d made, %d kept in memory (%zu KB)\n", made, file_memory_count(&bytes), bytes >> 10);
+            fprintf(stderr, "uwview: the game's files read: %d made, %d kept in memory (%zu KB), %ld ms\n", made, file_memory_count(&bytes), bytes >> 10,
+                    (long)((clock() - t0) * 1000 / CLOCKS_PER_SEC));
         }
         maps_make_if_missing(root, data, game);   /* the first run of a package without our relief maps (mapsmake.h) */
         models_load(game);   /* the original's 3D models (game\UW.EXE), for world_model_quads */
@@ -940,6 +955,18 @@ UWV_API int uwv_acoustic_doors(UwvAcDoor *out, int cap)
 
 /* changes whenever level_build made a level (a new level, or this one's shape changed): the grid is to be read again */
 UWV_API unsigned uwv_acoustic_epoch(void) { return ac_epoch; }
+/* the level's 3D model objects (benches, tables, barrels, chests, pillars, boulders, the shrine...) as boxes, for the
+ * sound: what stands in a room changes how it rings (the user, 2026-11-16). As they stand when asked. */
+typedef struct { int item; float lo[3], hi[3]; } UwvAcBox;
+UWV_API int uwv_acoustic_things(UwvAcBox *out, int cap)
+{
+    static int item[256];
+    static float lo[256][3], hi[256][3];
+    if (!lv_number || !out) return 0;
+    int n = world_model_boxes(&lv, item, lo, hi, cap < 256 ? cap : 256);
+    for (int i = 0; i < n; i++) out[i].item = item[i], memcpy(out[i].lo, lo[i], sizeof lo[i]), memcpy(out[i].hi, hi[i], sizeof hi[i]);
+    return n;
+}
 
 /* a level was built; UWVIEW_ACOUSTIC_DUMP=FILE (the checks): what the three calls above give, added to FILE */
 static void acoustic_built(void)
@@ -1494,7 +1521,8 @@ static void things_update(void)
  * against each upright card (the shader's: through its bottom middle, facing the eye across the floor) of the
  * objects lying about (world_sprites) and the creatures (creature_cards), a little margin round each; one with a
  * solid square or the floor between the eye and it left out. out: up to max, nearest first, each the game's object
- * index | its tile << 10 | its distance in eighths of a tile << 22. The window's uwlook.c picks from these. */
+ * index | its tile << 10 | its distance in eighths of a tile << 22 (| bit 31: a door, by its drawn frame and leaf).
+ * The window's uwlook.c picks from these. */
 static float pick_card(const float o[3], const float d[3], const float pos[3], float x0, float x1, float y0, float y1)
 {
     float n[3] = {cam.pos[0] - pos[0] + 1e-4f, 0, cam.pos[2] - pos[2]};
@@ -1566,6 +1594,45 @@ UWV_API int uwv_pick(float fx, float fy, int *out, int max)
                 }
             }
         }
+    /* the doors as drawn (door_quads' frame and leaf: the empty opening is no part of them), marked with bit 31: the
+     * window's uwl_pick takes one only when nothing else is there and the original's own pick finds no object (its
+     * pick frame has the leaf alone, the frame in the wall's colour: the user, 2026-11-16, "the doors are hard to
+     * target"). Not a secret door (it would give itself away). The use and its reach stay the original's. */
+    {
+        static Vertex dv[1024];
+        for (int k = 0; k < ndoors && nh < 64; k++) {
+            const Door *dr = &doors[k];
+            int item = lv.obj[dr->obj].item;
+            if ((dr->item & 7) == 7 || (item != 0x1CF && (item < 0x140 || item > 0x14F))) continue;
+            if (fabsf(dr->tx + 0.5f - cam.pos[0]) > 6.0f || fabsf(dr->tz + 0.5f - cam.pos[2]) > 6.0f) continue;
+            int nv = models_ready() ? world_door_model_quads(&lv, &m, dr, &lv.obj[dr->obj], dv, 1024) : world_door_quads(&lv, &m, dr, dv, 1024);
+            float best = -1;
+            for (int v = 0; v + 2 < nv; v += 3) {   /* the ray against each triangle, either face */
+                const float *p0 = dv[v].pos, *p1 = dv[v + 1].pos, *p2 = dv[v + 2].pos;
+                float e1[3] = {p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]}, e2[3] = {p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]};
+                float pv[3] = {d[1] * e2[2] - d[2] * e2[1], d[2] * e2[0] - d[0] * e2[2], d[0] * e2[1] - d[1] * e2[0]};
+                float det = e1[0] * pv[0] + e1[1] * pv[1] + e1[2] * pv[2];
+                if (fabsf(det) < 1e-9f) continue;
+                float tv[3] = {cam.pos[0] - p0[0], cam.pos[1] - p0[1], cam.pos[2] - p0[2]};
+                float bu = (tv[0] * pv[0] + tv[1] * pv[1] + tv[2] * pv[2]) / det;
+                if (bu < 0 || bu > 1) continue;
+                float qv[3] = {tv[1] * e1[2] - tv[2] * e1[1], tv[2] * e1[0] - tv[0] * e1[2], tv[0] * e1[1] - tv[1] * e1[0]};
+                float bv = (d[0] * qv[0] + d[1] * qv[1] + d[2] * qv[2]) / det;
+                if (bv < 0 || bu + bv > 1) continue;
+                float t = (e2[0] * qv[0] + e2[1] * qv[1] + e2[2] * qv[2]) / det;
+                if (t > 0.02f && (best < 0 || t < best)) best = t;
+            }
+            if (best < 0) continue;
+            bool clear = true;                      /* the way there clear, as pick_card's */
+            for (float s = 0.05f; s < best - 0.05f && clear; s += 0.05f) {
+                float x = cam.pos[0] + d[0] * s, y = cam.pos[1] + d[1] * s, z = cam.pos[2] + d[2] * s;
+                if (x < 0 || z < 0 || x >= 64 || z >= 64 || level_solid_at(&lv, x, z) || y < level_floor_y(&lv, x, z) - 0.02f) clear = false;
+            }
+            if (!clear) continue;
+            int q = (int)(best * 8.0f);
+            hit[nh].t = best, hit[nh].v = (int)(0x80000000u | (unsigned)(dr->obj | (dr->tz * 64 + dr->tx) << 10 | (q > 511 ? 511 : q) << 22)), nh++;
+        }
+    }
     for (int a = 1; a < nh; a++)   /* nearest first */
         for (int c = a; c > 0 && hit[c].t < hit[c - 1].t; c--) {
             float tt = hit[c].t; int vv = hit[c].v;
@@ -2839,6 +2906,10 @@ UWV_API int uwv_option(int id, int step, char *value, int n)
     case 9:   /* the objects' shadows (ray tracing) */
         if (step) render_set_object_shadows(!render_object_shadows()), settings_save("object_shadows", render_object_shadows() ? "1" : "0");
         snprintf(value, (size_t)n, "%s", render_object_shadows() ? "On" : "Off");
+        return 1;
+    case 62:  /* Light fade (the user 2026-11-16): 50% at 2 tiles, 30% at 3, gone at 4, every light; or as before */
+        if (step) render_set_light_fade(!render_light_fade()), settings_save("light_fade", render_light_fade() ? "1" : "0");
+        snprintf(value, (size_t)n, "%s", render_light_fade() ? "2 / 3 / 4 tiles" : "Original");
         return 1;
     case 61: {  /* Fire breathing (the user 2026-11-16): the fires' slow breath now and then, Off then 10 to 40 % */
         int pc = (int)(render_breath_depth() * 100.0f + 0.5f);

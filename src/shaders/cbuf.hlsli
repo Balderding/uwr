@@ -24,6 +24,7 @@ cbuffer C : register(b0) {
     float4 ripple[16];  // the splashes' rings: x, y the place (tiles: x, z), z their age (s), w their strength
     float4 texres;      // the walls' and floors' high-res copy (hatlas, the Esc menu's Textures): x its scale (0: off),
                         // y > 0: relief maps beside it (common.hlsli hmaps_at), z > 0: its colours are there (0: only maps)
-    float4 hdrout;      // HDR output (render.c render_set_hdr): x on, y paper white / 80 nits, z peak / paper white
+    float4 hdrout;      // HDR output (render.c render_set_hdr): x on, y paper white / 80 nits, z peak / paper white;
+                        // w > 0.5: the lights' fade by distance (common.hlsli light_fade)
 };
 static const float NEAR_Z = 0.02, FAR_Z = 200.0;

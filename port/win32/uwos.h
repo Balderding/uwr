@@ -144,6 +144,7 @@ static inline void InitializeCriticalSection(CRITICAL_SECTION *c)
     pthread_mutexattr_destroy(&a);
 }
 static inline void EnterCriticalSection(CRITICAL_SECTION *c) { pthread_mutex_lock(c); }
+static inline int TryEnterCriticalSection(CRITICAL_SECTION *c) { return pthread_mutex_trylock(c) == 0; }
 static inline void LeaveCriticalSection(CRITICAL_SECTION *c) { pthread_mutex_unlock(c); }
 static inline void DeleteCriticalSection(CRITICAL_SECTION *c) { pthread_mutex_destroy(c); }
 typedef pthread_rwlock_t SRWLOCK;

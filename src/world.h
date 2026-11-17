@@ -36,6 +36,9 @@ int world_door_model_quads(const Level *lv, const Mesh *m, const Door *d, const 
 /* the level's 3D objects (items 0x150-0x16F: benches, boulders, the shrine's ankh, tables, chests, barrels, chairs,
  * pillars, the bridge, levers...) as the original's models, placed as do_rect places them; returns the vertex count */
 int world_model_quads(const Level *lv, const Mesh *m, Vertex *out, int cap);
+/* the same objects for the sound (2026-11-16): each one's item and the box round its model as it stands in the world
+   (tiles: lo, hi); arrows, wall plates and panels left out. The count (cap at most). */
+int world_model_boxes(const Level *lv, int *item, float (*lo)[3], float (*hi)[3], int cap);
 /* a creature's card: frame fr of kind k (0-63) standing with its hotspot (its feet) at pos; s tiles a pixel */
 #define CREATURE_SCALE (1.0f / 60.0f)
 int world_creature_card(const Mesh *m, int k, int fr, const float pos[3], Vertex *out);

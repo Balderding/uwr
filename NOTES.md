@@ -1785,3 +1785,162 @@ depth maps on the first run "with the laigter tool, with the exact settings we u
 - **uw-original.exe no longer links** (`portwin32.py --original`: port_hunter_setting, port_sound_volumes and other
   port_* of uw-new are undefined in the untouched tree): dist's is still the build of 2026-11-10, and the public
   package leaves it out. Open.
+
+## 2026-11-16: the sound, "this twinge at the end", every number a row, Steam Audio for the sound itself
+
+The user: the acoustics "do not seem right" and "have this twinge at the end"; then, quoting Steam Audio's own list
+("real-time and baked ray-traced sound propagation, physics-based occlusion, transmission, reflections, pathing,
+and HRTF binaural rendering"): "all of this needs to be in the game ... one of the biggest selling points ... real
+and realistic with sounds changing their form based on whats in the room". Probes and logs: work\acoustics\twinge.
+
+- **The late echoes (commit 2270e77).** In Acoustics High a voice's echoes were silent until the rays had run once
+  for it, and the head of the sound was thrown away meanwhile. One run by live voices 1 / 6 / 8: Echo detail 1
+  18 / 57 / 70 ms, detail 2 52 / 144 / 175 ms, detail 3 169 / 434 / 526 ms; a voice stayed live for the sound plus
+  2 s, so a walk kept six live. Echo start after the sound (onset.c, the game's two threads): detail 2 with five
+  others 203 ms, detail 3 651 ms. Now: a ringing voice leaves the simulation, and a response for the listener's own
+  place is kept ready (uwsteam.c S.ear; made again after a quarter tile, a level change, or while a sound is live)
+  which a new sound uses until its own is made: 3 ms and 18 ms. No clicks at the change (hf.py on a 100 Hz burst).
+  Not the cause: IR_SECONDS (the ring ends when the bounces run out: the hall's at 0.45 s with 16, 0.9 s with 32,
+  1.1 s with 64), the voice steal (nine sounds in 3 s).
+- **From the uwr session's review (work\review\agents\tail), taken in, not measured again here:** the echo stream
+  as float (it was 16 bits after the 0.12 level: echoes 12 to 93 steps tall, fizz as they died), four blocks ahead
+  (two ran dry; hi_stop logs "the echo stream ran dry N times"), AL_DIRECT_CHANNELS_SOFT on the stream (it went
+  through OpenAL's HRTF a second time; echoes about 2.6 dB up since), the HI.idle race (HI.kick).
+- **Every fixed number a row** ("Sound tuning" in the Esc menu; uwfront.c SOUND_DIALS, ids 200+, ours, written to
+  settings.txt by fx_setting_save; uwaudio.c's comment above TU lists every key with its default; tune_read reads
+  them). Each default is the old number. "Room size" is "Map square size" (2.4 m is right: the eye at 0xA4/256 of
+  a tile is 1.54 m, the start corridor's headroom of 4 steps is one tile; render.c's TILE_M 1.2 is the wrong one,
+  the uwr session's to deal with). "Room measured here" (read-only): uwaudio_room, uwac_room at the listener.
+  MENU_MAX 160 (and src\menu_draw.c's M[]).
+- **Stage 1 of Steam Audio for everything: the sound itself** (uwsteam.c D, direct_run, block()). With Acoustics
+  High and HRTF on, each voice's samples go through Steam Audio's direct effect and binaural effect into the
+  stream beside the echoes; our OpenAL source of that sound plays at gain 0 (its bookkeeping stays). A second
+  simulator (direct only, its sources always added) runs every block on the audio's side under S.scene_lock
+  (scene_build takes it for the mesh swap). Occlusion volumetric (source 0.5 m, 16 samples), transmission 8 rays,
+  by the materials of acoustics.txt. Our way round a corner stays: when it raised a sound's gains they are a floor
+  under Steam Audio's and the sound is heard from the opening (uwst_direct, hi_push). A sound's place is lifted
+  0.3 tile off its floor (uwac_lift); the player's two feet are a third of a tile to each side. A footstep's echo
+  share is uwst_echo now, not in the samples. Rows: Sound by Steam Audio, Muffling by Steam Audio, Sound level
+  (Steam Audio) 30 %, Sound source size 50 cm.
+  Measured (direct.c, uwsteam.c alone): Steam Audio's HRTF at unity (at the listener 0.0 dB, ahead -1.6, east
+  +1.4 with left 0.03 / right 0.24, behind -3.2), a sound behind the rock silent. Worked out, NOT measured: the 30 %
+  (unity HRTF x the stream's 5.2 makeup against the game's mix at 1.55 of a unity sound). Compiled and launched
+  only: all of it inside the game (fxcheck steam acoustics 42 PASS, 0 FAIL: a hidden run in High, clean).
+  Known: sounds past the 8 voices stay OpenAL's (another HRTF, another level); a sound cut by the game (FX_STOP)
+  stops between two blocks (a possible click); about 45 ms of stream delay on the sound itself; speakers (no HRTF)
+  keep OpenAL's sound.
+- **Next stages (the user's list):** (2) the room's contents in the scene: the door's real opening (frame and
+  lintel always, the leaf when shut; uwacoustic.c 141-148, uwsteam.c level_mesh; src\world.c 123-125 has the
+  sizes), pillars, furniture and other models as boxes with materials, so a room's sound changes with what is in
+  it; (3) baked: probes per level (iplProbeArrayGenerateProbes), baked reflections and Steam Audio's pathing
+  (iplPathBakerBake, iplPathEffect), made in the background on a level's first visit and kept in our folder;
+  (4) the EFX mode's reverb level by room (the uwr session's item), Eyring for Sabine.
+- menucheck acoustics: 2 FAIL of its own ("off by default"): build\port\data\settings.txt has fx_acoustics 1.
+
+## 2026-11-16 (evening): the flat folder stands alone
+
+fable uwr's review of dist\uwr found it reading the ROMs from dist\UW1 (the home copied over carried
+`mt32-roms=O:\...\dist\UW1\roms` and `data=...\dist\UW1\game` in uw1port.cfg). Fixed:
+
+- underworld-exhumed `uw1\src\port\sys\main.c`: `flat_bare` (run bare in the flat folder). Then the game is the
+  program's folder and the ROMs its `roms\` (given, so they win over a remembered folder), and neither `data` nor
+  `mt32-roms` is written to uw1port.cfg: the folder can be moved or copied. One new log line at every start:
+  `uw1port: the game ..., the home ..., the ROMs ... (given|remembered|found)`.
+- `src\uwview.c`: one log line `uwview: the game's own files in ...; ours in ...: settings.txt there, ...`, and
+  the time of the in-memory making on the "files read" line.
+- `tools\makeflat.py`: the player's own (uwr\settings.txt, keys.txt, acoustics.txt, lights.txt, uwr\home) are given
+  once and never written over; the home is taken from dist\UW1 only when the flat folder has none; uw1port.cfg goes
+  without `data=` / `mt32-roms=` (and they are taken out of an existing flat one).
+- A one-file cache of the in-memory files (uwr\cache.bin) was built, measured and taken out: making the 5,746 files
+  costs 0.38-0.42 s at a start; the cache saved 0.2 s (65 files are made at every start whatever is there) and had
+  to be rewritten for each renderer's build. Not worth a file that can go stale.
+
+Proof (work\onedir\alone.py): dist\uwr copied to work\onedir\alone\uwr, run hidden and bare from there on Vulkan
+(alone6.err) and D3D12 (alone7.err): exit 0, the save loaded on level 2, every path in the log inside the copy, no
+line naming dist\UW1 or dist\uwr, the only files written under uwr\home (save0, a recording).
+
+- The original's installer files (UINSTALL.EXE, UWSOUND.EXE, LHA.EXE, LHA.DOC, INSTALL.DAT, INSTALL.OLB) are read by nothing of ours
+  (no source names them) and makeflat.py no longer copies them (the user: not needed in our package); UW.EXE stays, its
+  models and tables are read. A folder made without them (makeflat.py --out work\onedir\noinst\uwr) runs on Vulkan and
+  D3D12: work\onedir\noinst1.err, noinst2.err.
+
+## 2026-11-16 (night): Steam Audio's pathing; where baked propagation would fit
+
+The user: "we want pathing from the steam audio", "and figure out where Baked propagation would work".
+
+- **Pathing (port\win32\uwsteam.c, the comment above P; uwsteam.h uwst_pathing).** A probe in every open tile
+  (probes_place: over the middle of its floor, 0.6 tile up, reach 1 tile), the ways between them baked by
+  iplPathBakerBake in a thread of its own (bake_worker) with every door open (only the frames stand in the baked
+  scene), once a level: path_service on the simulation's thread starts it when level_key (tiles' shapes and heights,
+  the doors' places, the metres a tile, the frames' row) is not the one in use, and puts the result in the direct
+  simulator under S.scene_lock. The direct simulator and its sources carry IPL_SIMULATIONFLAGS_PATHING;
+  direct_run runs iplSimulatorRunPathing with it every third block (32 ms) and at once for a new sound, with
+  enableValidation and findAlternatePaths against the scene as it is (a shut door's leaf); block() plays each
+  sounding voice through iplPathEffect (binaural, first order) beside its direct effect.
+  - Our own way round a corner (uwac_path_round / uwac_waypoint: v->heard and the floor under the gains) stands
+    back for a voice that has Steam Audio's paths; it stays while a level's bake runs, with the row off, on
+    speakers, and for the sounds past the eight voices.
+  - The paths' share is 1 - Steam Audio's occlusion, so a sound in plain sight is not heard twice.
+  - The level: Steam Audio's coefficients carry 1 / the way's metres (measured: the first is 0.2821 / metres);
+    the samples already carry the game's falloff by the straight line, so the paths play at straight / way of that
+    (never above it). Eased over a block.
+  - Found: iplPathBakerBake 4.8.1 crashes on a NULL progress callback (bake_progress); a band's gain of 0 into
+    iplPathEffect gave NaN from then on (never under 0.001); `far` is a macro of windows.h.
+  - Rows (Sound tuning, shown with Acoustics High): "Sound paths by Steam Audio" (acoustics_steam_pathing 1) and
+    "Sound paths level" (acoustics_path_level 100). Needs Sound by Steam Audio and Muffling by Steam Audio, so
+    headphones.
+  - Measured, uwsteam.c alone (tests\uwsteam_path_test.c; work\acoustics\pathing\build.sh builds and runs it, 4 PASS):
+    the fixture's 161 probes baked in 0.04 s, level 1's 2036 in 0.4 s (so nothing is kept on disk; a file cache was
+    written and taken out). A sound in room A, the listener in B out of sight, the door open: left 0.143 / right
+    0.113 with the paths (the doorway is to the west), 0.0003 without; bands' gains 0.74 0.41 0.24. In plain sight
+    through the doorway: 0.342 / 0.200 with and without. Further along B (25,14 / 25,17 / 25,20): 0.24, 0.20, 0.16.
+    The door shut: no way (0.0003). Level 1, seven sounds within 6 tiles: a block 2.51 ms with the paths, 2.26
+    without (a block lasts 10.7 ms).
+  - Compiled and launched only, in the game: Windows hidden on Vulkan with the Roland effects and the loopback
+    (work\acoustics\pathing\run1): exit 0, "fx: sound paths ready (Steam Audio's pathing: 1995 probes, baked in
+    0.3 s)" on level 2, 71 sounds, no echo stream run dry. Linux: compiles and links, starts under WSL and exits 0
+    (work\acoustics\pathing\linux-run.err), but that WSL has no OpenAL ("fx: audio off"), so no sound went through
+    the paths there. NOT heard by anyone yet: the level against the straight sound and the 32 ms step are worked
+    out, for the user's ear.
+  - That build held another session's uncommitted door work in underworld-exhumed (COLLIDE.C, EFFECT.C,
+    USEITEMS.C): dist\UW1 has it too.
+- **Where baked propagation would fit (an agent's read of the code and phonon.h, nothing built):**
+  - Pathing is the part of Steam Audio's baking that pays here, and it is in.
+  - Baked reflections: every sound in the game is a one-shot at a moving or momentary place (no fixed emitters:
+    uwaudio.c starts each from play_effect), so the STATICSOURCE and STATICLISTENER variations have no use. The one
+    fit is a REVERB layer (source and listener at the same probe) for the listener's own place: the response a new
+    sound rings with until its own run is made (S.ear), the player's own sounds, and a ring for the sounds past the
+    eight voices, which are dry today. Our pipeline is convolution through a mixer, so it would be
+    IPL_REFLECTIONSBAKEFLAGS_BAKECONVOLUTION into the pathing's probe batch, in.baked on the ear source alone.
+  - What a bake of echoes cannot follow: doors (each open or shut one changes the room), tiles changed by
+    triggers, and the rows that change the scene (Map square size, scatter, materials, echo length, Echo detail):
+    a key over all of those, the doors taken as open.
+  - Cost, worked out from the measured runs (18 / 52 / 169 ms a place at Echo detail 1 / 2 / 3), not measured:
+    about half a minute to four minutes a level of 2000 probes, in the background on a first visit, and a file a
+    level (Steam Audio keeps energy fields, in the tens of megabytes).
+  - Real-time stays for every placed sound. The smallest step: the REVERB layer for the ear, behind a row, heard
+    against the real-time one.
+
+## 2026-11-16 (late): the Esc menu's descriptions, the menu guide, the music's volume after off and on
+
+- **Descriptions.** The foot of the menu had ONE line for what a row does, and a hint too long for it lost its
+  middle ("..."): 29 of the 117 rows were cut on screen. Two changes: src/menu_draw.c's menu_wrap breaks the hint
+  at its spaces over up to three lines (FOOT 27 -> 46 overlay pixels, both fonts; a last line still too long ends
+  in "..."), and all 116 hints of uwfront.c's MENU_ROWS were written again (an agent's work, read against the
+  code): what the row does, its values and range, what it needs, the default. Labels, ids and order unchanged.
+  The dump's foot2 line now joins the hint's lines with " | ".
+- **docs/ESC_MENU.md** (new, linked from the README): every row of the menu for a reader who has not seen the
+  code, heading by heading; the three levels of the sound (Positional sound, Acoustics On, Acoustics High) and
+  which tuning rows belong to which. The Fog row is left out (not built).
+- **Music off and on again played at full, and the Music volume row did nothing in the menu** (the user's
+  report). Two causes. (1) SOUND.C's turn_music starts the sequence again (AIL_start_sequence), which rewinds it:
+  the relative volume back at the driver's default and each channel's volume forgotten, and the original sets
+  none there. Port only: port_mus_dirty set, so the menu's volume is applied again. (2) The volume is applied by
+  the effects' 16 Hz timer, and with "Music in the menu" on the game's timers stand still while the menu is open
+  (ail.c's music_only), so a step of the row was only heard after the menu closed. port_music_volume_poll
+  (SOUND.C) is now also called from ail.c's api_timer while music_only (the same thread as the timers).
+  Compiled and started only: NOT heard by anyone yet.
+- tools/menucheck.py: its list of headings had no "Sound tuning" (two FAILs that were the check's own); added.
+  `menucheck.py smooth original`: no FAIL after. A long hint seen wrapped in both fonts
+  (work/esc_hints/wrapshot.py; pictures work/menucheck/wrap-*-w.png).
+- Built: buildview.cmd, portwin32.py, buildview_linux.py, portlinux.py; makedist and makeflat run.

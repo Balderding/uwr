@@ -87,8 +87,13 @@ void port_pause(int on);               /* the runtime's sys/pit.c */
 const PlatHooks *hooks;
 PlatConfig live;                       /* the options as they stand: plat_set_display and plat_set_mouse_lock change it */
 static int fade_secs(void);           /* the message box's fade, seconds (the Esc menu's option) */
+static int door_step(int v);          /* a door shut from close up shuts all the same (the Esc menu's option) */
+static int door_pick(int v);          /* a door picked by its drawn frame and leaf (the Esc menu's option) */
+static int door_cue(int v);           /* the door's "in the way" message line (the Esc menu's option) */
 static int log_back;                 /* the message box scrolled back this many lines (the wheel) */
 static unsigned long long log_touch;  /* the wheel last used: the box shown again */
+static struct { int on, obj, have, n; char buf[4]; } ask;   /* a stack's count asked in our message box (ask_begin) */
+static int ask_key(int c, int down, int repeat);
 static int host_pointer, cut_now;   /* our display shows the host's pointer; a cutscene is up (no pointer) */
 static uint64_t panel_left;         /* a conversation, the map or the options panel just closed (uwconv.c): the original fades
                                        its 3D picture back in before its view is 'on screen' again; ours stays up meanwhile */
@@ -217,6 +222,7 @@ static void handle_key(int c, int down, int repeat)
 {
     static int f1_esc;   /* F1 on the original's options panel: given as Esc, its loop's KEY_ESC (close_option_panel) */
     UwiState s;
+    if (ask.on && ask_key(c, down, repeat)) return;   /* a stack's count being typed (our message box) */
     if (c == 0x3B && down == 1 && !repeat && uwl_left_panel() == 1) f1_esc = 1;
     if (c == 0x3B && f1_esc) { c = 0x01; if (!down) f1_esc = 0; }
     input_state(&s);
@@ -472,6 +478,7 @@ void plat_pointer_event(const PlatPointer *ev)
    docs\superpowers\plans\2026-11-14-acoustics-ours.md, Task 2) */
 typedef struct { unsigned char type, height; unsigned short wall_tex, floor_tex; } UwvAcTile;
 typedef struct { int id, tx, tz, heading, item, picture, shut; } UwvAcDoor;
+typedef struct { int item; float lo[3], hi[3]; } UwvAcBox;   /* a 3D model object's box in the world (uwv_acoustic_things) */
 
 static struct view {
     void *dll;
@@ -518,6 +525,7 @@ static struct view {
     void (*fx_event)(int kind, float x, float y, float z, int fx, int mob);   /* the effects (uwv_fx_event) */
     int (*ac_grid)(UwvAcTile out[64 * 64], int *ceil_tex);   /* the level for the sound (uwv_acoustic_*) */
     int (*ac_doors)(UwvAcDoor *out, int cap);
+    int (*ac_things)(UwvAcBox *out, int cap);   /* (optional: a renderer built before 2026-11-16 has none) */
     unsigned (*ac_epoch)(void);
     int ok, cw, ch;                     /* started, at this client size */
     int failed;                         /* frames that did not go: the renderer is given up for GDI */
@@ -626,6 +634,7 @@ static void view_open(const char *dll)
     V.fx_event = (void (*)(int, float, float, float, int, int))uwp_lib_sym(V.dll, "uwv_fx_event");
     V.ac_grid = (int (*)(UwvAcTile *, int *))uwp_lib_sym(V.dll, "uwv_acoustic_grid");
     V.ac_doors = (int (*)(UwvAcDoor *, int))uwp_lib_sym(V.dll, "uwv_acoustic_doors");
+    V.ac_things = (int (*)(UwvAcBox *, int))uwp_lib_sym(V.dll, "uwv_acoustic_things");
     V.ac_epoch = (unsigned (*)(void))uwp_lib_sym(V.dll, "uwv_acoustic_epoch");
     {
         void (*game_dir)(const char *) = (void (*)(const char *))uwp_lib_sym(V.dll, "uwv_game_dir");
@@ -741,6 +750,8 @@ static void display_apply(void)
                   | (1u << ENH_WIDE_PITCH);
     port_pitch_wide = display_mode == 1 ? 0x3000 : 0x38E3;
     port_interact_take = display_mode != 1;   /* e takes what can be taken (port/ui/keys.c), as the old version's e */
+    door_step(-1), door_pick(-1);             /* and the two door helpers */
+    door_cue(-1);                             /* the door's message line as the config has it (EFFECT.C's port_door_cue_on) */
     if (display_mode == 1) enhance_on &= ~(ours | (1u << ENH_INVERT_LOOK));
     else {
         float sens = 1;
@@ -754,6 +765,32 @@ static void display_apply(void)
 #endif
 }
 static int full_live;                 /* the 3D view live at the last frame */
+/* a stack's count asked in our message box (the user, 2026-11-16: Shift + a left click on a stack in our panel asks
+   "how many" in the message box we have, not in the original's own typed dialog; the number typed and Enter puts that
+   many on the pointer, carried). Digits (the top row or the number pad), Backspace, Enter takes, Esc or a click
+   anywhere gives it up. The split itself is uwinv.c's take (UWI_OP_PICK with the count), the game's own bookkeeping. */
+static void ask_begin(int obj, int have) { ask.on = 1, ask.obj = obj, ask.have = have, ask.n = 0, ask.buf[0] = 0; log_touch = ms_now(); }
+static uint64_t inv_hold_t;
+/* a key while the count is asked: 1 taken (every press but Shift's; the releases go on as ever) */
+static int ask_key(int c, int down, int repeat)
+{
+    static const short PAD[10] = {0x52, 0x4F, 0x50, 0x51, 0x4B, 0x4C, 0x4D, 0x47, 0x48, 0x49};
+    int d = -1;
+    if (!down || c == 0x2A || c == 0x36) return 0;
+    if (c == 0x0F || c == 0x17) { ask.on = 0; return 0; }   /* Tab, I: given up, and the key does what it does (the panel shuts) */
+    if (c >= 0x02 && c <= 0x0A) d = c - 1;
+    else if (c == 0x0B) d = 0;
+    else for (int i = 0; i < 10; i++) if (c == PAD[i]) d = i;
+    if (d >= 0) { if (ask.n < 3 && !(ask.n == 0 && d == 0)) ask.buf[ask.n++] = (char)('0' + d), ask.buf[ask.n] = 0; }
+    else if (c == 0x0E) { if (ask.n > 0) ask.buf[--ask.n] = 0; }
+    else if (c == 0x01) ask.on = 0;
+    else if ((c == 0x1C || c == 0x11C) && !repeat) {
+        int n = atoi(ask.buf);
+        ask.on = 0;
+        if (n > 0 && uwi_cmd(UWI_OP_PICK, ask.obj, n >= ask.have ? 0 : n, 0)) inv_hold_t = ms_now();
+    }
+    return 1;
+}
 /* our message box: the scroll's last lines, opaque while new, fading out from 10 s to 12 s after the newest message
    (or the wheel's last turn); at full while the Tab panel is open (the user's) */
 static void log_draw(void)
@@ -786,6 +823,12 @@ static void log_draw(void)
     float a = F <= 0 ? 1.0f : age < F ? 1.0f : age < F + 1.5f ? 1.0f - (age - F) / 1.5f : 0.0f;   /* the option's time, then 1.5 s out */
     if (inv_open) a = 1.0f;
     (void)now;
+    if (ask.on && (!inv_open || !full_play())) ask.on = 0;   /* (the panel shut, or play not up: given up) */
+    if (ask.on) {   /* the count asked: the box's last line, at full */
+        if (n == UWLOG_ROWS) memmove(lines[0], lines[1], (size_t)(UWLOG_ROWS - 1) * UWLOG_W), n--;
+        snprintf(lines[n++], UWLOG_W, "Move how many? (1 to %d, Enter takes, Esc gives up): %s_", ask.have, ask.buf);
+        a = 1.0f;
+    }
     V.log(&lines[0][0], n, UWLOG_W, a, log_back + n < all);
 }
 static int full_play(void) { return V.ok && !iface && V.hud && full_live && display_mode != 1 && !menu_open; }
@@ -939,12 +982,13 @@ static void carry_release(int over_world, int let_go_x)
 /* a left press on a thing in our panel: a look when let go soon, onto the pointer once held or dragged (the user's).
    Picked up by this press (lift), it is put where the button comes up: another hole, or the world (thrown); on its own
    hole it stays on the pointer */
-static struct { int on, hit, obj, cx, cy; uint64_t t0; } inv_lp;
+static struct { int on, hit, obj, cx, cy, qty; uint64_t t0; } inv_lp;   /* qty: the stack's count (1: a single thing) */
 static struct { int on, cx, cy; } lift;   /* something came onto the pointer by the press at (cx, cy): the release puts it */
 static void inv_pick(void)
 {
     inv_lp.on = 0;
-    if (!uwi_cmd(UWI_OP_PICK, inv_lp.obj, shift_ours() ? -1 : 0, 0)) return;   /* Shift: the original's 'Move how many?' */
+    /* (held or dragged: the whole stack, with Shift too; Shift + a click is the only way to split: the user, 2026-11-16) */
+    if (!uwi_cmd(UWI_OP_PICK, inv_lp.obj, 0, 0)) return;
     inv_hold_t = ms_now();
     lift.on = 1, lift.cx = inv_lp.cx, lift.cy = inv_lp.cy;
 }
@@ -1096,6 +1140,7 @@ static int inv_pointer(int type, int cx, int cy, unsigned button)
     if (button == PLAT_BUTTON_LEFT && getenv("UWPORT_INVTEST_RIGHT")) button = PLAT_BUTTON_RIGHT;   /* (a check's: the script's wclick is a left click) */
     if (type == PLAT_POINTER_MOVE) motion_note((float)(cx - inv_mx), (float)(cy - inv_my));
     inv_mx = cx, inv_my = cy;
+    if (type == PLAT_POINTER_DOWN) ask.on = 0;   /* (a press anywhere: the count asked is given up) */
     m = inv_map(cx, cy, &gx, &gy, &hit);
     /* the open bags' slider (uwinv_draw.c): a left press on it scrolls or drags, its release ends the drag */
     if (type == PLAT_POINTER_UP && button == PLAT_BUTTON_LEFT && V.inv_click && V.inv_click(cx, cy, 0)) { inv_swallow &= ~button; return 1; }
@@ -1154,10 +1199,16 @@ static int inv_pointer(int type, int cx, int cy, unsigned button)
                 return 1;
             }
             if (obj >= 0) {   /* a look if let go soon, onto the pointer when held or dragged */
+                const UwiThing *pt = n >= 0 ? &inv_snap.node[n].t : hit >= 1 && hit <= 11 ? &inv_snap.t[hit] : NULL;
                 inv_lp.on = 1, inv_lp.hit = hit, inv_lp.obj = obj, inv_lp.cx = cx, inv_lp.cy = cy, inv_lp.t0 = ms_now();
+                inv_lp.qty = pt ? pt->qty : 1;
                 return 1;
             }
             if ((hit == 8 || hit == 9) && hit == 9 - inv_snap.lefty) uwi_cmd(UWI_OP_FIGHT, 0, 0, 0);   /* the empty weapon hand: fight mode, the original's click there */
+            return 1;
+        }
+        if (button == PLAT_BUTTON_RIGHT && inv_held()) {   /* a thing on the pointer: back into the pack (it was dead) */
+            uwi_cmd(UWI_OP_PACK, 0, 0, 0), inv_hold_t = 0, lift.on = 0;
             return 1;
         }
         if (button == PLAT_BUTTON_RIGHT && !inv_held()) {
@@ -1168,7 +1219,10 @@ static int inv_pointer(int type, int cx, int cy, unsigned button)
             if (shift_ours() && n >= 0 && inv_snap.node[n].parent >= 0) {   /* Shift, in a bag: out of it into the pack */
                 uwi_cmd(UWI_OP_PICK, obj, 0, 0), uwi_cmd(UWI_OP_PACK, 0, 0, 0);
             } else if (shift_ours()) {   /* Shift: down in the world near the player (let go low in the view: put in front) */
-                uwi_cmd(UWI_OP_PICK, obj, 0, 0), uwi_cmd(UWI_OP_DROP, 0x34 + 0x56, 0x43 + 8, 0);
+                /* (a drop the game refuses, "There is no space to drop that.", left the thing on the pointer, where
+                   every right click and E was then dead: the user's "lock", 2026-11-16. Back into the pack then: PACK
+                   does nothing when the drop went through) */
+                uwi_cmd(UWI_OP_PICK, obj, 0, 0), uwi_cmd(UWI_OP_DROP, 0x34 + 0x56, 0x43 + 8, 0), uwi_cmd(UWI_OP_PACK, 0, 0, 0);
             } else if (n >= 0 && t->wear >= 1 && t->wear <= 11) {
                 /* armour, a weapon, a shield, a ring in the pack or a bag: on, where it goes; what was there back here */
                 uwi_cmd(UWI_OP_PICK, obj, 0, 0), uwi_cmd(UWI_OP_PUT_DISP, t->wear, 0, 0);
@@ -1185,7 +1239,8 @@ static int inv_pointer(int type, int cx, int cy, unsigned button)
     if (type == PLAT_POINTER_UP) {
         if (button == PLAT_BUTTON_LEFT && inv_lp.on) {   /* a click: a look at it */
             inv_lp.on = 0, inv_swallow &= ~button;
-            uwi_cmd(UWI_OP_LOOK, inv_lp.obj, 0, 0);
+            if (shift_ours() && inv_lp.qty > 1) ask_begin(inv_lp.obj, inv_lp.qty);   /* Shift + a click on a stack: how many */
+            else uwi_cmd(UWI_OP_LOOK, inv_lp.obj, 0, 0);
             return 1;
         }
         if (button == PLAT_BUTTON_LEFT && lift.on) {
@@ -1224,7 +1279,7 @@ static void inv_draw(void)
    renderer's by the DLL (uwv_option), the window's here */
 enum { MO_RESUME, MO_DISPLAY, MO_FULL, MO_SAVE, MO_LOAD, MO_NEW, MO_DLSS, MO_DLSS5, MO_STYLE, MO_RT, MO_BOUNCE, MO_SHADOWS, MO_RELIEF, MO_NSTR,
        MO_MUSIC, MO_MUSVOL, MO_SOUND, MO_FXVOL, MO_FADE, MO_MOUSE, MO_LLM, MO_FOV,
-       MO_PARTICLES, MO_DECALS, MO_WATER, MO_FOG, MO_FXAUDIO, MO_ACOUSTICS, MO_SMOOTH, MO_CONVFONT, MO_HUNTERS, MO_MENUFONT, MO_HRTF, MO_PANFIX, MO_RES, MO_DLSSMODE, MO_RR, MO_D5INT, MO_D5STR, MO_CHARSHEET, MO_LOGFONT, MO_ACWET, MO_ACSIZE, MO_ACOCCL, MO_ACDETOUR, MO_FOOTSTEPS, MO_FONT, MO_FONTSIZE, MO_QUIT, MO_TEXAO, MO_TEXSHADOW, MO_TEXRES, MO_LIGHTCOL, MO_ADAPT, MO_HDR, MO_HDRPEAK, MO_HDRPAPER, MO_RENDERER, MO_MAPNORMAL, MO_MAPAO, MO_MAPHEIGHT, MO_HEARRANGE, MO_FEETSPREAD, MO_ECHOQ, MO_STEPVOL, MO_STEPECHO, MO_AILEVEL, MO_AIBY, MO_AIP0, MO_AIP1, MO_AIP2, MO_AIP3, MO_AIP4, MO_AIP5, MO_AIP6, MO_BREATH, MO_COUNT, MO_HEAD = 98 };
+       MO_PARTICLES, MO_DECALS, MO_WATER, MO_FOG, MO_FXAUDIO, MO_ACOUSTICS, MO_SMOOTH, MO_CONVFONT, MO_HUNTERS, MO_MENUFONT, MO_HRTF, MO_PANFIX, MO_RES, MO_DLSSMODE, MO_RR, MO_D5INT, MO_D5STR, MO_CHARSHEET, MO_LOGFONT, MO_ACWET, MO_ACSIZE, MO_ACOCCL, MO_ACDETOUR, MO_FOOTSTEPS, MO_FONT, MO_FONTSIZE, MO_QUIT, MO_TEXAO, MO_TEXSHADOW, MO_TEXRES, MO_LIGHTCOL, MO_ADAPT, MO_HDR, MO_HDRPEAK, MO_HDRPAPER, MO_RENDERER, MO_MAPNORMAL, MO_MAPAO, MO_MAPHEIGHT, MO_HEARRANGE, MO_FEETSPREAD, MO_ECHOQ, MO_STEPVOL, MO_STEPECHO, MO_AILEVEL, MO_AIBY, MO_AIP0, MO_AIP1, MO_AIP2, MO_AIP3, MO_AIP4, MO_AIP5, MO_AIP6, MO_BREATH, MO_DOORCUE, MO_LIGHTFADE, MO_DOORSTEP, MO_DOORPICK, MO_COUNT, MO_HEAD = 98 };
 /* the language model's files and the one in use (uwmindhost.c): the Language model row */
 int port_mind_models(const char **names, const char **paths, int max);
 void port_mind_pick(const char *path);
@@ -1245,6 +1300,56 @@ static int fade_secs(void)
         for (int i = 0; i < (int)(sizeof FADES / sizeof FADES[0]); i++) if (FADES[i] == want) fade_i = i;
     }
     return FADES[fade_i];
+}
+/* the message line when a closing door turns round because the player is in its way (EFFECT.C's port_door_cue_on: the
+   rule is the original's, the line is ours): the config's door_blocked_message, on unless 0; v 0 or 1 sets and keeps
+   it. Never in a replay (a line more in the scroll). */
+/* a door the player shuts while he stands just inside its space shuts all the same (USEITEMS.C's port_door_step_on: it
+   DEPARTS from the original's rule, Off is the original): the config's door_shut_close, on unless 0. Never in a replay. */
+extern int port_door_step_on;
+static int door_step(int v)
+{
+    static int on = -1;
+    extern int16_t rp_request;
+    if (v >= 0) {
+        on = v != 0;
+        if (plat_home()) port_config_set(plat_home(), "door_shut_close", on ? "1" : "0");
+    } else if (on < 0) {
+        char b[16];
+        on = !(plat_home() && port_config_get(plat_home(), "door_shut_close", b, sizeof b) == 0 && !strcmp(b, "0"));
+    }
+    port_door_step_on = on && rp_request != 2;
+    return on;
+}
+/* a door picked by the frame and leaf our display draws, when nothing else is at the point (uwlook.c's
+   uwl_door_targets; the use is the original's): the config's door_targeting, on unless 0 */
+static int door_pick(int v)
+{
+    static int on = -1;
+    if (v >= 0) {
+        on = v != 0;
+        if (plat_home()) port_config_set(plat_home(), "door_targeting", on ? "1" : "0");
+    } else if (on < 0) {
+        char b[16];
+        on = !(plat_home() && port_config_get(plat_home(), "door_targeting", b, sizeof b) == 0 && !strcmp(b, "0"));
+    }
+    uwl_door_targets = on;
+    return on;
+}
+extern int port_door_cue_on;
+static int door_cue(int v)
+{
+    static int on = -1;
+    extern int16_t rp_request;
+    if (v >= 0) {
+        on = v != 0;
+        if (plat_home()) port_config_set(plat_home(), "door_blocked_message", on ? "1" : "0");
+    } else if (on < 0) {
+        char b[16];
+        on = !(plat_home() && port_config_get(plat_home(), "door_blocked_message", b, sizeof b) == 0 && !strcmp(b, "0"));
+    }
+    port_door_cue_on = on && rp_request != 2;
+    return on;
 }
 void port_sound_volumes(int music, int fx);   /* SOUND.C, port only: the theme's and the effects' volume, percent */
 static int mus_vol = -1, fx_vol = -1;        /* the menu's Music volume and Sound volume (the config's music_volume, sound_volume) */
@@ -1271,7 +1376,7 @@ static void volume_step(int *v, int step, const char *key)
     snprintf(b, sizeof b, "%d", *v);
     if (plat_home()) port_config_set(plat_home(), key, b);
 }
-static int menu_ids[96], menu_n;   /* (96: MENU_MAX, below; 64 until 2026-11-15, when the HDR rows filled it) */
+static int menu_ids[160], menu_n;   /* (160: MENU_MAX, below; 64 until 2026-11-15, when the HDR rows filled it; 96 until 2026-11-16, the sound's dials) */
 /* our save and load pages (the user: no more of the original's panel in our display): 0 the options, 1 save, 2 load;
    a page's rows are the four slots (MO_SLOT + 1..4) and Back. The save goes through the game's own DoSaveRest on its
    thread (uwinv.c's UWI_OP_SAVE / UWI_OP_LOAD), the description written for the player: the level and the time */
@@ -1323,91 +1428,283 @@ static void ctrl_key(int c)
 /* The rows in the order shown, under their headings (2026-11-14, the user: the menu made legible; every setting a
    row). opt: the renderer's option (uwv_option) or -1 ours; hint: what the row does, shown at the menu's foot. A
    renderer's row is there once the renderer has the option. */
-#define MENU_MAX 96
+#define MENU_MAX 160
+/* The sound's dials (2026-11-16, the user: "make every option for the sound system an option in the Esc menu ...
+   so we can fine tune the reverb, time to hear the sound etc"): every number that was fixed in uwaudio.c, uwsteam.c
+   and uwacoustic.c is a key of settings.txt (uwaudio.c's TU has the list) with a row here, under "Sound tuning".
+   Ours, not the renderer's: read once from settings.txt, written there at each step, heard at once
+   (fx_acoustics_tune). dflt is the number as it was in the code; a row is shown when its part of the sound runs
+   (need). MO_ROOMINFO is the read-only row of what the rays measure where the player stands. */
+enum { MO_CARDMUSIC = 196, MO_CARDSPEECH = 197, MO_ROOMINFO = 199, MO_DIAL = 200 };
+/* The game's own sound devices (the user, 2026-11-16: "options in the esc menu to change the sound system from
+   roland to soundblaster etc."): DATA\UW.CFG's two cards in the home folder, as the settings screen's Sound tab
+   writes them (the port's uwcfg.c and settab.c: the same numbers and names). The game loads its drivers at its
+   start, so a change holds from the next start; cards_run is what this run started with. With a music card that
+   is not the Roland our own Roland renderings of the effects stand down (uwaudio_stand_down): the effects are
+   that card's own, as the original paired them, without places or acoustics. */
+void read_uw_cfg(int *music, int *speech);
+int write_uw_cfg(const char *spec);
+static const char *const CARD_MUSIC[7] = {"None", "PC speaker", "Ad Lib", "Sound Blaster", "Sound Blaster Pro", "Pro Audio Spectrum", "Roland MT-32"};
+static const char *const CARD_SPEECH[4] = {"None", "Sound Blaster", "Sound Blaster Pro", "Pro Audio Spectrum"};
+static int cards[2] = {-2, -2}, cards_run[2];
+static void cards_load(void)
+{
+    if (cards[0] != -2) return;
+    read_uw_cfg(&cards[0], &cards[1]);
+    cards_run[0] = cards[0], cards_run[1] = cards[1];
+}
+static void card_text(int which, char *out, size_t n)
+{
+    cards_load();
+    int v = cards[which], most = which ? 3 : 6;
+    snprintf(out, n, "%s%s", v < 0 || v > most ? "Chosen by the game" : which ? CARD_SPEECH[v] : CARD_MUSIC[v], v != cards_run[which] ? " (from the next start)" : "");
+}
+static void card_step(int which, int step)
+{
+    char spec[16];
+    cards_load();
+    int most = which ? 3 : 6, v = cards[which] < 0 || cards[which] > most ? (which ? 1 : 6) : cards[which];
+    v = (v + (step > 0 ? 1 : most)) % (most + 1);
+    cards[which] = v;
+    snprintf(spec, sizeof spec, "%d,%d", cards[0] < 0 ? 6 : cards[0], cards[1] < 0 ? 1 : cards[1]);
+    write_uw_cfg(spec);
+    if (plat_home()) port_config_set(plat_home(), "sound-auto", "0");   /* the player has chosen: the port does not */
+}
+enum { DK_NUM, DK_ONOFF, DK_SECONDS, DK_BOUNCES };
+enum { DN_AUDIO, DN_AC, DN_HIGH, DN_EFX, DN_ALWAYS };   /* positional sound on; Acoustics On or High; High alone; On alone */
+static const struct { const char *key; int dflt, lo, hi, step, kind, need; const char *unit; } SOUND_DIALS[] = {
+    /*  0 */ {"acoustics_echo_first", 1, 0, 1, 1, DK_ONOFF, DN_HIGH, ""},
+    /*  1 */ {"acoustics_echo_level", 5, 0, 60, 1, DK_NUM, DN_HIGH, "%"},
+    /*  2 */ {"acoustics_echo_ms", 2000, 500, 6000, 250, DK_SECONDS, DN_HIGH, ""},
+    /*  3 */ {"acoustics_bounces", 0, 0, 64, 4, DK_BOUNCES, DN_HIGH, ""},
+    /*  4 */ {"acoustics_scatter", 25, 0, 100, 5, DK_NUM, DN_HIGH, "%"},
+    /*  5 */ {"acoustics_decay", 100, 10, 400, 10, DK_NUM, DN_EFX, "%"},
+    /*  6 */ {"acoustics_decay_hf", 100, 10, 400, 10, DK_NUM, DN_EFX, "%"},
+    /*  7 */ {"acoustics_decay_lf", 100, 10, 400, 10, DK_NUM, DN_EFX, "%"},
+    /*  8 */ {"acoustics_refl_delay", 100, 0, 400, 10, DK_NUM, DN_EFX, "%"},
+    /*  9 */ {"acoustics_late_delay", 100, 0, 400, 10, DK_NUM, DN_EFX, "%"},
+    /* 10 */ {"acoustics_reverb_gain", 32, 0, 100, 2, DK_NUM, DN_EFX, "%"},
+    /* 11 */ {"acoustics_ease_ms", 170, 0, 2000, 10, DK_NUM, DN_EFX, " ms"},
+    /* 12 */ {"acoustics_filter_ms", 300, 0, 2000, 20, DK_NUM, DN_AC, " ms"},
+    /* 13 */ {"acoustics_room_rays", 64, 16, 512, 16, DK_NUM, DN_AC, " rays"},
+    /* 14 */ {"acoustics_room_legs", 12, 3, 48, 1, DK_NUM, DN_AC, " bounces"},
+    /* 15 */ {"acoustics_room_reach", 16, 4, 64, 2, DK_NUM, DN_AC, " squares"},
+    /* 16 */ {"acoustics_way_reach", 12, 4, 32, 1, DK_NUM, DN_AC, " squares"},
+    /* 17 */ {"fx_makeup_stereo", 215, 25, 1000, 5, DK_NUM, DN_AUDIO, "%"},
+    /* 18 */ {"fx_makeup_hrtf", 520, 25, 2000, 10, DK_NUM, DN_AUDIO, "%"},
+    /* 19 */ {"acoustics_echo_ahead", 4, 2, 6, 1, DK_NUM, DN_HIGH, " blocks"},
+    /* 20 */ {"acoustics_echo_direct", 1, 0, 1, 1, DK_ONOFF, DN_HIGH, ""},
+    /* 21 */ {"acoustics_steam_direct", 1, 0, 1, 1, DK_ONOFF, DN_HIGH, ""},
+    /* 22 */ {"acoustics_steam_occlusion", 1, 0, 1, 1, DK_ONOFF, DN_HIGH, ""},
+    /* 23 */ {"acoustics_direct_level", 30, 0, 100, 2, DK_NUM, DN_HIGH, "%"},
+    /* 24 */ {"acoustics_source_cm", 50, 5, 300, 5, DK_NUM, DN_HIGH, " cm"},
+    /* 25 */ {"acoustics_door_frames", 1, 0, 1, 1, DK_ONOFF, DN_AC, ""},
+    /* 26 */ {"fx_music_interrupt", 0, 0, 1, 1, DK_ONOFF, DN_AUDIO, ""},
+    /* 27 */ {"fx_step_plain", 0, 0, 1, 1, DK_ONOFF, DN_AUDIO, ""},
+    /* 28 */ {"menu_music", 1, 0, 1, 1, DK_ONOFF, DN_ALWAYS, ""},
+    /* 29 */ {"music_buffer_ms", 150, 50, 600, 25, DK_NUM, DN_ALWAYS, " ms"},
+    /* 30 */ {"music_thread_high", 1, 0, 1, 1, DK_ONOFF, DN_ALWAYS, ""},
+    /* 31 */ {"acoustics_steam_pathing", 1, 0, 1, 1, DK_ONOFF, DN_HIGH, ""},
+    /* 32 */ {"acoustics_path_level", 100, 0, 400, 10, DK_NUM, DN_HIGH, "%"},
+    /* 33 */ {"acoustics_things", 1, 0, 1, 1, DK_ONOFF, DN_AC, ""},
+};
+#define SOUND_NDIALS ((int)(sizeof SOUND_DIALS / sizeof SOUND_DIALS[0]))
+static int dial_val[sizeof SOUND_DIALS / sizeof SOUND_DIALS[0]], dials_read;
+void uwf_our_data(char *out, size_t n);
+static void fx_acoustics_tune(void);
+static void dials_load(void)
+{
+    char data[UWF_PATH];
+    if (dials_read || !plat_base_dir()) return;
+    uwf_our_data(data, sizeof data);
+    for (int i = 0; i < SOUND_NDIALS; i++) {
+        int v = uwaudio_setting(data, SOUND_DIALS[i].key, SOUND_DIALS[i].dflt);
+        dial_val[i] = v < SOUND_DIALS[i].lo ? SOUND_DIALS[i].lo : v > SOUND_DIALS[i].hi ? SOUND_DIALS[i].hi : v;
+    }
+    dials_read = 1;
+}
+/* key's line of our settings.txt written (or added): the file read, the one line changed, written again, as the
+   renderer does for its own rows (src\uwview.c settings_save) */
+static void fx_setting_save(const char *key, int value)
+{
+    static char out[64 * 1024];
+    char data[UWF_PATH], p[UWF_PATH + 32], line[512];
+    size_t n = 0, kl = strlen(key);
+    int done = 0;
+    FILE *f;
+    if (!plat_base_dir()) return;
+    uwf_our_data(data, sizeof data);
+    snprintf(p, sizeof p, "%s/settings.txt", data);
+    if ((f = fopen(p, "r")) != NULL) {
+        while (fgets(line, sizeof line, f)) {
+            if (!done && !strncmp(line, key, kl) && (line[kl] == ' ' || line[kl] == '\t')) {
+                n += (size_t)snprintf(out + n, sizeof out - n, "%s %d\n", key, value), done = 1;
+                continue;
+            }
+            n += (size_t)snprintf(out + n, sizeof out - n, "%s", line);
+            if (n >= sizeof out - 600) break;
+        }
+        fclose(f);
+    }
+    if (!done) n += (size_t)snprintf(out + n, sizeof out - n, "%s %d\n", key, value);
+    if ((f = fopen(p, "w")) != NULL) fwrite(out, 1, n, f), fclose(f);
+}
+static int dial_shown(int i)
+{
+    int ac = uwaudio_acoustics_on(), need = SOUND_DIALS[i].need;
+    return need == DN_ALWAYS ? 1 : need == DN_AUDIO ? uwaudio_on() : need == DN_AC ? ac >= 1 : need == DN_HIGH ? ac == 2 : ac == 1;
+}
+static void dial_text(int i, char *out, size_t n)
+{
+    int v;
+    dials_load();
+    v = dial_val[i];
+    switch (SOUND_DIALS[i].kind) {
+    case DK_ONOFF: snprintf(out, n, "%s", v ? "On" : "Off"); break;
+    case DK_SECONDS: snprintf(out, n, "%d.%02d s", v / 1000, v % 1000 / 10); break;
+    case DK_BOUNCES: if (v) snprintf(out, n, "%d", v); else snprintf(out, n, "As Echo detail"); break;
+    default: snprintf(out, n, "%d%s", v, SOUND_DIALS[i].unit); break;
+    }
+}
+static void dial_step(int i, int step)
+{
+    int v;
+    dials_load();
+    v = dial_val[i];
+    if (SOUND_DIALS[i].kind == DK_ONOFF) v = !v;
+    else v += step > 0 ? SOUND_DIALS[i].step : -SOUND_DIALS[i].step;
+    v = v < SOUND_DIALS[i].lo ? SOUND_DIALS[i].lo : v > SOUND_DIALS[i].hi ? SOUND_DIALS[i].hi : v;
+    if (v == dial_val[i]) return;
+    dial_val[i] = v;
+    fx_setting_save(SOUND_DIALS[i].key, v);
+    fx_acoustics_tune();   /* heard at once */
+}
 static const struct { int id; const char *label; int opt; const char *hint; } MENU_ROWS[] = {
     {MO_HEAD, "#Game", -1, ""},
-    {MO_RESUME, "Resume", -1, "Back to the game."},
-    {MO_SAVE, "Save game (F5)", -1, "Save into one of four slots."},
-    {MO_LOAD, "Load game (F9)", -1, "Load one of the four saved games."},
-    {MO_NEW, "New game (title screen)", -1, "Start again from the title screen. Anything not saved is lost."},
-    {MO_QUIT, "Quit the game", -1, "Close the game. Anything not saved is lost."},
+    {MO_RESUME, "Resume", -1, "Close this menu and go on playing. Esc does the same."},
+    {MO_SAVE, "Save game (F5)", -1, "Opens the save page: pick one of four slots. A slot already used is overwritten."},
+    {MO_LOAD, "Load game (F9)", -1, "Opens the load page: pick one of your four saved games. Anything not saved is lost."},
+    {MO_NEW, "New game (title screen)", -1, "Back to the title screen to start a new character. Anything not saved is lost."},
+    {MO_QUIT, "Quit the game", -1, "Closes the game at once, without asking. Anything not saved is lost."},
     {MO_HEAD, "#Display", -1, ""},
-    {MO_DISPLAY, "Display", -1, "Ours: the full-screen 3D view. The original's: the 1992 screen as it was."},
-    {MO_FULL, "Full screen", -1, "Fill the whole screen, or play in a window."},
-    {MO_RENDERER, "Renderer", -1, "Vulkan (the default), or Direct3D 12. From the next start."},
-    {MO_FOV, "Field of view", 6, "How wide the view is, in degrees."},
-    {MO_SMOOTH, "Smooth motion", 16, "Ease the camera between the game's own steps."},
-    {MO_FADE, "Message fade", -1, "How long the message box stays after the newest message."},
-    {MO_FONT, "Font", 42, "The letters of the whole interface: an easy-to-read font, or the game's own."},
-    {MO_FONTSIZE, "Font size", 43, "The interface's letters, larger or smaller than the size picked for your resolution."},
-    {MO_MENUFONT, "Menu text", 18, "This menu's letters: smooth, or the game's own small capitals."},
-    {MO_CONVFONT, "Conversation text", 17, "Conversations' letters: smooth, or the game's own font."},
-    {MO_LOGFONT, "Message text", 41, "The message box's letters (Ctrl+L's AI lines too): smooth and smaller, or the game's own font."},
-    {MO_CHARSHEET, "Character sheet", 40, "The inventory's sheet (Tab): Full, every number the rules use; or the game's own statistics page."},
+    {MO_DISPLAY, "Display", -1, "Ours: the new full-screen 3D view. The original's: the game's 1992 screen, just as it was."},
+    {MO_FULL, "Full screen", -1, "On: the game fills the whole screen. Off: it runs in a window."},
+    {MO_RENDERER, "Renderer", -1, "The graphics system that draws the picture: Vulkan (the default) or Direct3D 12. Takes hold at the next start."},
+    {MO_FOV, "Field of view", 6, "How wide an angle you see: 50 to 120 degrees, in steps of 5. Higher shows more at the sides. Default 85."},
+    {MO_SMOOTH, "Smooth motion", 16, "On: the camera glides between the game's movement steps. Off: it jumps from step to step. Default On."},
+    {MO_FADE, "Message fade", -1, "Seconds the message box stays on screen after the newest message: 2 to 30, or Never (it stays). Default 5."},
+    {MO_DOORSTEP, "Shut doors from close up", -1, "On: a door you shut while standing just inside its swing still shuts. Off: as the original, it swings open again."},
+    {MO_DOORPICK, "Easier door targeting", -1, "On: point at a door's frame, or its open leaf from any side, to use it. Off: as the original, the leaf only."},
+    {MO_DOORCUE, "Door blocked message", -1, "On: a message tells you when a door swings open again because you stand in its way. Step back and it shuts."},
+    {MO_FONT, "Font", 42, "The letters of the whole interface: an easy-to-read font of your choice, or The game's own."},
+    {MO_FONTSIZE, "Font size", 43, "Size of the interface's letters, in steps of 5%. 100% is the size picked for your screen resolution."},
+    {MO_MENUFONT, "Menu text", 18, "This menu's letters: Smooth (easy to read, the default) or the original game's small capitals."},
+    {MO_CONVFONT, "Conversation text", 17, "The letters in conversations: Smooth (easy to read, the default) or the original game's font."},
+    {MO_LOGFONT, "Message text", 41, "The message box's letters: Smooth (smaller and easier to read, the default) or the original game's font."},
+    {MO_CHARSHEET, "Character sheet", 40, "The sheet in the inventory (Tab). Full: every number the rules use (the default). Or the game's own statistics page."},
     {MO_HEAD, "#Graphics", -1, ""},
-    {MO_RES, "Resolution", 23, "The size the 3D view is drawn at -> the size it is shown at. It follows the rows below."},
-    {MO_DLSS, "DLSS Super Resolution", 0, "NVIDIA DLSS: the view drawn smaller or at full size, then made sharp and steady. Off: plain full size."},
-    {MO_DLSSMODE, "DLSS mode", 21, "The size the view is drawn at before DLSS enlarges it. DLAA draws at full size: the best picture."},
-    {MO_RT, "Ray tracing", 3, "Light and shadows by hardware ray tracing."},
-    {MO_RR, "DLSS Ray Reconstruction", 22, "NVIDIA's denoiser for the ray-traced light: a bounce ray a pixel, cleaned and enlarged in one go."},
-    {MO_DLSS5, "DLSS 5", 1, "NVIDIA's neural rendering over the DLSS picture."},
-    {MO_STYLE, "DLSS 5 style", 2, "The look DLSS 5 gives the picture."},
-    {MO_D5INT, "DLSS 5 intensity", 24, "How strongly DLSS 5 changes the picture."},
-    {MO_D5STR, "DLSS 5 structure", 25, "How much fine local detail DLSS 5 adds."},
-    {MO_BOUNCE, "Bounced light", 4, "Light bounced off walls and floors into the shadows."},
-    {MO_SHADOWS, "Object shadows (.)", 9, "Shadows cast by objects and creatures (ray tracing)."},
-    {MO_TEXRES, "Textures", 52, "The walls' and floors' pictures: the game's own, or upscaled to 256 or 512 pixels in the same colours."},
-    {MO_MAPNORMAL, "Normal map detail", 53, "The size of the maps that give the stone its depth: as the Textures row, the original's 64 pixel maps, or the maps made from the 256 or 512 pixel textures."},
-    {MO_MAPAO, "Joint shadow map detail", 54, "The size of the maps that darken the joints between the stones: as the Textures row, the original's, or those made from the 256 or 512 pixel textures."},
-    {MO_MAPHEIGHT, "Relief height map detail", 55, "The size of the height maps the stones' own small shadows are cast from: as the Textures row, the original's, or those made from the 256 or 512 pixel textures."},
-    {MO_RELIEF, "Normal maps (F6)", 5, "Depth on the stone, from the textures' normal maps."},
-    {MO_NSTR, "Normal map strength", 8, "How deep the stone's relief looks."},
-    {MO_TEXAO, "Joint shadows (AO)", 50, "Darkness in the joints between the stones of walls and floors. Off: none."},
-    {MO_TEXSHADOW, "Relief shadows", 51, "The stones cast small shadows of their own across walls and floors, from each light. Off: none."},
-    {MO_LIGHTCOL, "Light colour", 31, "How the eye's adaptation to the fires' colour is worked out: CAT16 (CAM16's, the current standard) or Bradford."},
-    {MO_BREATH, "Fire breathing", 61, "Now and then a fire sags or flares for a few seconds, as real flames do when the air or the fuel changes. How deep."},
-    {MO_ADAPT, "Light adaptation", 32, "How far the eye gets used to firelight. Automatic: as a torch-lit dungeon's light makes it (CAM16). 0% the fire's raw orange, 100% white."},
-    {MO_HDR, "HDR output", 33, "On an HDR monitor (HDR on in Windows' display settings): fire and bright light go past white, up to the monitor's peak."},
-    {MO_HDRPEAK, "HDR peak brightness", 34, "The brightest the highlights go, in nits. The monitor's: what it reports it reaches."},
-    {MO_HDRPAPER, "HDR paper white", 35, "How bright white is in HDR (the picture's normal range and the interface), in nits."},
+    {MO_RES, "Resolution", 23, "Information only: the size the 3D view is drawn at -> the size shown on screen. The DLSS rows below set it."},
+    {MO_DLSS, "DLSS Super Resolution", 0, "NVIDIA DLSS makes the picture sharp and steady, and can enlarge a smaller one for speed. Off: plain full size."},
+    {MO_DLSSMODE, "DLSS mode", 21, "The size drawn before DLSS enlarges it. DLAA: full size, the best picture. The others: smaller and faster."},
+    {MO_RT, "Ray tracing", 3, "On: light and shadows are worked out by tracing rays of light, on graphics cards that can do it."},
+    {MO_RR, "DLSS Ray Reconstruction", 22, "NVIDIA's cleaner for the grain in ray-traced light; it also enlarges the picture. Needs DLSS and Ray tracing."},
+    {MO_DLSS5, "DLSS 5", 1, "NVIDIA's neural rendering: it reworks the DLSS picture. Only shown on graphics cards that have it."},
+    {MO_STYLE, "DLSS 5 style", 2, "The look DLSS 5 gives the picture: A - Default, B - Natural or C - Cinematic."},
+    {MO_D5INT, "DLSS 5 intensity", 24, "How strongly DLSS 5 changes the picture: 0% to 100%, in steps of 5. Higher is stronger."},
+    {MO_D5STR, "DLSS 5 structure", 25, "How much fine local detail DLSS 5 adds: 0% to 100%, in steps of 5. Higher is more."},
+    {MO_BOUNCE, "Bounced light", 4, "On: light bounces off walls and floors into the shadows, so they are less dark. Off: no bounced light."},
+    {MO_SHADOWS, "Object shadows (.)", 9, "On: objects and creatures cast shadows (needs Ray tracing). The . key switches it too."},
+    {MO_TEXRES, "Textures", 52, "The pictures on walls and floors: Original, or sharper copies enlarged to 256 or 512 pixels in the same colours."},
+    {MO_MAPNORMAL, "Normal map detail", 53, "Detail of the maps that give the stone its bumps: As the textures, Original (64 pixels), 256 or 512."},
+    {MO_MAPAO, "Joint shadow map detail", 54, "Detail of the maps that darken the joints between stones: As the textures, Original, 256 or 512."},
+    {MO_MAPHEIGHT, "Relief height map detail", 55, "Detail of the height maps the stones' own small shadows come from: As the textures, Original, 256 or 512."},
+    {MO_RELIEF, "Normal maps (F6)", 5, "On: light picks out the bumps and grooves of the stone, so walls and floors look less flat. F6 switches it too."},
+    {MO_NSTR, "Normal map strength", 8, "How deep the stone's bumps look: 0.25 (faint) to 4.00 (strong), in steps of 0.25. Used by Normal maps."},
+    {MO_TEXAO, "Joint shadows (AO)", 50, "Darkens the joints between the stones of walls and floors: Off, or 25% to 200%. Higher is darker."},
+    {MO_TEXSHADOW, "Relief shadows", 51, "Stones cast small shadows of their own from each light: Off, or Depth 1 to 8. Higher: deeper relief, more shadow."},
+    {MO_LIGHTCOL, "Light colour", 31, "The colour maths for how your eye adapts to firelight: CAT16 (the newer standard, the default) or Bradford."},
+    {MO_LIGHTFADE, "Light fade", 62, "How light dims with distance. 2 / 3 / 4 tiles: half at 2 tiles, 30% at 3, dark at 4. Original: the game's shading."},
+    {MO_BREATH, "Fire breathing", 61, "Now and then a fire sags or flares for a few seconds, like real flames. Off, or 10% to 40%: how strongly."},
+    {MO_ADAPT, "Light adaptation", 32, "How far your eye gets used to firelight: 0% leaves it orange, 100% makes it white. Automatic works it out."},
+    {MO_HDR, "HDR output", 33, "On an HDR monitor (HDR on in Windows): fire and bright light go brighter than white. Other monitors: no change."},
+    {MO_HDRPEAK, "HDR peak brightness", 34, "The brightest that HDR highlights go: The monitor's (what it reports), or 400 to 4000 nits in steps of 100."},
+    {MO_HDRPAPER, "HDR paper white", 35, "How bright plain white and the interface are in HDR: 80 to 500 nits, in steps of 10. Default 200."},
     {MO_HEAD, "#Effects", -1, ""},
-    {MO_PARTICLES, "Particles", 10, "Sparks, smoke and dust."},
-    {MO_DECALS, "Decals", 11, "Marks left on floors and walls, such as blood."},
-    {MO_WATER, "Water", 12, "Moving, refracting water."},
+    {MO_PARTICLES, "Particles", 10, "On: sparks, smoke and dust in the air. Off: none."},
+    {MO_DECALS, "Decals", 11, "On: marks such as blood are left on floors and walls. Off: none."},
+    {MO_WATER, "Water", 12, "On: water moves and bends the view of what is under it. Off: plain water."},
     {MO_FOG, "Fog and light shafts", 13, "Fog, and shafts of light through it."},
     {MO_HEAD, "#Sound", -1, ""},
-    {MO_MUSIC, "Music on / off", -1, "The game's music."},
-    {MO_MUSVOL, "Music volume", -1, "How loud the music is."},
-    {MO_SOUND, "Sound on / off", -1, "The game's sound effects."},
-    {MO_FXVOL, "Sound volume", -1, "How loud the sound effects are."},
-    {MO_FXAUDIO, "Positional sound", 14, "Each sound comes from the place where it happens."},
-    {MO_HRTF, "Headphone 3D sound", 19, "On headphones: tells sounds ahead from sounds behind. Automatic: when Windows sees headphones."},
-    {MO_PANFIX, "Effects' sides", 20, "The MT-32 swaps left and right. Corrected puts each sound on its true side."},
-    {MO_HEARRANGE, "Hearing range", 56, "How far away a sound can be heard. Original: 6 tiles, as the game had it. Further: sounds fade out over a longer distance."},
-    {MO_FEETSPREAD, "Footstep width", 57, "How far to the left and right your own two feet sound. Original: barely apart. Middle: both in the centre."},
-    {MO_STEPVOL, "Footstep volume", 59, "How loud footsteps are, yours and the creatures', against the other sounds."},
-    {MO_STEPECHO, "Footstep echo", 60, "With Acoustics High: how strongly footsteps ring in the room, against other sounds' echoes. Off: steps do not echo."},
-    {MO_FOOTSTEPS, "Footsteps by floor", 30, "Footsteps sound by the floor: wood, water, earth, metal. Off: the original's two notes everywhere."},
-    {MO_ACOUSTICS, "Acoustics", 15, "Walls and shut doors muffle sounds; rooms ring by their size. High: each sound's own echoes (Steam Audio)."},
-    {MO_ECHOQ, "Echo detail", 58, "With Acoustics High: how many sound rays are traced through the level, and how many times each bounces. More is smoother and costs more processor time."},
-    {MO_ACWET, "Reverb level", 26, "How loud the rooms' ringing is. Off: no reverb, the muffling alone."},
-    {MO_ACSIZE, "Room size", 27, "How big a tile counts as: bigger rooms ring longer."},
-    {MO_ACOCCL, "Muffling by walls", 28, "How much rock and shut doors quieten and dull a sound. Off: none, the reverb alone."},
-    {MO_ACDETOUR, "Sound round corners", 29, "A sound round a corner is heard from the opening it comes through, not through the rock."},
+    {MO_MUSIC, "Music on / off", -1, "Turns the game's music on or off."},
+    {MO_MUSVOL, "Music volume", -1, "How loud the music is: 0% to 100%, in steps of 5."},
+    {MO_SOUND, "Sound on / off", -1, "Turns the game's sound effects on or off."},
+    {MO_FXVOL, "Sound volume", -1, "How loud the sound effects are: 0% to 100%, in steps of 5."},
+    {MO_CARDMUSIC, "Music and effects device", -1, "What plays music and effects. Only the Roland MT-32 (needs its ROM files) gives positional sound. From the next start."},
+    {MO_CARDSPEECH, "Speech device", -1, "The device that plays the game's recorded speech, or None. Takes hold at the next start."},
+    {MO_FXAUDIO, "Positional sound", 14, "On: each sound comes from the place where it happens. The sound rows below need it. Off: the game's plain sound."},
+    {MO_HRTF, "Headphone 3D sound", 19, "For headphones: tells sounds ahead from sounds behind. Automatic: on when Windows sees headphones. Default On."},
+    {MO_PANFIX, "Effects' sides", 20, "The Roland MT-32 swaps left and right. Corrected (the default) puts each sound on its true side."},
+    {MO_HEARRANGE, "Hearing range", 56, "How far away a sound can be heard: Original (6 tiles), or 9, 12, 16 or 24 tiles for a longer fade-out."},
+    {MO_FEETSPREAD, "Footstep width", 57, "How far apart your two feet sound: Middle (both centred), Original (barely apart), up to 800% (wide apart)."},
+    {MO_STEPVOL, "Footstep volume", 59, "How loud all footsteps are, yours and the creatures', next to other sounds: Off, or 10% to 200%. Default 80%."},
+    {MO_STEPECHO, "Footstep echo", 60, "How strongly footsteps echo, next to other sounds' echoes: Off, or 10% to 200%. Default 50%. Acoustics High only."},
+    {MO_FOOTSTEPS, "Footsteps by floor", 30, "On: steps sound like the floor under them (wood, water, earth, metal). Off: the original's two step sounds."},
+    {MO_ACOUSTICS, "Acoustics", 15, "On: walls and shut doors muffle sounds, rooms echo by their size. High: lifelike echoes traced for every sound."},
+    {MO_ECHOQ, "Echo detail", 58, "Sound rays traced for the echoes: Low (1,024) to Very high (8,192). More is smoother but works the processor harder."},
+    {MO_ACWET, "Reverb level", 26, "How loud the rooms' echo is: Off, or 10% to 200%. Off leaves only the muffling. Default 100%."},
+    {MO_ACSIZE, "Map square size", 27, "Metres to a map square: 1.5 to 4.0. Bigger makes every room sound bigger, with longer echoes. The game's own: 2.4."},
+    {MO_ACOCCL, "Muffling by walls", 28, "How much rock and shut doors quieten and dull a sound: Off, or 10% to 100%. Default 100%."},
+    {MO_ACDETOUR, "Sound round corners", 29, "On: a sound round a corner seems to come from the opening it passes through, not through the rock. Default On."},
+    {MO_HEAD, "#Sound tuning", -1, ""},
+    {MO_ROOMINFO, "Room measured here", -1, "Information only: how long this room echoes (low / middle / high notes) and how far sound travels between its walls."},
+    {MO_DIAL + 21, "Sound by Steam Audio", -1, "On: Steam Audio shapes each sound for your two ears. Off: OpenAL does. Needs Headphone 3D sound. Default On."},
+    {MO_DIAL + 22, "Muffling by Steam Audio", -1, "On: Steam Audio works out what walls, doors and floors let through, by their material. Off: the game's own rays."},
+    {MO_DIAL + 23, "Sound level (Steam Audio)", -1, "How loud the sounds played by Steam Audio are, next to the game's own mix: 0% to 100%. Default 30%."},
+    {MO_DIAL + 31, "Sound paths by Steam Audio", -1, "On: a sound you cannot see reaches you along real routes, round corners and through open doors. A shut door blocks it."},
+    {MO_DIAL + 32, "Sound paths level", -1, "How loud a sound is when it reaches you along a route round corners: 0% to 400%. Default 100%."},
+    {MO_DIAL + 24, "Sound source size", -1, "How big a sound's source counts as: 5 to 300 cm. Bigger: it fades more gently behind a corner. Default 50 cm."},
+    {MO_DIAL + 29, "Music buffer", -1, "Music kept ready ahead: 50 to 600 ms. More: fewer gaps when the PC is busy, but the music answers later. Default 150."},
+    {MO_DIAL + 30, "Music thread first", -1, "On: making the music comes before the game's other work, so a busy moment leaves no gap in the tune. Default On."},
+    {MO_DIAL + 28, "Music in the menu", -1, "On: the music plays on while this menu is open. Off: it stops with the paused game. Default On."},
+    {MO_DIAL + 27, "Own footsteps plain", -1, "On: your own footsteps play untouched: no echo, floor sound, 3D or muffling. For comparing by ear. Default Off."},
+    {MO_DIAL + 26, "Effects interrupt music", -1, "On: as the original, each sound effect cuts notes out of the music. Off (the default): the music plays whole."},
+    {MO_DIAL + 33, "Furniture in the sound", -1, "On: tables, barrels, chests, pillars and boulders block and reflect sound, each by its material. Off: empty rooms."},
+    {MO_DIAL + 25, "Doorways their real size", -1, "On: for sound, a doorway is a narrow opening in a wall. Off: an open door leaves its whole square open. Default On."},
+    {MO_DIAL + 0, "Echoes at once", -1, "On: a new sound echoes at once, with the echo of where you stand until its own is ready. Off: echoes can come late."},
+    {MO_DIAL + 1, "Echo strength", -1, "How loud echoes are next to the sound itself: 0% to 60%. Reverb level then scales them. Default 5%."},
+    {MO_DIAL + 2, "Longest echo", -1, "The longest an echo may ring: 0.5 to 6 seconds. A change starts the echoes again. Default 2 s."},
+    {MO_DIAL + 3, "Echo bounces", -1, "How often a sound ray bounces before it is dropped: 4 to 64. Too few cuts echoes short. Default: As Echo detail."},
+    {MO_DIAL + 4, "Wall roughness", -1, "How much of each bounce scatters every way instead of reflecting as off a mirror: 0% to 100%. Default 25%."},
+    {MO_DIAL + 19, "Echo buffer", -1, "Blocks of echo (11 ms each) kept ready ahead: 2 to 6. Too few: crackling. More: echoes come later. Default 4."},
+    {MO_DIAL + 20, "Echoes straight to the ears", -1, "On: echoes go to your headphones as made. Off: placed again by Headphone 3D sound, duller. Default On."},
+    {MO_DIAL + 5, "Ring time", -1, "How long rooms echo, against what the sound rays measure: 10% to 400%. 100% (the default): as measured."},
+    {MO_DIAL + 6, "Ring time, high notes", -1, "How long high notes echo, against what the sound rays measure: 10% to 400%. 100% (the default): as measured."},
+    {MO_DIAL + 7, "Ring time, low notes", -1, "How long low notes echo, against what the sound rays measure: 10% to 400%. 100% (the default): as measured."},
+    {MO_DIAL + 8, "First echo delay", -1, "The wait before the first echoes, against the measured distance to the nearest surfaces: 0% to 400%. Default 100%."},
+    {MO_DIAL + 9, "Late ring delay", -1, "The wait before the room's long echo follows the first echoes, against what is measured: 0% to 400%. Default 100%."},
+    {MO_DIAL + 10, "Reverb strength", -1, "The reverb's own loudness: 0% to 100%. Reverb level then scales it. Default 32%."},
+    {MO_DIAL + 11, "Room change time", -1, "How fast the echo changes as you enter another room: 0 to 2000 ms; all but done after 3 times this. Default 170."},
+    {MO_DIAL + 12, "Muffling change time", -1, "How fast a sound turns muffled or clear when a wall or door comes between: 0 to 2000 ms. Default 300."},
+    {MO_DIAL + 13, "Room rays", -1, "How many sound rays measure the room round you: 16 to 512. Default 64."},
+    {MO_DIAL + 14, "Room ray bounces", -1, "How many bounces each room ray is followed for: 3 to 48. Default 12."},
+    {MO_DIAL + 15, "Room ray reach", -1, "How far a room ray may go before its sound counts as gone: 4 to 64 map squares. Default 16."},
+    {MO_DIAL + 16, "Corner reach", -1, "How far round corners a sound is followed: 4 to 32 map squares walked. Default 12."},
+    {MO_DIAL + 17, "Loudness, speakers", -1, "Loudness of positional sound against the game's own mix, Headphone 3D sound off: 25% to 1000%. Default 215%."},
+    {MO_DIAL + 18, "Loudness, headphone 3D", -1, "Loudness of positional sound against the game's own mix, Headphone 3D sound on: 25% to 2000%. Default 520%."},
     {MO_HEAD, "#Controls", -1, ""},
-    {MO_MOUSE, "Mouse sensitivity", 7, "How fast the mouse turns the view."},
+    {MO_MOUSE, "Mouse sensitivity", 7, "How fast the mouse turns the view: 0.1 (slow) to 4.0 (fast), in steps of 0.1. Default 1.0."},
     {MO_HEAD, "#AI", -1, ""},
-    {MO_AILEVEL, "Creature AI", -1, "How cunning creatures are. Original: the game as shipped. Devious: they hunt, investigate, ambush and call kin. Monstrous: they also fight as packs."},
-    {MO_AIP0, "Hit and run", -1, "Monstrous: creatures that shoot or cast wait for you to come into range, strike, then fall back to their kin."},
-    {MO_AIP1, "Calls for help", -1, "Monstrous: a creature that meets you alone calls its kin before it attacks."},
-    {MO_AIP2, "Pack courage", -1, "Monstrous: spiders, bats and other creatures of low wits fall back to kin nearby first, and attack together. Alone, they attack. The dumbest just attack."},
-    {MO_AIP3, "Fall back when hurt", -1, "Monstrous: a wounded creature runs to its kin and comes back with them."},
-    {MO_AIP4, "Strike together", -1, "Monstrous: kin called to a fight gather first and come at you together."},
-    {MO_AIP5, "Calls passed on", -1, "Monstrous: clever creatures repeat a call for help, so word spreads."},
-    {MO_AIP6, "AI messages", -1, "A line in the message scroll when a creature calls for help, runs to its kin, or a pack turns on you."},
-    {MO_AIBY, "Decisions by", -1, "Who chooses what a creature does. Rules: the game's own rulebook, at once. Language model: a model file, slower."},
-    {MO_LLM, "Language model", -1, "The model file the creatures' AI runs on. Left and Right choose."},
-    {MO_HUNTERS, "Level hunters", -1, "Creatures that hunt the player across the level by a plan: none, one or two a level."},
+    {MO_AILEVEL, "Creature AI", -1, "Original: the game as shipped. Devious: creatures hunt, investigate, ambush, call kin. Monstrous: also fight as packs."},
+    {MO_AIP0, "Hit and run", -1, "Monstrous only. Creatures that shoot or cast wait for you to come in range, strike, then fall back to their kin."},
+    {MO_AIP1, "Calls for help", -1, "Monstrous only. A creature that meets you alone calls its kin before it attacks."},
+    {MO_AIP2, "Pack courage", -1, "Monstrous only. Dim creatures (spiders, bats) fall back to kin nearby and attack together. The dumbest just attack."},
+    {MO_AIP3, "Fall back when hurt", -1, "Monstrous only. A wounded creature runs to its kin and comes back with them."},
+    {MO_AIP4, "Strike together", -1, "Monstrous only. Kin called to a fight gather first, then come at you together."},
+    {MO_AIP5, "Calls passed on", -1, "Monstrous only. Clever creatures repeat a call for help, so word spreads."},
+    {MO_AIP6, "AI messages", -1, "On: a message appears when a creature calls for help, runs to its kin, or a pack turns on you."},
+    {MO_AIBY, "Decisions by", -1, "Who decides what a creature does. Rules: the built-in rulebook, at once. Language model: an AI model file, slower."},
+    {MO_LLM, "Language model", -1, "The AI model file creatures decide with when Decisions by is Language model. Left and Right pick another file."},
+    {MO_HUNTERS, "Level hunters", -1, "Creatures that hunt you across the whole level by a plan: Off, 1 or 2 a level. Default 2."},
 };
 #define MENU_NROWS ((int)(sizeof MENU_ROWS / sizeof MENU_ROWS[0]))
 static int menu_opt(int id)   /* the renderer's option of a row, -1 none */
@@ -1441,6 +1738,17 @@ static void menu_rows_build(const char **lab, const char **val, const char **hin
             if (!V.ok) continue;
             snprintf(vbuf[menu_n], 128, "%s", display_mode == 1 ? "The original's" : "Ours");
         }
+        else if (id == MO_CARDMUSIC || id == MO_CARDSPEECH) card_text(id == MO_CARDSPEECH, vbuf[menu_n], 128);
+        else if (id == MO_ROOMINFO) {   /* what the rays measure at the listener (shown while the acoustics run) */
+            float rt[3], mfp = 0, first = 0;
+            if (!uwaudio_acoustics_on()) continue;
+            if (uwaudio_room(rt, &mfp, &first)) snprintf(vbuf[menu_n], 128, "rings %.1f / %.1f / %.1f s, %.1f m between walls", rt[0], rt[1], rt[2], mfp);
+            else snprintf(vbuf[menu_n], 128, "%s", "(no room here)");
+        }
+        else if (id >= MO_DIAL && id < MO_DIAL + SOUND_NDIALS) {
+            if (!dial_shown(id - MO_DIAL)) continue;
+            dial_text(id - MO_DIAL, vbuf[menu_n], 128);
+        }
         else if (id == MO_FULL) snprintf(vbuf[menu_n], 128, "%s", live.fullscreen ? "On" : "Off");
         else if (id == MO_RENDERER) {   /* (Windows with a renderer up: the two DLLs; the one wanted, and the one running) */
 #ifndef _WIN32
@@ -1456,6 +1764,9 @@ static void menu_rows_build(const char **lab, const char **val, const char **hin
         else if (id == MO_MUSVOL) volumes_load(), snprintf(vbuf[menu_n], 128, "%d%%", mus_vol);
         else if (id == MO_FXVOL) volumes_load(), snprintf(vbuf[menu_n], 128, "%d%%", fx_vol);
         else if (id == MO_FADE) { int f = fade_secs(); if (f) snprintf(vbuf[menu_n], 128, "%d s", f); else snprintf(vbuf[menu_n], 128, "Never"); }
+        else if (id == MO_DOORSTEP) snprintf(vbuf[menu_n], 128, "%s", door_step(-1) ? "On" : "Off");
+        else if (id == MO_DOORPICK) snprintf(vbuf[menu_n], 128, "%s", door_pick(-1) ? "On" : "Off");
+        else if (id == MO_DOORCUE) snprintf(vbuf[menu_n], 128, "%s", door_cue(-1) ? "On" : "Off");
         else if (id == MO_AILEVEL) { int lv = port_ai_level(-1); snprintf(vbuf[menu_n], 128, "%s", lv == 0 ? "Original" : lv == 1 ? "Devious" : "Monstrous"); }
         else if (id >= MO_AIP0 && id <= MO_AIP6) {   /* Monstrous's parts on Monstrous alone; the messages on both smarter levels */
             if (port_ai_level(-1) < (id == MO_AIP6 ? 1 : 2)) continue;
@@ -1556,6 +1867,9 @@ static void menu_choose_step(int row, int step)
         }
         return;
     }
+    if (id == MO_ROOMINFO) return;   /* (read-only) */
+    if (id == MO_CARDMUSIC || id == MO_CARDSPEECH) { card_step(id == MO_CARDSPEECH, step); return; }
+    if (id >= MO_DIAL && id < MO_DIAL + SOUND_NDIALS) { dial_step(id - MO_DIAL, step); return; }
     if (menu_opt(id) >= 0) {
         if (V.option) V.option(menu_opt(id), step, v, sizeof v);
         if (id == MO_MOUSE) display_apply();   /* the new speed to the port's mouse-look */
@@ -1604,6 +1918,9 @@ static void menu_choose_step(int row, int step)
     case MO_SOUND: panel_toggle(0x21, uwl_fx_on()); break;      /* Ctrl+F: its sound page */
     case MO_MUSVOL: volume_step(&mus_vol, step, "music_volume"); break;
     case MO_FXVOL: volume_step(&fx_vol, step, "sound_volume"); break;
+    case MO_DOORSTEP: door_step(!door_step(-1)); break;
+    case MO_DOORPICK: door_pick(!door_pick(-1)); break;
+    case MO_DOORCUE: door_cue(!door_cue(-1)); break;
     case MO_AILEVEL: port_ai_level((port_ai_level(-1) + (step > 0 ? 1 : 2)) % 3); break;   /* Original -> Devious -> Monstrous */
     case MO_AIP0: case MO_AIP1: case MO_AIP2: case MO_AIP3: case MO_AIP4: case MO_AIP5: case MO_AIP6:
         port_ai_part(id - MO_AIP0, !port_ai_part(id - MO_AIP0, -1));
@@ -2474,7 +2791,8 @@ static void view_present(const uint32_t *src, int sw, int sh)
     {   /* the host's pointer in our display, but for a cutscene (the game's cursor never stands in for it then) */
         /* (the user: never the host's pointer over our display, the game's cursor only: the game draws its own, our
            menu and panel draw the game's picture of it) */
-        port_stack_whole = display_mode == 0 && !shift_ours();   /* Shift held: asked how many, as the original */
+        port_stack_whole = display_mode == 0;   /* our display: a stack whole, never the original's typed dialog (the user,
+                                                   2026-11-16); split in our panel (Shift + a click, ask_begin) */
         host_pointer = 0, port_host_pointer = display_mode == 0 && inv_open ? 2 : 0;   /* our panel draws the pointer and the thing on it (the top is the original's screen: its cursor would show twice) */
         if (display_mode == 0 && !uwp_cursor_hidden() && focused && !offscreen() && !settings_open()) {
             int cpx, cpy, crw, crh;
@@ -2640,6 +2958,21 @@ static void fx_pan_fix_read(void)   /* the menu's "Effects' sides" changed: take
    (its epoch moved) or the audio was started again, the textures turned into their materials (uwacmat.c: the walls',
    the floors', the one ceiling's) and handed to the audio (uwaudio_acoustics); the doors every picture, handed over
    when one opened or shut. With UWPORT_FX_LOG one line says what came. */
+/* What a 3D model object is made of, for the sound (acoustics.txt's preset names; -1: it is not there for the
+   sound). The original's items 0x150 to 0x16C: the bench, the table, the beam, the barrel, the chair, the chest,
+   the nightstand and the bridge are wood; the boulders, the shrine and the pillar stone. Arrows, the moongate,
+   levers and the rest are left out. */
+static int fx_thing_mat(int item)
+{
+    const char *name = NULL;
+    switch (item) {
+    case 0x150: case 0x158: case 0x159: case 0x15B: case 0x15C: case 0x15D: case 0x15E: case 0x164: name = "wood"; break;
+    case 0x153: case 0x154: case 0x155: case 0x156: case 0x157: case 0x160: name = "stone"; break;
+    default: return -1;
+    }
+    for (int i = 0; i < uwacmat_count(); i++) if (!strcmp(uwacmat_get(i)->name, name)) return i;
+    return 0;
+}
 static void fx_acoustic_level(void)
 {
     static UwvAcTile tile[64 * 64];
@@ -2673,6 +3006,18 @@ static void fx_acoustic_level(void)
         }
         int cm = uwacmat_for(UWA_CEILING, ceil);
         uwaudio_acoustics(at, cm < 0 ? 0 : cm, ad, nd);
+        {   /* the things standing in the level, as boxes of their material */
+            static UwvAcBox vb[256];
+            static UwaBox ab[256];
+            int nb = V.ac_things ? V.ac_things(vb, 256) : 0, na = 0;
+            for (int i = 0; i < nb; i++) {
+                int mt = fx_thing_mat(vb[i].item);
+                if (mt < 0) continue;
+                memcpy(ab[na].lo, vb[i].lo, sizeof ab[na].lo), memcpy(ab[na].hi, vb[i].hi, sizeof ab[na].hi), ab[na++].mat = mt;
+            }
+            uwaudio_things(ab, na);
+            if (getenv("UWPORT_FX_LOG")) fprintf(stderr, "fx: acoustics: %d things standing in the level (of %d model objects)\n", na, nb);
+        }
         fx_ac_seen = e;
     } else uwaudio_acoustics(NULL, 0, ad, nd);
     if (log < 0) log = getenv("UWPORT_FX_LOG") != NULL;
@@ -2688,6 +3033,11 @@ static void fx_acoustics_tune(void)
     if (!base) return;
     uwf_our_data(data, sizeof data);
     uwaudio_tune(data);
+}
+static void underruns_at_exit(void)
+{
+    extern unsigned audio_underruns(void);
+    fprintf(stderr, "audio: the music's stream ran dry %u times in this run\n", audio_underruns());
 }
 static void fx_pump(void)
 {
@@ -2715,7 +3065,38 @@ static void fx_pump(void)
     uwaudio_pump();
     /* the game's side (SOUND.C fx_play): the effects we play ourselves have their Roland copy silent; the pan mirrored
        for the MT-32's inverted reading of it (portgame.h port_fx_control) */
+    cards_load();
+    uwaudio_stand_down(cards_run[0] >= 0 && cards_run[0] != 6);   /* (this run's music card is not the Roland: its own effects) */
     port_fx_control(uwaudio_taken(), fx_pan_fix);
+    dials_load();
+    port_fx_interrupts(dial_val[26]);
+    port_pause_music(dial_val[28]);     /* (the "Music in the menu" row: on unless turned off) */
+    uwp_music_room(dial_val[29], dial_val[30]);   /* (the "Effects interrupt music" row: 0 unless turned on) */
+    {   /* the music's stream (Exhume's audio.c): the times the device found it empty, into the log once a minute
+           when there were more, and at the end (the user, 2026-11-16: "some cutoff ... for the music") */
+        extern unsigned audio_underruns(void);
+        static unsigned said;
+        static unsigned long long next;
+        static int hooked;
+        unsigned long long now = ms_now();
+        if (!hooked) hooked = 1, atexit(underruns_at_exit), next = now + 60000;
+        {   /* each one as it happens (at most 40 a run): when, and what was up */
+            static unsigned each, lines;
+            static unsigned long long t0;
+            unsigned u = audio_underruns();
+            if (!t0) t0 = now;
+            if (u != each) {
+                if (lines++ < 40) fprintf(stderr, "audio: the music's stream ran dry (%u) %.1f s into the run: %s\n", u, (double)(now - t0) / 1000.0,
+                                          menu_open ? "our menu open" : settings_open() ? "the settings screen open" : screen_now() == PS_GAME ? "in the game" : "another screen");
+                each = u;
+            }
+        }
+        if (now >= next) {
+            unsigned u = audio_underruns();
+            next = now + 60000;
+            if (u != said) fprintf(stderr, "audio: the music's stream ran dry %u times so far (%u in the last minute)\n", u, u - said), said = u;
+        }
+    }
 #endif
 }
 

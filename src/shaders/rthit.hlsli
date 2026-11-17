@@ -29,12 +29,14 @@ float reach_window_seen(float3 p) {
         if (k == 0 && lights[0].col.w > 1.5 && rtlim.w < 0) { r = 1; continue; }
         if (k == 0 && lights[0].col.w > 1.5) {
             float R = SHADES[(uint)(lights[0].col.w - 2) & 7].w * LIGHT_REACH;   // its level's reach (the original's), as it lights
-            r = max(r, 1 - smoothstep(R - 0.75, R, length(p.xz - lights[0].col.xz)));
+            if (hdrout.w > 0.5) r = max(r, fade_window(length(p.xz - lights[0].col.xz) * 3.0 * LIGHT_REACH / R));
+            else r = max(r, 1 - smoothstep(R - 0.75, R, length(p.xz - lights[0].col.xz)));
             continue;
         }
         float d = length(lights[k].pr.xyz - p) / max(lights[k].pr.w, 1e-3);
-        if (d >= 1 || r >= 1) continue;
-        float w = 1 - smoothstep(0.6, 1.0, d);
+        const bool fade = hdrout.w > 0.5;   // (the user's fade, common.hlsli light_fade: over at 4/3 of the range)
+        if ((fade ? d * LIGHT_REACH >= FADE_END : d >= 1) || r >= 1) continue;
+        float w = fade ? fade_window(d * 3.0 * LIGHT_REACH) : 1 - smoothstep(0.6, 1.0, d);
         if (w > r && lit_by(p, lights[k].pr.xyz)) r = w;
     }
     return r;

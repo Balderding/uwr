@@ -15,6 +15,7 @@ enum { UWAT_SOLID, UWAT_OPEN, UWAT_DIAG_SE, UWAT_DIAG_SW, UWAT_DIAG_NE, UWAT_DIA
 
 typedef struct { unsigned char type, height, wall_mat, floor_mat; } UwaTile;   /* mats: preset indices */
 typedef struct { int id, tx, tz, heading, mat, shut; } UwaDoor;
+typedef struct { float lo[3], hi[3]; int mat; } UwaBox;   /* a thing standing in the level (a table, a pillar): its box in tiles, its preset */
 typedef struct { float dist; int mat, kind; float n[3]; } UwaHit;   /* kind UWA_* (uwacmat.h); dist in tiles; n the
                                                                      surface's unit normal, toward the ray's side */
 typedef struct { float rt60[3], mfp_m, first_m; int hits; } UwaRoom;   /* seconds, low / mid / high; the room's mean
@@ -25,6 +26,15 @@ typedef struct { float rt60[3], mfp_m, first_m; int hits; } UwaRoom;   /* second
 void uwac_grid(const UwaTile t[64 * 64], int ceil_mat, float tile_m);   /* [z * 64 + x]; copied */
 void uwac_doors(const UwaDoor *d, int n);                               /* copied (128 at most); only shut ones stop a ray */
 void uwac_tile_m(float tile_m);                                         /* the metres a tile, changed alone */
+/* the dials: the room probe's rays (64) and the legs each is followed for (12), how far a leg may go (16 tiles), how
+   far the way round a corner may be (12 tiles) */
+void uwac_tune(int rays, int legs, float reach, float way);
+void uwac_frames(int on);     /* 1 (as it comes): a door's frame stands for a ray, its opening half a tile wide and 13/16 high */
+/* the things standing in the level (copied, 256 at most): a ray stops on a box as on a wall of its material.
+   uwac_things_on(0): they are not there for a ray (the Esc menu's "Furniture in the sound"). */
+void uwac_things(const UwaBox *b, int n);
+void uwac_things_on(int on);
+void uwac_lift(float p[3]);   /* a thing's foot lifted 0.3 tile off its floor, kept under the ceiling */
 
 /* a ray from o along dir (any length but 0), max tiles long: 1 and *hit when it hits, 0 when nothing within max, -1
    when o is not in open air (in rock, under the floor, above the ceiling, outside the map). It hits the floor, the

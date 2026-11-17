@@ -23,6 +23,7 @@ typedef struct {
 void uwl_info(UwlInfo *out);      /* the window's thread: the newest */
 #define UWL_TARGETS 16
 void uwl_set_targets(const int *t, int n);   /* the window's thread: what our view shows at the pointer (uwv_pick), -1 none */
+extern int uwl_door_targets;      /* 1: a door may be picked by its drawn frame and leaf when nothing else is there */
 extern int port_interact_take;    /* port/ui/keys.c: e on a thing that can be taken takes it (our display) */
 extern int port_grab_armed[3];    /* port/ui/keys.c (uw-new): n takes, o throws, u puts away; armed before each is sent */
 extern int port_throw_x, port_throw_y;   /* ... the screen point (mouse_getxy's) the throw is let go at */

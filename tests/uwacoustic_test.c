@@ -119,6 +119,25 @@ int main(int argc, char **argv)
     snprintf(dir, sizeof dir, "%s", argc > 2 ? argv[2] : ".");
     if (!write_table(dir)) { printf("the fixture's acoustics.txt could not be written or read in %s\n", dir); return 99; }
 
+    {   /* door frame (2026-11-16): the frame's slab stands whether the door is shut or open, its opening half a tile
+           wide (0.25 to 0.75) and 13/16 high; the leaf in the opening when shut. Then the cases below with frames
+           off: they were written for a door from wall to wall and floor to ceiling (their rays at y 1.0, over the
+           lintel). */
+        float low[3] = {12.0f, 0.5f, 11.5f}, high[3] = {12.0f, 1.0f, 11.5f}, side[3] = {12.0f, 0.5f, 11.1f};
+        UwaHit a, b, c, d;
+        const float EAST[3] = {1, 0, 0};
+        uwac_frames(1);
+        fixture(STONE, 1, WOOD);
+        int ra1 = uwac_ray(low, EAST, 16, &a);
+        fixture(STONE, 0, WOOD);
+        int rb1 = uwac_ray(low, EAST, 32, &b), rc1 = uwac_ray(high, EAST, 16, &c), rd1 = uwac_ray(side, EAST, 16, &d);
+        snprintf(why, sizeof why, "shut, through the opening: %d dist %.3f kind %d mat %d; open: %d dist %.3f kind %d; over the lintel: %d dist %.3f kind %d; the post: %d dist %.3f kind %d",
+                 ra1, a.dist, a.kind, a.mat, rb1, b.dist, b.kind, rc1, c.dist, c.kind, rd1, d.dist, d.kind);
+        printf("  %s\n", why);
+        check("door frame", ra1 == 1 && about(a.dist, 2.5f) && a.kind == UWA_DOOR && a.mat == WOOD && rb1 == 1 && about(b.dist, 15.0f) && b.kind == UWA_WALL &&
+                            rc1 == 1 && about(c.dist, 2.5f) && c.kind == UWA_WALL && rd1 == 1 && about(d.dist, 2.5f) && d.kind == UWA_WALL, why);
+        uwac_frames(0);
+    }
     fixture(STONE, 1, WOOD);
     const float E[3] = {1, 0, 0}, W[3] = {-1, 0, 0}, UP[3] = {0, 1, 0}, DOWN[3] = {0, -1, 0};
     float a_mid[3] = {12.0f, 1.0f, 12.0f};

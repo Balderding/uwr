@@ -46,6 +46,7 @@ ray tracing, upscaled textures, relief maps and the effects on. Click a picture 
   still carry the folder paths of our own machine and have to be edited first. [port/README.md](port/README.md)
   describes the Windows build, [docs/LINUX_BUILD.md](docs/LINUX_BUILD.md) the Linux one.
 - The keys are listed in [docs/KEYBINDS.md](docs/KEYBINDS.md).
+- Every row of the Esc menu (the options), what it does and how it works: [docs/ESC_MENU.md](docs/ESC_MENU.md).
 
 ## What is in it
 
@@ -56,8 +57,9 @@ ray tracing, upscaled textures, relief maps and the effects on. Click a picture 
   joint shadows (AO) and relief shadows, with maps made at each texture size.
 - **Effects.** Particles, decals, water, firelight with the eye's adaptation.
 - **Sound.** The Roland MT-32's own voices, placed in space (OpenAL Soft, headphone 3D); walls and doors muffle,
-  rooms ring by their size, sound comes round corners; ray-traced echoes through the level's shape (Steam Audio);
-  footsteps by the floor.
+  rooms ring by their size, sound comes round corners; with Steam Audio: ray-traced echoes through the level's
+  shape, occlusion and transmission by each surface's material, pathing (a hidden sound arrives along the ways
+  through the level, from the doorway it comes through) and binaural rendering; footsteps by the floor.
 - **Interface.** A full-screen 3D view with our own HUD, character sheet, inventory, automap and conversation
   screen, one smooth font, mouse-look and modern keys. The 1992 screen as it was is one menu row away.
 - **Creatures.** Optional AI levels above the original's (Original, Devious, Monstrous), by rules or by a small
@@ -77,6 +79,7 @@ ray tracing, upscaled textures, relief maps and the effects on. Click a picture 
 
 | You want to | Read |
 | --- | --- |
+| know what each option in the Esc menu does | [docs/ESC_MENU.md](docs/ESC_MENU.md) |
 | know the rules every session follows | [CLAUDE.md](CLAUDE.md), [DECOMP_RULESET.md](DECOMP_RULESET.md) |
 | see status and next steps | [NOTES.md](NOTES.md), [ROADMAP.md](ROADMAP.md) |
 | see which original routines are ported and proved | [ROUTINES.md](ROUTINES.md), [re/README.md](re/README.md) |

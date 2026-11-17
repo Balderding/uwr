@@ -85,6 +85,7 @@ void uwf_soft_menu(const UwfMenuFns *f);
 
 uint64_t uwp_ms(void);                       /* a monotonic clock, milliseconds */
 void uwp_sleep_ms(unsigned ms);
+void uwp_music_room(int ms, int high);       /* the music stream: ms held ready before the device plays; its thread above the game's (-1: as it stands) */
 long uwp_xchg(volatile long *p, long v);     /* an atomic exchange (a full barrier): the old value */
 long uwp_inc(volatile long *p);              /* an atomic increment: the new value */
 void *uwp_window(void);                      /* the window (its native handle, for the renderer), NULL none */

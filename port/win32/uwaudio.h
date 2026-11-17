@@ -36,8 +36,14 @@ const char *uwaudio_hrtf_name(void);
    uwaudio_tune reads them again and applies them at once. */
 #include "uwacoustic.h"
 void uwaudio_acoustics(const UwaTile *t, int ceil_mat, const UwaDoor *d, int nd);
+void uwaudio_things(const UwaBox *b, int n);   /* the things standing in the level (tables, pillars...) as boxes of a material */
 void uwaudio_tune(const char *datadir);   /* (also fx_footsteps: the footsteps by their floor, 1 unless written 0) */
 int  uwaudio_acoustics_on(void);
+void uwaudio_stand_down(int yes);         /* 1: the game's device is not the Roland: our renderings of its effects are not played */
+/* what our rays measure where the listener stands now: the ring time by band (seconds: low, mid, high), the room's
+   mean free path and the mean distance to the first surface (metres). 0: no level yet or the listener in rock.
+   For the menu's read-only row; the same numbers in Acoustics High, where the reverb they drive is silent. */
+int  uwaudio_room(float rt60[3], float *mfp_m, float *first_m);
 float uwaudio_acoustic_decay(void);       /* the reverb's decay time now, seconds (0: none yet; the checks) */
 
 /* the checks (tests\uwaudio_test.c): OpenAL Soft's loopback device (ALC_SOFT_loopback) in place of a sound card,

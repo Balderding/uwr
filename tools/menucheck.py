@@ -20,7 +20,7 @@ fx.WORK = os.path.join(fx.ROOT, 'work', 'menucheck')
 os.makedirs(fx.WORK, exist_ok=True)
 LONG = 'A-Very-Long-Language-Model-Name-For-The-Menu-Check-7B-Instruct-Q4_K_M'   # 69 characters
 MODEL = 'X:\\none\\' + LONG + '.gguf'
-HEADS = ['Game', 'Display', 'Graphics', 'Effects', 'Sound', 'Controls', 'AI']
+HEADS = ['Game', 'Display', 'Graphics', 'Effects', 'Sound', 'Sound tuning', 'Controls', 'AI']
 ESC, UP, DOWN, RIGHT = 0x01, 0x148, 0x150, 0x14D
 LEFT = 0x14B
 
@@ -280,7 +280,7 @@ def test_dlss():
 
 # ---- the acoustics plan's Task 4: the acoustics' rows (every part of it can be turned off from the menu) ----
 def test_acoustics_rows():
-    DIALS = ('Reverb level', 'Room size', 'Muffling by walls', 'Sound round corners')
+    DIALS = ('Reverb level', 'Map square size', 'Muffling by walls', 'Sound round corners')
     _, d0, _, _ = menu_run('ac0', tap(20000, ESC), 24000, dict(UWVIEW_MENUFONT='smooth'))
     r = row(d0, 'Acoustics')
     fx.check('acoustics rows: off by default: the Acoustics row says Off', bool(r) and r['value'] == 'Off', str(r))
@@ -289,8 +289,8 @@ def test_acoustics_rows():
     _, d1, _, _ = menu_run('ac1', tap(20000, ESC), 24000, dict(UWVIEW_MENUFONT='smooth'), None, 'fx_acoustics 1\n')
     vals = {l: (row(d1, l) or {}).get('value') for l in ('Acoustics',) + DIALS}
     print('  acoustics rows: %s' % vals)
-    fx.check('acoustics rows: on: Acoustics On, Reverb level 100%, Room size 2.4 m a tile, Muffling by walls 100%',
-             vals == {'Acoustics': 'On', 'Reverb level': '100%', 'Room size': '2.4 m a tile', 'Muffling by walls': '100%', 'Sound round corners': 'On'}, str(vals))
+    fx.check('acoustics rows: on: Acoustics On, Reverb level 100%, Map square size 2.4 m a tile, Muffling by walls 100%',
+             vals == {'Acoustics': 'On', 'Reverb level': '100%', 'Map square size': '2.4 m a tile', 'Muffling by walls': '100%', 'Sound round corners': 'On'}, str(vals))
     if not all(row(d1, l) for l in DIALS): return
     selectable = [x['i'] for x in d1['rows'] if not x['head']]
     keys, t, pos = tap(20000, ESC), 21000, selectable.index(d1['sel'])
@@ -304,7 +304,7 @@ def test_acoustics_rows():
     vals = {l: (row(d, l) or {}).get('value') for l in DIALS}
     print('  acoustics rows: stepped: %s; settings %s' % (vals, {k: v for k, v in kv.items() if k.startswith('acoustics')}))
     fx.check('acoustics rows: Reverb level stepped: 110%, acoustics_wet 110 kept', vals['Reverb level'] == '110%' and kv.get('acoustics_wet', '').strip() == '110', str(kv))
-    fx.check('acoustics rows: Room size stepped: 2.5 m a tile, acoustics_tile_m 2.5 kept', vals['Room size'] == '2.5 m a tile' and kv.get('acoustics_tile_m', '').strip() == '2.5', str(kv))
+    fx.check('acoustics rows: Map square size stepped: 2.5 m a tile, acoustics_tile_m 2.5 kept', vals['Map square size'] == '2.5 m a tile' and kv.get('acoustics_tile_m', '').strip() == '2.5', str(kv))
     fx.check('acoustics rows: Muffling by walls stepped: 90%, acoustics_occlusion 90 kept', vals['Muffling by walls'] == '90%' and kv.get('acoustics_occlusion', '').strip() == '90', str(kv))
     fx.check('acoustics rows: Sound round corners stepped: Off, acoustics_detour 0 kept', vals['Sound round corners'] == 'Off' and kv.get('acoustics_detour', '').strip() == '0', str(kv))
     fx.check('acoustics rows: nothing else was written', set(kv) <= {'fx_acoustics', 'acoustics_wet', 'acoustics_tile_m', 'acoustics_occlusion', 'acoustics_detour'}, str(sorted(kv)))

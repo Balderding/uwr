@@ -1211,6 +1211,11 @@ void render_set_shade_scale(float k) { if (k > 0.1f && k < 4) g_shade_k = k; }
 /* full bright (Shift+L, the user): every surface lit fully, at any distance; the shader is told by rtlim.w < 0 */
 static bool g_fullbright;
 void render_set_fullbright(bool on) { g_fullbright = on; }
+/* the lights' fade by distance (common.hlsli light_fade; the user, 2026-11-16): 50% at 2 tiles, 30% at 3, gone at 4,
+   for every light; off: the original's shading by distance and the inverse square, as before */
+static bool g_light_fade = true;
+void render_set_light_fade(bool on) { g_light_fade = on; }
+bool render_light_fade(void) { return g_light_fade; }
 
 /* A flame's colour from its temperature (the physics: its light is mostly soot glowing as a black body): Planck's
  * law through the CIE 1931 functions to XYZ; the eye's adaptation by a chromatic adaptation transform (CAT16, CAM16's,
@@ -1415,7 +1420,7 @@ bool render_frame(const Camera *cam, const Look *look, bool reset) {
     c->post[0] = 1.0f / R.cfg.exposure, c->post[1] = 1.0f, c->post[2] = 1.0f / (2.2f * gamma), c->post[3] = (float)R.ui_s;
     hdr_follow();   /* HDR output (render_set_hdr): the swap chain's format follows the setting and the monitor */
     c->hdr[0] = R.hdr_on ? 1.0f : 0.0f, c->hdr[1] = g_hdr_paper / 80.0f;
-    c->hdr[2] = render_hdr_peak() / g_hdr_paper, c->hdr[3] = 0;
+    c->hdr[2] = render_hdr_peak() / g_hdr_paper, c->hdr[3] = g_light_fade ? 1.0f : 0.0f;   /* (w: the lights' fade, light_fade) */
     if (c->hdr[2] < 1.0f) c->hdr[2] = 1.0f;
     /* the burning torches flicker, each in its own way */
     float secs = g_hold ? g_hold_secs : (float)(GetTickCount64() % 100000000ull) / 1000.0f;

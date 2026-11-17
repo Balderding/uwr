@@ -686,6 +686,7 @@ const char *plat_base_dir(void)
 
 uint64_t uwp_ms(void) { return ms_now(); }
 void uwp_sleep_ms(unsigned ms) { SDL_Delay(ms); }
+void uwp_music_room(int ms, int high) { (void)ms, (void)high; }   /* (Windows' waveOut path alone so far: SDL's stream is its own) */
 long uwp_xchg(volatile long *p, long v) { return __atomic_exchange_n(p, v, __ATOMIC_SEQ_CST); }
 long uwp_inc(volatile long *p) { return __atomic_add_fetch(p, 1, __ATOMIC_SEQ_CST); }
 /* the window's native handle (our renderer's V.init takes the HWND); elsewhere the SDL window */

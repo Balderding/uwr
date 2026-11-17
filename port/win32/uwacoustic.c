@@ -10,17 +10,38 @@
 #define CEIL 4.0f            /* CEIL_STEPS * STEP */
 #define EPS 1e-4f
 #define MAXDOORS 128
-#define ROOM_RAYS 64
-#define ROOM_MAX 16.0f
+/* the dials (2026-11-16, the user: every fixed number of the sound a setting; uwac_tune, from settings.txt through
+   uwaudio.c): the room probe's rays, the legs each is followed for, how far a leg may go (tiles), and how far the
+   way round a corner may be (tiles). As they were: 64, 12, 16, 12. */
+static int room_rays = 64, room_legs = 12;
+static float room_max = 16.0f, way_max = 12.0f;
 
 static UwaTile tiles[N * N];
 static int have_grid, ceil_mat_, ndoors;
 static float tile_m_ = 2.4f;
 static UwaDoor doors[MAXDOORS];
 static short door_at[N * N];   /* 1 + the first shut door of a tile, 0 none */
+/* A door's frame (2026-11-16, stage 2 of the room's contents: an open door left a hole a whole tile wide and as
+   high as the room, so two rooms joined by a door rang as one). The original's frame is a slab across the middle of
+   the tile with an opening half a tile wide and 13/16 high (src\world.c): the slab is always there for a ray, the
+   leaf in its opening when the door is shut. frame_at: 1 + the first door of a tile, shut or open. */
+static short frame_at[N * N];
+static int door_frames = 1;
+#define DOOR_LEFT 0.25f
+#define DOOR_RIGHT 0.75f
+#define DOOR_HIGH 0.8125f
 static unsigned level_gen;     /* moves whenever the tiles or the doors are given again (the way round's cache) */
+void uwac_frames(int on) { if ((on != 0) != door_frames) door_frames = on != 0, level_gen++; }
 
 void uwac_tile_m(float tile_m) { tile_m_ = tile_m > 0.1f ? tile_m : 2.4f; }
+void uwac_tune(int rays, int legs, float reach, float way)
+{
+    room_rays = rays < 8 ? 8 : rays > 1024 ? 1024 : rays;
+    room_legs = legs < 3 ? 3 : legs > 64 ? 64 : legs;       /* (three at least: the first two are not counted) */
+    room_max = reach < 2.0f ? 2.0f : reach > 64.0f ? 64.0f : reach;
+    way = way < 2.0f ? 2.0f : way > 64.0f ? 64.0f : way;
+    if (way != way_max) way_max = way, level_gen++;         /* (the way round's field made again) */
+}
 void uwac_grid(const UwaTile t[N * N], int ceil_mat, float tile_m)
 {
     memcpy(tiles, t, sizeof tiles);
@@ -29,16 +50,48 @@ void uwac_grid(const UwaTile t[N * N], int ceil_mat, float tile_m)
 }
 void uwac_doors(const UwaDoor *d, int n)
 {
-    memset(door_at, 0, sizeof door_at);
+    memset(door_at, 0, sizeof door_at), memset(frame_at, 0, sizeof frame_at);
     ndoors = 0, level_gen++;
     for (int i = 0; d && i < n && ndoors < MAXDOORS; i++) {
         if (d[i].tx < 0 || d[i].tx >= N || d[i].tz < 0 || d[i].tz >= N) continue;
         doors[ndoors] = d[i];
         if (d[i].shut && !door_at[d[i].tz * N + d[i].tx]) door_at[d[i].tz * N + d[i].tx] = (short)(ndoors + 1);
+        if (!frame_at[d[i].tz * N + d[i].tx]) frame_at[d[i].tz * N + d[i].tx] = (short)(ndoors + 1);
         ndoors++;
     }
 }
 
+/* The things standing in the level (2026-11-16, stage 2 of the room's contents: "sounds changing their form based
+   on whats in the room"): boxes round the original's 3D models, each of a material. box_hit: where a ray first
+   enters one (BIG none; a ray that starts inside one passes out of it). */
+#define MAXBOXES 256
+static UwaBox boxes[MAXBOXES];
+static int nboxes, boxes_on = 1;
+void uwac_things(const UwaBox *b, int n)
+{
+    nboxes = 0;
+    for (int i = 0; b && i < n && nboxes < MAXBOXES; i++) boxes[nboxes++] = b[i];
+    level_gen++;
+}
+void uwac_things_on(int on) { if ((on != 0) != boxes_on) boxes_on = on != 0, level_gen++; }
+static float box_hit(const float o[3], const float d[3], int *mat, int *axis)
+{
+    float best = 1e30f;
+    for (int i = 0; boxes_on && i < nboxes; i++) {
+        float t0 = 0, t1 = 1e30f;
+        int ax = -1, ok = 1;
+        for (int k = 0; k < 3 && ok; k++) {
+            if (fabsf(d[k]) < 1e-9f) { ok = o[k] >= boxes[i].lo[k] && o[k] <= boxes[i].hi[k]; continue; }
+            float a = (boxes[i].lo[k] - o[k]) / d[k], b = (boxes[i].hi[k] - o[k]) / d[k];
+            if (a > b) { float w = a; a = b, b = w; }
+            if (a > t0) t0 = a, ax = k;
+            if (b < t1) t1 = b;
+            ok = t0 <= t1;
+        }
+        if (ok && ax >= 0 && t0 > 1e-4f && t0 < best) best = t0, *mat = boxes[i].mat, *axis = ax;
+    }
+    return best;
+}
 static const UwaTile *tile_at(int x, int z) { return x < 0 || x >= N || z < 0 || z >= N ? NULL : &tiles[z * N + x]; }
 
 /* a diagonal tile's wall as a line: > 0 in its open half, < 0 in its rock half (lx, lz the place in the tile);
@@ -110,11 +163,14 @@ int uwac_ray(const float o[3], const float dir[3], float max, UwaHit *hit)
     float nx = fabsf(dx) > 1e-9f ? ((float)(tx + (dx > 0)) - o[0]) / dx : BIG, ax = fabsf(dx) > 1e-9f ? fabsf(1.0f / dx) : BIG;
     float nz = fabsf(dz) > 1e-9f ? ((float)(tz + (dz > 0)) - o[2]) / dz : BIG, az = fabsf(dz) > 1e-9f ? fabsf(1.0f / dz) : BIG;
     float t = 0;
+    const float dn[3] = {dx, dy, dz};
+    int box_mat = 0, box_axis = 0;
+    const float t_box = box_hit(o, dn, &box_mat, &box_axis);   /* the first thing standing in the ray's way */
     for (int guard = 0; guard < 4 * N; guard++) {
         const UwaTile *T = tile_at(tx, tz);   /* never NULL here: the walk stops on leaving the grid */
         float t_out = nx < nz ? nx : nz, t1 = t_out < max ? t_out : max;
         float best = BIG;
-        int kind = -1, mat = 0;
+        int kind = -1, mat = 0, door_plane = 0;   /* door_plane: the hit is on a door's slab (1: its plane is z, 2: x) */
 #define LX(s) (o[0] + dx * (s) - (float)tx)
 #define LZ(s) (o[2] + dz * (s) - (float)tz)
 #define Y(s) (o[1] + dy * (s))
@@ -139,21 +195,34 @@ int uwac_ray(const float o[3], const float dir[3], float max, UwaHit *hit)
             }
         }
         /* a shut door across the middle of the tile */
-        if (door_at[tz * N + tx]) {
-            const UwaDoor *d = &doors[door_at[tz * N + tx] - 1];
+        if (door_frames ? frame_at[tz * N + tx] : door_at[tz * N + tx]) {
+            const UwaDoor *d = &doors[(door_frames ? frame_at[tz * N + tx] : door_at[tz * N + tx]) - 1];
             int span_x = (d->heading & 2) == 0;   /* heading 0 / 4: the door spans x, so its plane is z = tz + 0.5 */
             float den = span_x ? dz : dx, s = BIG;
             if (fabsf(den) > 1e-9f) s = span_x ? ((float)tz + 0.5f - o[2]) / dz : ((float)tx + 0.5f - o[0]) / dx;
-            if (s > t + EPS && s <= t1 && s < best) best = s, kind = UWA_DOOR, mat = d->mat;
+            if (s > t + EPS && s <= t1 && s < best) {
+                /* with frames: the slab round the opening is the wall's stone; the opening holds the leaf when shut */
+                float u = span_x ? LX(s) : LZ(s), up = Y(s) - (float)T->height * STEP;
+                int opening = !door_frames || (u >= DOOR_LEFT && u <= DOOR_RIGHT && up <= DOOR_HIGH);
+                if (!opening) best = s, kind = UWA_WALL, mat = T->wall_mat, door_plane = span_x ? 1 : 2;
+                else if (d->shut) best = s, kind = UWA_DOOR, mat = d->mat, door_plane = span_x ? 1 : 2;
+            }
+        }
+        if (t_box <= t1 && t_box < best) {   /* a thing in this tile's stretch, before anything of the tile's own */
+            if (hit) {
+                hit->dist = t_box, hit->kind = UWA_WALL, hit->mat = box_mat;
+                set_n(hit, box_axis == 0 ? (dx > 0 ? -1.0f : 1.0f) : 0, box_axis == 1 ? (dy > 0 ? -1.0f : 1.0f) : 0, box_axis == 2 ? (dz > 0 ? -1.0f : 1.0f) : 0);
+            }
+            return 1;
         }
         if (kind >= 0) {
             if (hit) {
                 hit->dist = best, hit->kind = kind, hit->mat = mat;
-                if (kind == UWA_FLOOR) floor_n(T, hit);
+                if (door_plane == 1) set_n(hit, 0, 0, dz > 0 ? -1.0f : 1.0f);
+                else if (door_plane == 2) set_n(hit, dx > 0 ? -1.0f : 1.0f, 0, 0);
+                else if (kind == UWA_FLOOR) floor_n(T, hit);
                 else if (kind == UWA_CEILING) set_n(hit, 0, -1, 0);
-                else if (kind == UWA_WALL) diag_n(T, hit);
-                else if ((doors[door_at[tz * N + tx] - 1].heading & 2) == 0) set_n(hit, 0, 0, dz > 0 ? -1.0f : 1.0f);
-                else set_n(hit, dx > 0 ? -1.0f : 1.0f, 0, 0);
+                else diag_n(T, hit);
             }
             return 1;
         }
@@ -184,7 +253,6 @@ int uwac_ray(const float o[3], const float dir[3], float max, UwaHit *hit)
     return 0;
 }
 
-#define ROOM_LEGS 12
 #define ROOM_SKIP 2       /* legs not counted in the mean free path: those still near where the rays began */
 
 /* a number in (0, 1) from two integers and a salt (lowbias32's mixing) */
@@ -211,24 +279,24 @@ int uwac_room(const float at[3], UwaRoom *out)
     if (!open_air(at)) return 0;
     double first = 0, legs = 0, ab[3] = {0, 0, 0};
     int hits = 0, nlegs = 0, nsurf = 0;
-    for (int i = 0; i < ROOM_RAYS; i++) {
-        /* a Fibonacci sphere: the same 64 directions every time */
-        float y = 1.0f - 2.0f * ((float)i + 0.5f) / ROOM_RAYS, r = sqrtf(1.0f - y * y), phi = (float)i * 2.39996323f;
+    for (int i = 0; i < room_rays; i++) {
+        /* a Fibonacci sphere: the same directions every time */
+        float y = 1.0f - 2.0f * ((float)i + 0.5f) / (float)room_rays, r = sqrtf(1.0f - y * y), phi = (float)i * 2.39996323f;
         float d[3] = {cosf(phi) * r, y, sinf(phi) * r}, o[3] = {at[0], at[1], at[2]};
-        for (int k = 0; k < ROOM_LEGS; k++) {
+        for (int k = 0; k < room_legs; k++) {
             UwaHit h;
             const UwaMaterial *m = NULL;
-            int got = uwac_ray(o, d, ROOM_MAX, &h);
+            int got = uwac_ray(o, d, room_max, &h);
             if (got < 0) break;                       /* (a bounce that ended in a corner's crack: the ray stops there) */
             if (got == 1) m = uwacmat_get(h.mat);
-            else h.dist = ROOM_MAX;                   /* nothing within 16 tiles: the sound left */
+            else h.dist = room_max;                   /* nothing within the reach (16 tiles): the sound left */
             if (k == 0) first += h.dist, hits += got;
             if (k >= ROOM_SKIP) legs += h.dist, nlegs++;
             for (int b = 0; b < 3; b++) ab[b] += m ? m->absorb[b] : 1.0;
             nsurf++;
             if (got != 1) break;
             /* on from just off the surface, scattered by a hash of the ray and the leg (the same every time). An R2
-               sequence over i * ROOM_LEGS + k (until 2026-11-15) gave neighbouring rays nearly the same scatter leg by
+               sequence over i * 12 + k (until 2026-11-15) gave neighbouring rays nearly the same scatter leg by
                leg, and the mean free path came out 16 % short in a closed box (probe: work\rt60fix\probe.c) */
             float u1 = hash01((unsigned)i, (unsigned)k, 0x68e31da4u), u2 = hash01((unsigned)i, (unsigned)k, 0xb5297a4du);
             for (int c = 0; c < 3; c++) o[c] += d[c] * h.dist + h.n[c] * 2e-3f;
@@ -236,7 +304,7 @@ int uwac_room(const float at[3], UwaRoom *out)
         }
     }
     if (out) {
-        out->hits = hits, out->first_m = (float)(first / ROOM_RAYS) * tile_m_;
+        out->hits = hits, out->first_m = (float)(first / room_rays) * tile_m_;
         out->mfp_m = nlegs ? (float)(legs / nlegs) * tile_m_ : out->first_m;
         for (int b = 0; b < 3; b++) {
             double a = nsurf ? ab[b] / nsurf : 1.0, t = a > 1e-6 ? 0.161 * (out->mfp_m / 4.0) / a : 10.0;
@@ -264,9 +332,20 @@ static void path_ray(const float to[3], const float p[3], int stx, int stz, floa
         int r = uwac_ray(o, d, left, &h);
         if (r == 0) return;
         const UwaMaterial *m = r == 1 && h.kind == UWA_DOOR ? uwacmat_get(h.mat) : NULL;
-        if (!m) { g[0] = g[1] = g[2] = 0; return; }           /* rock, a floor, the ceiling (or a door of no material) */
         float adv = h.dist + 2e-3f, len = left + 2e-3f;        /* on from just past the door */
-        int own = (int)floorf(o[0] + d[0] / len * h.dist) == stx && (int)floorf(o[2] + d[2] / len * h.dist) == stz;
+        float hx = o[0] + d[0] / len * h.dist, hz = o[2] + d[2] / len * h.dist;
+        int own = (int)floorf(hx) == stx && (int)floorf(hz) == stz;
+        /* (the frame of the source's own door, 2026-11-16: the slab's stone round the opening is that door's plane
+           too; a hit on the middle plane of the source's tile, where a door stands, is passed like its leaf) */
+        int own_frame = r == 1 && h.kind == UWA_WALL && own && door_frames && stx >= 0 && stx < N && stz >= 0 && stz < N && frame_at[stz * N + stx] &&
+                        (fabsf(hx - (float)stx - 0.5f) < 2e-3f || fabsf(hz - (float)stz - 0.5f) < 2e-3f);
+        if (own_frame) {
+            for (int i = 0; i < 3; i++) o[i] += d[i] / len * adv;
+            d[0] = p[0] - o[0], d[1] = p[1] - o[1], d[2] = p[2] - o[2];
+            left -= adv;
+            continue;
+        }
+        if (!m) { g[0] = g[1] = g[2] = 0; return; }           /* rock, a floor, the ceiling (or a door of no material) */
         for (int b = 0; b < 3 && !own; b++) g[b] *= sqrtf(m->transmit[b]);
         for (int i = 0; i < 3; i++) o[i] += d[i] / len * adv;
         d[0] = p[0] - o[0], d[1] = p[1] - o[1], d[2] = p[2] - o[2];
@@ -307,8 +386,19 @@ int uwac_path(const float from[3], const float to[3], float gain[3])
     return 1;
 }
 
+/* a thing's place is its foot: lifted off the floor there and kept under the ceiling, as uwac_path does for its rays
+   (2026-11-16: Acoustics High was given the foot itself, on the floor's own plane) */
+void uwac_lift(float p[3])
+{
+    int tx = (int)floorf(p[0]), tz = (int)floorf(p[2]);
+    const UwaTile *t = tile_at(tx, tz);
+    if (!have_grid || !t || t->type == UWAT_SOLID) return;
+    float f = floor_y(t, p[0] - (float)tx, p[2] - (float)tz);
+    if (p[1] < f + 0.3f) p[1] = f + 0.3f;
+    if (p[1] > CEIL - 0.1f) p[1] = CEIL - 0.1f;
+}
+
 /* --- Task 5: the way round (a sound that rock hides from the listener, heard along the way a person would walk) --- */
-#define WAY_MAX 12.0f
 #define WAY_STEP_UP 4          /* height steps: a floor this much above the one the sound comes from is a wall to it */
 static float way_cost[N * N];  /* the walked tiles from the listener's tile to each (WAY_NONE: not reached) */
 static short way_from[N * N];  /* the tile before it on the way from the listener (-1: the listener's own) */
@@ -360,7 +450,7 @@ static void way_field(int ltx, int ltz)
                     if (tiles[s1].type == UWAT_SOLID || tiles[s2].type == UWAT_SOLID || door_at[s1] || door_at[s2]) continue;
                 }
                 float nc = c + (dx && dz ? 1.41421356f : 1.0f);
-                if (nc > WAY_MAX || nc >= way_cost[n]) continue;
+                if (nc > way_max || nc >= way_cost[n]) continue;
                 way_cost[n] = nc, way_from[n] = (short)t;
                 int i = nh++;
                 for (; i > 0 && hkey[(i - 1) / 2] > nc; i = (i - 1) / 2) heap[i] = heap[(i - 1) / 2], hkey[i] = hkey[(i - 1) / 2];

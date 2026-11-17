@@ -60,6 +60,44 @@ static void menu_fit_orig(const char *v, int room, char *out, int n)
     for (int keep = len - 1; ui_text_width(FONT_SMALL, out) > room && keep >= 4; keep--)
         snprintf(out, (size_t)n, "%.*s..%s", (keep + 1) / 2, u, u + len - keep / 2);
 }
+/* what a row does, broken at its spaces into up to max lines of room pixels (smooth: the face at em, window
+ * pixels; else the game's capitals, overlay pixels); a last line still too long ends in "...". Returns the lines.
+ * (2026-11-16: the one line a hint had was cut in its middle for 29 of the rows.) */
+#define FOOT_LINES 3
+static int menu_wrap(const char *v, bool smooth, int em, int room, char lines[][224], int max)
+{
+    char u[224], t[224];
+    int n = 0, k = 0;
+    for (; v[k] && k < 223; k++) u[k] = (char)(!smooth && v[k] >= 'a' && v[k] <= 'z' ? v[k] - 32 : v[k]);
+    u[k] = 0;
+#define WRAP_W(T) (smooth ? st_width(ST_REGULAR, em, T) : ui_text_width(FONT_SMALL, T))
+    for (const char *p = u; n < max;) {
+        while (*p == ' ') p++;
+        if (!*p) break;
+        if (n == max - 1) {   /* the last line takes the rest, its end left out if it must be */
+            int len = (int)strlen(p);
+            snprintf(lines[n], 224, "%s", p);
+            while (WRAP_W(lines[n]) > room && len > 4) snprintf(lines[n], 224, "%.*s...", --len, p);
+            n++;
+            break;
+        }
+        int good = 0;
+        for (int at = 0;;) {
+            int e = at;
+            while (p[e] && p[e] != ' ') e++;
+            snprintf(t, sizeof t, "%.*s", e, p);
+            if (good && WRAP_W(t) > room) break;
+            good = e;
+            if (!p[e]) break;
+            for (at = e; p[at] == ' ';) at++;
+            if (!p[at]) break;
+        }
+        snprintf(lines[n++], 224, "%.*s", good, p);
+        p += good;
+    }
+#undef WRAP_W
+    return n;
+}
 static void md_blend(unsigned *d, int ui_w, int ui_h);
 
 /* uw.exe's options menu drawn (its look: the game dimmed, the leather, a button a row, the values in gold on the
@@ -67,8 +105,8 @@ static void md_blend(unsigned *d, int ui_w, int ui_h);
  * 2026-11-14 (the user: the font was hard to read and the language model's name was cut): the text is a smooth font
  * at the window's own resolution, in the letters' own case (smoothtext.c; settings.txt menu_font original brings the
  * game's small capitals back); a label beginning with '#' is a heading (gold, no button, never chosen); a value too
- * long for its row is drawn smaller, then with its middle left out; under the rows two lines for the row chosen or
- * under the pointer: its value in full and what the row does (hints[r], NULL or "" none).
+ * long for its row is drawn smaller, then with its middle left out; under the rows the foot for the row chosen or
+ * under the pointer: its value in full, and what the row does (hints[r], NULL or "" none) on up to three lines.
  * UWVIEW_MENU_DUMP=FILE (the checks): what was drawn, a line a row. */
 int md_rows(unsigned char *ui_buf, int ui_w, int ui_h, bool smooth, const char *title, const char *const *labels,
             const char *const *values, const char *const *hints, int n, int sel, int mx, int my)
@@ -77,7 +115,7 @@ int md_rows(unsigned char *ui_buf, int ui_w, int ui_h, bool smooth, const char *
     ui_set_scale(3);
     Overlay *o = ui_overlay();
     ui_clear();
-    const int ROW = 15, FOOT = 27;
+    const int ROW = 15, FOOT = 16 + FOOT_LINES * 10;   /* (27 until 2026-11-16: one line for the hint, now three) */
     const int s = o->scale;
     /* 300 wide (216 until 2026-11-14; never wider than the window); as many rows as fit (the rest scrolled: the
      * wheel, the scrollbar on the right, and the chosen row always in view) */
@@ -127,9 +165,9 @@ int md_rows(unsigned char *ui_buf, int ui_w, int ui_h, bool smooth, const char *
     int rw = bar ? w - 8 - 10 : w - 8;   /* the rows' width: room for the scrollbar */
     /* what each row draws (every row, shown or not: the checks read them all): the value as drawn, the widths in
      * window pixels, the value's size (smooth) */
-    static struct { char drawn[224]; int vw, room, lw, em; } M[96];
+    static struct { char drawn[224]; int vw, room, lw, em; } M[160];   /* (160: uwfront.c's MENU_MAX; 96 until 2026-11-16, the sound's dials) */
     const int em = 14 * s * 6 / 10, em_foot = 22 * s / 3;
-    for (int r = 0; r < n && r < 96; r++) {
+    for (int r = 0; r < n && r < 160; r++) {
         const char *lab = labels[r], *val = values && values[r] ? values[r] : "";
         bool head = lab[0] == '#';
         if (head) lab++;
@@ -148,7 +186,7 @@ int md_rows(unsigned char *ui_buf, int ui_w, int ui_h, bool smooth, const char *
                                M[r].vw = ui_text_width(FONT_SMALL, M[r].drawn) * s;
         }
     }
-    for (int r = menu_top; r < menu_top + vis && r < n && r < 96; r++) {
+    for (int r = menu_top; r < menu_top + vis && r < n && r < 160; r++) {
         int ry = y + 22 + (r - menu_top) * ROW;
         bool head = labels[r][0] == '#';
         if (head) {
@@ -171,8 +209,8 @@ int md_rows(unsigned char *ui_buf, int ui_w, int ui_h, bool smooth, const char *
     }
     /* the foot: the row chosen or under the pointer: its value in full, and what it does */
     int fr = hit >= 0 ? hit : sel, fy = y + 22 + vis * ROW + 3;
-    char foot1[224] = "", foot2[224] = "";
-    int fe1 = em_foot, fe2 = em_foot;
+    char foot1[224] = "", foot2[FOOT_LINES][224];
+    int fe1 = em_foot, fe2 = em_foot * 10 / 11, nf2 = 0;
     ui_fill(x + 6, fy - 1, w - 12, 1, 120, 96, 40, 160);
     if (fr >= 0 && fr < n && labels[fr][0] != '#') {
         char t[224];
@@ -181,11 +219,11 @@ int md_rows(unsigned char *ui_buf, int ui_w, int ui_h, bool smooth, const char *
         else snprintf(t, sizeof t, "%s", labels[fr]);
         if (smooth) {
             menu_fit(t, ST_REGULAR, em_foot, (w - 16) * s, foot1, sizeof foot1, &fe1);
-            menu_fit(hint, ST_REGULAR, em_foot, (w - 16) * s, foot2, sizeof foot2, &fe2);
+            nf2 = menu_wrap(hint, true, fe2, (w - 16) * s, foot2, FOOT_LINES);
         } else {
-            menu_fit_orig(t, w - 16, foot1, sizeof foot1), menu_fit_orig(hint, w - 16, foot2, sizeof foot2);
+            menu_fit_orig(t, w - 16, foot1, sizeof foot1), nf2 = menu_wrap(hint, false, 0, w - 16, foot2, FOOT_LINES);
             ui_text(FONT_SMALL, foot1, x + 8, fy + 4, 255, 220, 60);
-            ui_text(FONT_SMALL, foot2, x + 8, fy + 15, 207, 207, 223);
+            for (int i = 0; i < nf2; i++) ui_text(FONT_SMALL, foot2[i], x + 8, fy + 15 + i * 10, 207, 207, 223);
         }
     }
     unsigned *d = (unsigned *)ui_buf;
@@ -212,7 +250,7 @@ int md_rows(unsigned char *ui_buf, int ui_w, int ui_h, bool smooth, const char *
 #define SMT(X, Y, FACE, EM, T, RGB) (st_draw(d, ui_w, ui_h, (X) + 2, (Y) + 2, FACE, EM, T, 0x000000), st_draw(d, ui_w, ui_h, X, Y, FACE, EM, T, RGB))
         int et = em * 5 / 4, hh = st_height(ST_REGULAR, em);
         SMT(x * s + w * s / 2 - st_width(ST_SEMIBOLD, et, ttl) / 2, y * s + (22 * s - st_height(ST_SEMIBOLD, et)) / 2, ST_SEMIBOLD, et, ttl, 0xE8BE28);
-        for (int r = menu_top; r < menu_top + vis && r < n && r < 96; r++) {
+        for (int r = menu_top; r < menu_top + vis && r < n && r < 160; r++) {
             int ry = (y + 22 + (r - menu_top) * ROW) * s, ty2 = ry + (14 * s - hh) / 2;
             if (labels[r][0] == '#') { SMT((x + 7) * s, ty2 - s, ST_SEMIBOLD, em, labels[r] + 1, 0xE8BE28); continue; }
             SMT((x + 9) * s, ty2, ST_SEMIBOLD, em, labels[r], 0xE4E4F0);
@@ -220,7 +258,7 @@ int md_rows(unsigned char *ui_buf, int ui_w, int ui_h, bool smooth, const char *
                 SMT((x + 4 + rw - 6) * s - M[r].vw, ry + (14 * s - st_height(ST_REGULAR, M[r].em)) / 2, ST_REGULAR, M[r].em, M[r].drawn, 0xFFDC3C);
         }
         if (foot1[0]) SMT((x + 8) * s, (fy + 2) * s, ST_REGULAR, fe1, foot1, 0xFFDC3C);
-        if (foot2[0]) SMT((x + 8) * s, (fy + 13) * s, ST_REGULAR, fe2, foot2, 0xD8D8E4);
+        for (int i = 0; i < nf2; i++) SMT((x + 8) * s, (fy + 13 + i * 10) * s, ST_REGULAR, fe2, foot2[i], 0xD8D8E4);
 #undef SMT
     }
     if (mx >= 0 && my >= 0) {   /* the game's cursor (the game is paused under the menu), over the text */
@@ -233,7 +271,7 @@ int md_rows(unsigned char *ui_buf, int ui_w, int ui_h, bool smooth, const char *
         static unsigned last;
         if (dump && *dump) {
             unsigned hsh = 2166136261u ^ (unsigned)sel ^ (unsigned)menu_top << 8 ^ (unsigned)n << 16 ^ (unsigned)smooth << 30;
-            for (int r = 0; r < n && r < 96; r++) {
+            for (int r = 0; r < n && r < 160; r++) {
                 for (const char *c = labels[r]; *c; c++) hsh = (hsh ^ (unsigned char)*c) * 16777619u;
                 for (const char *c = values && values[r] ? values[r] : ""; *c; c++) hsh = (hsh ^ (unsigned char)*c) * 16777619u;
             }
@@ -246,10 +284,12 @@ int md_rows(unsigned char *ui_buf, int ui_w, int ui_h, bool smooth, const char *
                 if (f) {
                     fprintf(f, "panel\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%s\t%s\n", x * s, y * s, w * s, h * s, ui_w, ui_h,
                             smooth ? "smooth" : "original", smooth ? st_font_name() : "FONT_SMALL", title);
-                    for (int r = 0; r < n && r < 96; r++)
+                    for (int r = 0; r < n && r < 160; r++)
                         fprintf(f, "row\t%d\t%d\t%d\t%s\t%s\t%s\t%d\t%d\t%d\n", r, labels[r][0] == '#', r >= menu_top && r < menu_top + vis,
                                 labels[r] + (labels[r][0] == '#'), values && values[r] ? values[r] : "", M[r].drawn, M[r].vw, M[r].room, M[r].lw);
-                    fprintf(f, "sel\t%d\nfoot1\t%s\nfoot2\t%s\n", sel, foot1, foot2);
+                    fprintf(f, "sel\t%d\nfoot1\t%s\nfoot2\t", sel, foot1);
+                    for (int i = 0; i < nf2; i++) fprintf(f, "%s%s", i ? " | " : "", foot2[i]);
+                    fprintf(f, "\n");
                     fclose(f);
                 }
             }

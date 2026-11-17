@@ -926,6 +926,10 @@ void render_set_sprites(const Vertex *v, int n)
     memcpy(V.sprite_vb.ptr, v, sizeof(Vertex) * (size_t)V.nsprites);
 }
 
+/* the lights' fade by distance (render.c's twin; common.hlsli light_fade) */
+static bool g_light_fade = true;
+void render_set_light_fade(bool on) { g_light_fade = on; }
+bool render_light_fade(void) { return g_light_fade; }
 void render_set_torch(bool on, const float pos[3], const float color[3], float intensity, float range)
 {
     if (!V.up) return;
@@ -1166,7 +1170,7 @@ bool render_frame(const Camera *cam, const Look *look, bool reset)
     c->post[0] = 1.0f / V.cfg.exposure, c->post[1] = 1.0f, c->post[2] = 1.0f / (2.2f * gamma), c->post[3] = (float)V.ui_s;
     hdr_follow();   /* HDR output (render_set_hdr): the swap chain's format follows the setting and the monitor */
     c->hdr[0] = H.on ? 1.0f : 0.0f, c->hdr[1] = g_hdr_paper / 80.0f;
-    c->hdr[2] = render_hdr_peak() / g_hdr_paper, c->hdr[3] = 0;
+    c->hdr[2] = render_hdr_peak() / g_hdr_paper, c->hdr[3] = g_light_fade ? 1.0f : 0.0f;   /* (w: the lights' fade, light_fade) */
     if (c->hdr[2] < 1.0f) c->hdr[2] = 1.0f;
     /* the burning torches flicker, each in its own way */
     float secs = g_hold ? g_hold_secs : (float)(rv_ticks() % 100000000ull) / 1000.0f;

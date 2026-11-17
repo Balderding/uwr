@@ -67,6 +67,8 @@ void render_set_ui(const u8 *rgba);
 void render_set_torch(bool on, const float pos[3], const float color[3], float intensity, float range);
 void render_set_shade_scale(float k);
 void render_set_fullbright(bool on);
+void render_set_light_fade(bool on);   /* the lights' fade by distance: 50% at 2 tiles, 30% at 3, gone at 4 (on) */
+bool render_light_fade(void);
 void render_set_object_shadows(bool on);
 bool render_object_shadows(void);
 void render_blackbody(float kelvin, float rgb[3]);

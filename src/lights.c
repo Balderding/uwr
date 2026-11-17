@@ -87,7 +87,7 @@ void lights_tiles(const Level *lv, const Light *l, int n, u32 *out) {
             }
             for (int i = 0; i < n; i++) {
                 float dx = l[i].pos[0] - (x + 0.5f), dz = l[i].pos[2] - (z + 0.5f);
-                float d2 = dx * dx + dz * dz, reach = l[i].range + 0.75f;
+                float d2 = dx * dx + dz * dz, reach = l[i].range * 1.3334f + 0.75f;   /* (the lights' fade ends at 4/3 of the range: common.hlsli light_fade) */
                 if (d2 > reach * reach) continue;
                 bool seen = false;
                 for (int p = 0; p < 3 && !seen; p++) seen = clear_line(lv, l[i].pos, pts[p]);

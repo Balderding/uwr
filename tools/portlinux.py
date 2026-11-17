@@ -113,6 +113,12 @@ def port(cfg):
         p.runtime_exclude = list(p.runtime_exclude) + [os.path.join(p.runtime_port, 'platform', 'sdl3', 'plat_sdl3.c')]
         if os.path.join(p.dir, 'platform', 'sdl3') + os.sep not in p.optimise:
             p.optimise.append(os.path.join(p.dir, 'platform', 'sdl3') + os.sep)
+    if not PLAIN:
+        # (2026-11-16) our own copies of two of the runtime's files, kept in underworld-exhumed\uw1\src\port
+        # (sound\ail.c, sys\pit.c: the music plays on while our menu holds the game), built in their place;
+        # Exhume's clone stays as upstream has it
+        p.runtime_exclude = list(p.runtime_exclude) + [os.path.join(p.runtime_port, 'sound', 'ail.c'),
+                                                       os.path.join(p.runtime_port, 'sys', 'pit.c')]
     return p
 
 

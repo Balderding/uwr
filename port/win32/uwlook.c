@@ -172,6 +172,7 @@ void uwl_info(UwlInfo *out)
    alone). The original's pick reads its own picture of the view, which at a steep look (wide-pitch) is not ours, and
    finds the nearest thing's colour only, so a bloodstain over a sack hides the sack: uwl_pick takes ours. */
 static int targets[UWL_TARGETS], ntargets = -1;
+int uwl_door_targets = 1;   /* the Esc menu's Easier door targeting (uwfront.c): a door by its drawn frame and leaf, last */
 struct Object far *uwl_pick(void);
 #ifndef UWPORT_PLAIN
 extern struct Object far *(*port_pick_hook)(void);   /* uw-new's port/ui/keys.c: q, e and the left button's n take it */
@@ -213,6 +214,7 @@ struct Object far *uwl_pick(void)
     for (k = 0; k < n; k++) {
         int idx = t[k] & 1023, tile = (t[k] >> 10) & 4095;
         const struct ComObj *co;
+        if (t[k] < 0) continue;                    /* a door by its drawn frame and leaf: the last resort, below */
         if ((obj = on_tile(idx, tile)) == 0) continue;
         if (best >= 0 && (t[k] >> 22) - (t[best] >> 22) > 8) break;   /* (bits 22..: the distance, eighths of a tile) */
         co = &ComObjData[OBJ_ITEM(obj)];
@@ -230,6 +232,22 @@ struct Object far *uwl_pick(void)
     /* the original's pick of a thing ours draws (an object lying about, a creature) that ours did not find there: its
        picture is elsewhere than ours (the steep look); the texture behind it is not known either */
     if (obj != 0 && n >= 0 && OBJ_ITEM(obj) < 0x140) obj = 0;
+    /* nothing of ours and no object of the original's there: the door whose frame or leaf our display draws at the
+       point (uwv_pick's bit 31, nearest first), when the Esc menu's Easier door targeting is on. The original's pick
+       frame has the leaf alone, in the object's colour, and the frame in the wall's: the frame, and an open leaf seen
+       edge-on, could not be pointed at. What is done with the door (player_3duse, its reach) is the original's. */
+    if (obj == 0 && uwl_door_targets)
+        for (k = 0; k < n; k++) {
+            int item;
+            if (t[k] >= 0 || (obj = on_tile(t[k] & 1023, (t[k] >> 10) & 4095)) == 0) continue;
+            item = OBJ_ITEM(obj);
+            if ((item < 0x140 || item > 0x14F || (item & 7) == 7) && item != 0x1CF) { obj = 0; continue; }
+            PickMap = mlowptr + ((t[k] >> 10) & 4095);
+            releasePtr = &PickMap->objects;
+            releaseable = 0;
+            pTxtId = 0;
+            break;
+        }
     return obj;
 }
 

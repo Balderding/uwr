@@ -137,10 +137,23 @@ static const float TORCH_REACH = 3.0;
 // every light reaches 10% less far (the user, 2026-11-16): the player's light here (its level's reach x this), the
 // placed and burning lights where their range is handed over (render.h's RENDER_LIGHT_REACH, the same number)
 static const float LIGHT_REACH = 0.9;
+// The lights' fade by distance (the user, 2026-11-16: "at 2 tiles the rays go 50% and 3 tiles they're 30% and fade
+// off from there 1 tile to 0 ... for all of the light sources"): on the screen 100% at the light, 50% at 2 tiles, 30%
+// at 3, nothing from 4, straight lines between, for a light of 3 tiles' reach (the player's at the lower light
+// levels); a light of more reach has the same curve stretched to it (x = distance x 3 / its reach). It takes the place
+// of the original's shading by distance for the player's light and of the inverse square for the others, and of
+// LIGHT_REACH's cut (the fade ends at 4/3 of the reach). hdrout.w > 0.5: on (settings light_fade, the Esc menu's
+// Light fade row); off: everything as before.
+static const float FADE_END = 4.0 / 3.0;   // where the fade is over, in reaches
+static const float FADE_LEVEL = 1.16;      // a placed light at a tile as bright as the inverse square had it
+float light_fade(float x) { return x < 2 ? 1 - 0.25 * x : x < 3 ? 0.5 - 0.2 * (x - 2) : saturate(0.3 * (4 - x)); }
+// how far inside a light's reach (1 well inside, 0 where its light is gone): full to where the fade is at 30%
+float fade_window(float x) { return saturate(light_fade(x) / 0.3); }
 float original_light(float d3, float dh, uint level) {
     // level 0, no light carried: the player's eyes (the user, 2026-11-11), a fifth shorter: 2.4 tiles, not 3
     if ((level & 7) == 0) { d3 *= 1.25; dh *= 1.25; }
     float4 s = SHADES[level & 7];
+    if (hdrout.w > 0.5) return light_fade(dh * 3.0 / s.w);   // (the user's fade: the screen's share, raised by the caller)
     float R = s.w * LIGHT_REACH;   // the original's reach for the light level (SHADES.DAT's curvrad: 3 3 4 4 5 6 7 7 tiles; a torch 4)
     if (dh >= R) return 0;
     float shade = min(max(0, 8 * d3 * s.x / 64 + s.z) + s.y, 15);
@@ -201,7 +214,9 @@ float3 light_term(uint k, float3 p, float3 Ng, float3 N, out float3 L, out float
         float ng = dot(Ng, L), lean = ng > 0.15 ? clamp(saturate(dot(N, L)) / ng, 0, 1.6) : 1;
         return b * lean * pr.w * torchc.rgb;   // pr.w: the flame's flicker (uwview.c); torchc: its colour (black body)
     }
-    if (d > pr.w) return 0;
+    const bool fade = hdrout.w > 0.5;
+    const float Rf = max(pr.w / LIGHT_REACH, 1e-3);   // the light's own range (pr.w is it x LIGHT_REACH)
+    if (fade ? d >= Rf * FADE_END : d > pr.w) return 0;
     float w = saturate(1 - pow(d / pr.w, 4));
     float soft = k == 0 ? 0.6 : 0.15, scale = k == 0 ? (1 + 0.6) / (1 + 0.15) : 1;
     if (pj < 4) {   // a flame: the picked puff's light, cosine and inverse square from where it is, times the sum
@@ -209,9 +224,11 @@ float3 light_term(uint k, float3 p, float3 Ng, float3 N, out float3 L, out float
         float dj2 = dot(Lj, Lj);
         L = Lj * rsqrt(max(dj2, 1e-8));
         if (dot(Ng, L) <= 0) return 0;
+        if (fade) return lights[k].pcol[pj].rgb * W * saturate(dot(N, L)) * light_fade(sqrt(dj2) * 3.0 / Rf) * FADE_LEVEL;
         return lights[k].pcol[pj].rgb * W * saturate(dot(N, L)) * w * w * scale / (dj2 + soft);
     }
     if (dot(Ng, L) <= 0) return 0;
+    if (fade) return lights[k].col.rgb * saturate(dot(N, L)) * light_fade(d * 3.0 / Rf) * FADE_LEVEL;
     return lights[k].col.rgb * saturate(dot(N, L)) * w * w * scale / (d2 + soft);
 }
 
@@ -227,11 +244,13 @@ float reach_window(float3 p) {
         if (k == 0 && lights[0].col.w > 1.5 && rtlim.w < 0) { r = 1; continue; }   // full bright: everywhere
         if (k == 0 && lights[0].col.w > 1.5) {   // the player's light: 3 tiles across the floor from the eye, as it lights
             float R = SHADES[(uint)(lights[0].col.w - 2) & 7].w * LIGHT_REACH;   // its level's reach, as it lights
-            r = max(r, 1 - smoothstep(R - 0.75, R, length(p.xz - lights[0].col.xz)));
+            if (hdrout.w > 0.5) r = max(r, fade_window(length(p.xz - lights[0].col.xz) * 3.0 * LIGHT_REACH / R));
+            else r = max(r, 1 - smoothstep(R - 0.75, R, length(p.xz - lights[0].col.xz)));
             continue;
         }
         float d = length(lights[k].pr.xyz - p) / max(lights[k].pr.w, 1e-3);
-        r = max(r, saturate(1 - d * d * d * d));
+        if (hdrout.w > 0.5) r = max(r, fade_window(d * 3.0 * LIGHT_REACH));   // (pr.w is the range x LIGHT_REACH)
+        else r = max(r, saturate(1 - d * d * d * d));
     }
     return r;
 }

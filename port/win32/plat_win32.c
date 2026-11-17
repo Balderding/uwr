@@ -111,6 +111,19 @@ static DWORD WINAPI thread_start(LPVOID p)
     free(p);
     return (DWORD)a.fn(a.arg);
 }
+/* The music stream's room (the Esc menu's "Music buffer" and "Music thread first"; uwfront.c gives them every frame).
+   ms: how much music is held ready before the device is given any, at the start and again after the stream ran
+   dry. The runtime's ring starts playing at 2048 frames (46 ms) and that is its own; more is made here by giving
+   the device silence, the ring left untouched, for the blocks that make up the difference. high: the timer thread
+   that renders the music runs above the game's threads. -1: as it stands. */
+static HANDLE pit_thread_h;
+static volatile LONG music_room_ms = 150, music_high = 1, music_rehold;
+void uwp_music_room(int ms, int high)
+{
+    if (ms >= 0 && ms != music_room_ms) InterlockedExchange(&music_room_ms, ms < 46 ? 46 : ms > 600 ? 600 : ms), InterlockedExchange(&music_rehold, 1);
+    if (high >= 0) InterlockedExchange(&music_high, high != 0);
+    if (pit_thread_h) SetThreadPriority(pit_thread_h, music_high ? THREAD_PRIORITY_HIGHEST : THREAD_PRIORITY_NORMAL);
+}
 int plat_thread_start(const char *name, int (*fn)(void *), void *arg)
 {
     struct thread_arg *a = malloc(sizeof *a);
@@ -120,6 +133,10 @@ int plat_thread_start(const char *name, int (*fn)(void *), void *arg)
     a->fn = fn, a->arg = arg;
     h = CreateThread(NULL, 1 << 20, thread_start, a, STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);
     if (!h) { free(a); return -1; }
+    /* the runtime's timer thread ("pit": it runs AIL's ticks and renders the music into the ring the device drains)
+       is kept (2026-11-16, the user's log: "the music's stream ran dry 9 times in this run"): at normal priority any
+       busy moment of the machine held it back longer than the ring's 46 ms. uwp_music_room raises it. */
+    if (name && !strcmp(name, "pit")) { pit_thread_h = h; uwp_music_room(-1, -1); return 0; }
     CloseHandle(h);
     return 0;
 }
@@ -134,6 +151,21 @@ static HANDLE audio_ev;
 static WAVEHDR audio_hdr[AUDIO_BLOCKS];
 static int16_t audio_buf[AUDIO_BLOCKS][AUDIO_FRAMES * 2];
 
+unsigned audio_underruns(void);
+/* a block for the device: the ring's frames, or silence while more music is being held ready (uwp_music_room) */
+static void audio_pull(int16_t *out, int frames)
+{
+    static unsigned seen;
+    static int hold = -1;
+    unsigned u = audio_underruns();
+    if (hold < 0 || u != seen || InterlockedExchange(&music_rehold, 0)) {
+        int extra = (int)music_room_ms - 46;     /* (the ring's own 2048 frames at 44100) */
+        seen = u;
+        hold = extra > 0 ? (extra * 441 / 10 + frames - 1) / frames : 0;
+    }
+    if (hold > 0) { hold--; memset(out, 0, (size_t)frames * 4); return; }
+    audio_fill(out, frames);
+}
 static DWORD WINAPI audio_thread(LPVOID p)
 {
     int i;
@@ -143,7 +175,7 @@ static DWORD WINAPI audio_thread(LPVOID p)
         WaitForSingleObject(audio_ev, INFINITE);
         for (i = 0; i < AUDIO_BLOCKS; i++)
             if (audio_hdr[i].dwFlags & WHDR_DONE) {
-                audio_fill(audio_buf[i], AUDIO_FRAMES);
+                audio_pull(audio_buf[i], AUDIO_FRAMES);
                 audio_hdr[i].dwFlags &= ~WHDR_DONE;
                 waveOutWrite(wo, &audio_hdr[i], sizeof audio_hdr[i]);
             }
