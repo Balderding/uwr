@@ -65,17 +65,24 @@ ray tracing, upscaled textures, relief maps and the effects on. Click a picture 
 - **Creatures.** Three AI levels. The game's numbers (hit points, damage, speed, every roll) are the same at all
   three; only what a creature chooses changes, and it acts only on what it saw, heard or was told by its kin.
   - **Original**: the game as shipped.
-  - **Devious**: each creature is smarter on its own. One that loses you goes to where it last knew you were and
-    searches; one that hears a blow, a door, a lever or a spell, or sees your light, goes to look; goblins,
-    mountainmen, lizardmen, outcasts and giant spiders lie in ambush; clever ones fetch their kin. Friendly
-    creatures nod, follow you if your weapon is drawn, back away, or point out a foe. One or two hunters a level
-    track you across the whole level by a plan.
-  - **Monstrous**: they also work together. A creature calls its kin, the call is passed on, the called gather
-    and strike together; spiders and bats fall back to their kin and attack as a pack; the wounded run to kin
-    and come back with them; shooters and casters hit and run.
+  - **Devious**: each creature is cunning on its own. One that loses you goes to where it last knew you were,
+    searches, and checks the door you may have left by; one that hears a blow, a door, a lever or a spell, sees
+    your light, or hears you run (walking is silent) goes to look; clever ones lie in ambush, hold a doorway and
+    let you come, and one that lost you or ran from you lies in wait the next time; shooters and casters hit and
+    run and put water or a drop between you. Shot from where it cannot reach you, a creature goes out of your
+    sight; one that flees runs for cover, not straight away. Friendly creatures nod, follow you if your weapon
+    is drawn, back away, or point out a foe. One or two hunters a level track you across the whole level by a
+    plan.
+  - **Monstrous**: they also work together. A creature calls or fetches its kin, the call is passed on, the
+    called gather and strike together while one goes to the door behind you and the third to a fight goes
+    round your back; a clever one shows itself and falls back to lead you in among kin lying in wait; they
+    will not be drawn away from one another one at a time; spiders and bats attack as a pack; the wounded run
+    to kin and come back with them; shooters keep behind those who fight hand to hand; a death cry rouses the
+    kin in earshot, and the roused watch the doors for minutes after; a level hunter brings its pack.
 
   Every part has its own row in the Esc menu ([docs/ESC_MENU.md](docs/ESC_MENU.md), "AI"). The choices are made by
-  a built-in rulebook, or optionally by a small language model run on the player's own machine.
+  a built-in rulebook, or optionally by a small language model run on the player's own machine. Every decision is
+  written to the log file with its reason, and each part counts how often it was used.
 - **The original's 3D models** (doors, portcullises, bridges, weapons on the floor) decoded from UW.EXE and drawn.
 
 ## Where it is going

@@ -46,6 +46,24 @@ int port_hunter_usable(void);    /* 0 smart hunting off, 1 ready, 2 no language 
 int port_ai_level(int v);
 int port_ai_part(int part, int v);
 int port_ai_by_model(int v);
+/* (2026-11-17) the parts 8 to 17 are the rows MO_AIX0 to MO_AIX9: 8 hears you run, 9 searches the ways out, 10 more
+   ambushers, 11 wary after a fight (Devious); 12 fetches kin, 13 the lure, 14 the cut-off, 15 fighting roles, 16 the
+   alarm, 17 hunters bring the pack (Monstrous). A part's row is shown from its own level up: cun_part_level */
+int cun_part_level(int part);
+enum { MO_AIX0 = 150, MO_AIX1, MO_AIX2, MO_AIX3, MO_AIX4, MO_AIX5, MO_AIX6, MO_AIX7, MO_AIX8, MO_AIX9,
+       /* the third round, the parts 18 to 24: takes cover, picks its ground, runs out of sight, learns how you fight
+          (Devious); won't be drawn out, death cry, surround (Monstrous) */
+       MO_AIX10, MO_AIX11, MO_AIX12, MO_AIX13, MO_AIX14, MO_AIX15, MO_AIX16, MO_AIXEND = MO_AIX16,
+       MO_AILOGFILE };                  /* ai_log_file: the AI's lines always into the log file */
+unsigned cun_fired_count(int part);     /* how often the part was used this session */
+int port_ai_logfile(int v);
+/* a part's row value: On / Off, and how often it was used this session once it was */
+static void ai_part_value(char *b, int part)
+{
+    unsigned n = cun_fired_count(part);
+    if (n) snprintf(b, 128, "%s (used %u)", port_ai_part(part, -1) ? "On" : "Off", n);
+    else snprintf(b, 128, "%s", port_ai_part(part, -1) ? "On" : "Off");
+}   /* (apart from the rows 0-97, MO_SLOT 100-103 and the dials from 196) */
 /* the language model's own settings (uwmindhost.c): 0 the graphics card or the processor, 1 grammar or scoring,
    2 questions a second, 3 ms before an answer is too old (0 never), 4 minutes idle before it is let go (0 never) */
 int port_mind_tune(int which, int v);
@@ -1713,15 +1731,28 @@ static const struct { int id; const char *label; int opt; const char *hint; } ME
     {MO_HEAD, "#Controls", -1, ""},
     {MO_MOUSE, "Mouse sensitivity", 7, "How fast the mouse turns the view: 0.1 (slow) to 4.0 (fast), in steps of 0.1. Default 1.0."},
     {MO_HEAD, "#AI", -1, ""},
-    {MO_AILEVEL, "Creature AI", -1, "Original: as shipped. Devious: creatures hunt you, look into noises and light, ambush and fetch kin. Monstrous: packs too."},
+    {MO_AILEVEL, "Creature AI", -1, "Original: as shipped. Devious: each creature is cunning on its own. Monstrous: they also work together, as packs."},
     {MO_AIFRIENDS, "Friendly creatures", -1, "Friendly creatures nod to you, follow a while if your weapon is drawn, back away, or point out a foe. Off: as the original."},
-    {MO_AIP0, "Hit and run", -1, "Monstrous only. Creatures that shoot or cast wait up to 20 s for you to come in range, strike, then fall back to kin or back off."},
+    {MO_AIP0, "Hit and run", -1, "Creatures that shoot or cast wait up to 20 s for you to come in range, strike, then back off. At Monstrous they fall back to kin."},
+    {MO_AIX0, "Hears you run", -1, "Creatures near you hear you run and come for you. Walking is silent to them: walk when you want to pass unheard."},
+    {MO_AIX1, "Searches the ways out", -1, "A creature that loses you also checks the nearest door you may have left by, before it gives up the hunt."},
+    {MO_AIX2, "More ambushers", -1, "Any clever creature may lie in ambush, not only goblins, mountainmen, lizardmen, outcasts and giant spiders."},
+    {MO_AIX3, "Wary after a fight", -1, "A creature that lost you or ran from you in the last 5 minutes lies in wait for you the next time, and does not charge."},
+    {MO_AIX10, "Takes cover", -1, "A creature you hurt from where it cannot get to you (across water, up a ledge) goes out of your sight and waits there."},
+    {MO_AIX11, "Picks its ground", -1, "A clever creature holds a doorway or narrow passage and lets you come to it. Shooters put water or a drop between you."},
+    {MO_AIX12, "Runs out of sight", -1, "A creature that flees runs for the nearest corner you cannot see round, not straight away from you, and hides there."},
+    {MO_AIX13, "Learns how you fight", -1, "Shot from afar, a creature stops walking into it and waits out of sight. Shooters that felt your blade back off sooner."},
+    {MO_AIX4, "Fetches kin", -1, "Monstrous only. A clever creature that loses you or hears you fetches the kin in its earshot and goes after you with them."},
     {MO_AIP1, "Calls for help", -1, "Monstrous only. A creature that meets you with kin in earshot but none fighting calls them to you. Once a minute at most."},
     {MO_AIP2, "Pack courage", -1, "Monstrous only. Spiders, bats and other dim creatures fall back to kin in earshot and attack together. Alone, they attack."},
     {MO_AIP3, "Fall back when hurt", -1, "Monstrous only. A clever creature under about half its health runs to its kin, once a fight, and comes back with them."},
-    {MO_AIP4, "Strike together", -1, "Monstrous only. Kin called to a fight gather three squares short of it, then come at you together, after 10 s at most."},
-    {MO_AIP5, "Calls passed on", -1, "Monstrous only. A clever creature that is called repeats the call to its own neighbours, twice at most, so word spreads."},
-    {MO_AIP6, "AI messages", -1, "Lines in the message box: a creature shrieks for help or runs to its kin; a friendly one nods, follows, backs away or warns."},
+    {MO_AIX16, "Surround", -1, "Monstrous only. When two kin already fight you hand to hand, the next one goes round to your side or back."},
+    {MO_AIX14, "Won't be drawn out", -1, "Monstrous only. A creature does not follow you more than 8 squares from where its kin were: it goes back and waits."},
+    {MO_AIX15, "Death cry", -1, "Monstrous only. Kin in earshot of a creature that dies are roused and wary. They go to the body, not to you."},
+    {MO_AIX7, "Fighting roles", -1, "Monstrous only. Shooters and casters keep behind kin who fight you hand to hand, and back off when you come near them."},
+    {MO_AIX8, "Alarm", -1, "Monstrous only. Kin called to a fight stay roused for 3 minutes: they watch the doors and corners near it and hunt again."},
+    {MO_AIX9, "Hunters bring the pack", -1, "Monstrous only. A level hunter fetches its kin first, every time it goes after you. Off: hunters come alone."},
+    {MO_AIP6, "AI messages", -1, "Lines in the message box: a creature shrieks for help, runs to its kin or backs away; a friendly one nods, follows or warns."},
     {MO_HUNTERS, "Level hunters", -1, "One or two clever creatures a level track you across the whole level by a plan: your last place, doors, light, kin."},
     {MO_AILOG, "AI log (Ctrl+L)", -1, "Each creature's decision and its reason, in the message box as it is made. Not kept: off again at the next start."},
     {MO_AIBY, "Decisions by", -1, "Who picks among a creature's choices. Rules: the built-in rulebook, at once. Language model: an AI model file, slower."},
@@ -1759,6 +1790,10 @@ static void menu_rows_build(const char **lab, const char **val, const char **hin
         if (id == MO_HEAD) {   /* a heading; one with no row under it is taken back (below) */
             if (menu_n && menu_ids[menu_n - 1] == MO_HEAD) menu_n--;
         } else if (MENU_ROWS[i].opt >= 0) {
+    {MO_AIP5, "Calls passed on", -1, "Monstrous only. A clever creature that is called repeats the call to its own neighbours, twice at most, so word spreads."},
+    {MO_AIP4, "Strike together", -1, "Monstrous only. Kin called to a fight gather three squares short of it, then come at you together, after 10 s at most."},
+    {MO_AIX6, "Cut off the retreat", -1, "Monstrous only. When two or more kin are called, one goes to the door behind you, so that your way back is closed."},
+    {MO_AIX5, "The lure", -1, "Monstrous only. A clever creature shows itself, then falls back to kin who lie in wait, to lead you in among them."},
             if (!V.option || !V.option(MENU_ROWS[i].opt, 0, vbuf[menu_n], 128)) continue;
         } else if (id == MO_DISPLAY) {   /* (no renderer: no display of ours to choose) */
             if (!V.ok) continue;
@@ -1766,6 +1801,7 @@ static void menu_rows_build(const char **lab, const char **val, const char **hin
         }
         else if (id == MO_CARDMUSIC || id == MO_CARDSPEECH) card_text(id == MO_CARDSPEECH, vbuf[menu_n], 128);
         else if (id == MO_ROOMINFO) {   /* what the rays measure at the listener (shown while the acoustics run) */
+    {MO_AILOGFILE, "AI log in the log file", -1, "Every decision is also written to home\\logs\\uwr.log with the game time, Ctrl+L or not. Each part's row counts its uses."},
             float rt[3], mfp = 0, first = 0;
             if (!uwaudio_acoustics_on()) continue;
             if (uwaudio_room(rt, &mfp, &first)) snprintf(vbuf[menu_n], 128, "rings %.1f / %.1f / %.1f s, %.1f m between walls", rt[0], rt[1], rt[2], mfp);
@@ -1795,12 +1831,21 @@ static void menu_rows_build(const char **lab, const char **val, const char **hin
         else if (id == MO_DOORCUE) snprintf(vbuf[menu_n], 128, "%s", door_cue(-1) ? "On" : "Off");
         else if (id == MO_AILEVEL) { int lv = port_ai_level(-1); snprintf(vbuf[menu_n], 128, "%s", lv == 0 ? "Original" : lv == 1 ? "Devious" : "Monstrous"); }
         else if (id >= MO_AIP0 && id <= MO_AIP6) {   /* Monstrous's parts on Monstrous alone; the messages on both smarter levels */
-            if (port_ai_level(-1) < (id == MO_AIP6 ? 1 : 2)) continue;
-            snprintf(vbuf[menu_n], 128, "%s", port_ai_part(id - MO_AIP0, -1) ? "On" : "Off");
+            if (port_ai_level(-1) < cun_part_level(id - MO_AIP0)) continue;   /* (a part's row from its own level up) */
+            if (id == MO_AIP6) snprintf(vbuf[menu_n], 128, "%s", port_ai_part(6, -1) ? "On" : "Off");
+            else ai_part_value(vbuf[menu_n], id - MO_AIP0);
+        }
+        else if (id >= MO_AIX0 && id <= MO_AIXEND) {   /* the parts 8 to 24 */
+            if (port_ai_level(-1) < cun_part_level(8 + id - MO_AIX0)) continue;
+            ai_part_value(vbuf[menu_n], 8 + id - MO_AIX0);
         }
         else if (id == MO_AIFRIENDS) {   /* the friendly creatures' part (7): the two smarter levels */
             if (port_ai_level(-1) < 1) continue;
-            snprintf(vbuf[menu_n], 128, "%s", port_ai_part(7, -1) ? "On" : "Off");
+            ai_part_value(vbuf[menu_n], 7);
+        }
+        else if (id == MO_AILOGFILE) {
+            if (port_ai_level(-1) < 1) continue;
+            snprintf(vbuf[menu_n], 128, "%s", port_ai_logfile(-1) ? "On" : "Off");
         }
         else if (id == MO_AILOG) {   /* Ctrl+L's switch (hunt.c's port_ai_log; not kept) */
 #ifdef UWPORT_PLAIN
@@ -2036,6 +2081,12 @@ static int menu_event(int kind, int c, int down, int x, int y)
 /* Our taps for the game (C's F5, a click's q or e, the left button's n, o and u): the make now, the break once the game
    has taken the key. The game's own key handlers never act on key()'s result: INPUT.C's input_dispatch reads
    MOUSE.C's do_keyboard_input(1), which throws key()'s result away for do_keyarray_input's, a scan of key_on (the keys
+    case MO_AIX0: case MO_AIX1: case MO_AIX2: case MO_AIX3: case MO_AIX4: case MO_AIX5: case MO_AIX6: case MO_AIX7:
+    case MO_AIX8: case MO_AIX9: case MO_AIX10: case MO_AIX11: case MO_AIX12: case MO_AIX13: case MO_AIX14: case MO_AIX15:
+    case MO_AIX16:
+        port_ai_part(8 + id - MO_AIX0, !port_ai_part(8 + id - MO_AIX0, -1));
+        break;
+    case MO_AILOGFILE: port_ai_logfile(!port_ai_logfile(-1)); break;
    held) at most every 30 ticks of the game's clock (117 ms) since the last key it gave, round from the last one. A make
    and its break sent together are both read by key() between two scans, so such a tap counted only when no key had
    been given for 30 ticks: while W walks (the walk's X given every 30 ticks), or PageDown or a slide is held, C, a

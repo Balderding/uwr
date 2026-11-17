@@ -1974,3 +1974,21 @@ The user: "we want pathing from the steam audio", "and figure out where Baked pr
   under Xvfb, the terminal got all 24 lines the log file got (work\esc_hints\termlinux.sh). That trial start
   ended after 2 s with the game's own "Error code D004", with and without a terminal (termlinux_pipe.sh), so not
   from this; not looked into (the trial's home and missing ROMs are the first suspects).
+- **The Linux game checked as a player gets it; error D004 at start found and fixed** (2026-11-17, the user: "make
+  sure the Linux client works"). Trial: the public package (makepublic, release\linuxcheck-2026-11-17) copied onto
+  ext4 in the WSL Ubuntu, the original's files in game/ under their upper-case names, hidden under Xvfb
+  (work\esc_hints\linuxplayer.sh). First start: relief maps made (2.3 s), title; second start: saved game loaded,
+  level 2 built; with Debian's libopenal.so.1 beside it the positional sound, Steam Audio and HRTF come on.
+  - **D004** ("a .GR file failed") about one start in four, on both file systems. Cause: the runtime's sys\borland.c
+    keeps a text-mode mark per handle NUMBER, set only by open_host and never cleared at close; bc_fopen never set
+    it. A picture file opened as a stream on a number that had been a text-mode handle was read through bc_read
+    (LOADGR.C reads fileno(grfp)) with CR LF and Ctrl-Z translated, came up short. Which number a file gets depends
+    on what the renderer's and sound's threads have open, hence now and then (never under strace or -v, which slow
+    the game thread). Fix: our own copy underworld-exhumed\uw1\src\port\sys\borland.c (as ail.c, pit.c; excluded in
+    portwin32.py and portlinux.py), marks cleared in bc_close and in bc_fopen. Proof: 20 of 20 starts pass where
+    1 of 5 (ext4, sound on: linuxrepeat.sh) and 2 of 4 (drvfs: d004c.sh) failed. The same code is in the Windows
+    game (rebuilt, launches). LOADGR.C now logs "gr: <file>: ..." when a picture file fails (port only).
+  - **Open, the sound session's**: quitting while the pathing bake still runs crashes in a libphonon bake thread
+    (linuxexit.sh: 3 of 4 under strace; 12 of 12 clean when the bake had ended). Sent to the sound session.
+  - Not run: a new game from a fresh home (the old key script no longer reaches it), a real Mint machine, a real
+    graphics card (llvmpipe here). strace was installed in the WSL Ubuntu for this.

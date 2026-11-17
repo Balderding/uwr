@@ -119,6 +119,8 @@ def port(cfg):
         # Exhume's clone stays as upstream has it
         p.runtime_exclude = list(p.runtime_exclude) + [os.path.join(p.runtime_port, 'sound', 'ail.c'),
                                                        os.path.join(p.runtime_port, 'sys', 'pit.c')]
+        # (2026-11-17) and sys\borland.c: a handle's text-mode mark ends with the handle (error D004 at start)
+        p.runtime_exclude = list(p.runtime_exclude) + [os.path.join(p.runtime_port, 'sys', 'borland.c')]
     return p
 
 
