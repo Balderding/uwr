@@ -651,6 +651,7 @@ static void tool_init() { /* once: --uwr runs laigter_main several times */
     crc_init();
 }
 
+static const char *uwr_progress; /* --uwr: the stage being made, named in a running count (NULL: none) */
 static int laigter_main(int argc, char **argv) {
     std::string input, preset, location, sfx_n = "_n.", sfx_s = "_s.", sfx_o = "_o.", sfx_p = "_p.";
     bool has_n = false, has_c = false, has_o = false, has_p = false, not_recursive = false, flatten = false,
@@ -776,6 +777,14 @@ static int laigter_main(int argc, char **argv) {
             if (has_o) ok &= save_map(name(sfx_o), p.out_occlusion, p.st.useOcclusionAlpha, p.texture);
             if (has_p) ok &= save_map(name(sfx_p), p.out_parallax, p.st.useParallaxAlpha, p.texture);
             (ok ? made : failed)++;
+            if (uwr_progress) { /* uwr's maps: a running count, so that a long stage is seen to move */
+                size_t done = (size_t)made + (size_t)failed + (size_t)skipped, step = files.size() / 10 ? files.size() / 10 : 1;
+                if (done % step == 0 && done < files.size()) {
+                    std::lock_guard<std::mutex> lk(print_lock);
+                    printf("uwr maps: %s: %zu of %zu pictures\n", uwr_progress, done, files.size());
+                    fflush(stdout);
+                }
+            }
             if (!quiet || !ok) {
                 std::lock_guard<std::mutex> lk(print_lock);
                 printf("%s %s\n", ok ? "made" : "FAILED", img.string().c_str());

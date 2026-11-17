@@ -601,6 +601,40 @@ static int loop_step(void)
 /* the exe started by itself (a console or none: not Play.cmd's redirection, not a check's pipe): everything printed goes
    to home\logs\uw-new.log as Play.cmd's does (rotated past 5 MB), with the mouse-look trace on (UWPORT_LOOKDBG), so a
    problem met in play leaves its evidence (the user, 2026-11-12: the mouse after a new character, an assertion at exit) */
+/* Started from a terminal, the log's lines are shown there too, as they are written (the user, 2026-11-16: the
+   few lines seen in "the terminal window where I start it" were all that came before the log took over; what a
+   start is doing belongs there). The log stays the file, written straight (a crash loses nothing); a thread reads
+   the file from this start's first line and copies what is added to the terminal: ours, the renderer's, the map
+   maker's. At the program's end what is left is copied before it goes. */
+static HANDLE term_out = INVALID_HANDLE_VALUE, term_file = INVALID_HANDLE_VALUE;
+static CRITICAL_SECTION term_lock;
+static void term_copy(void)
+{
+    char buf[4096];
+    DWORD got, put;
+    EnterCriticalSection(&term_lock);
+    while (ReadFile(term_file, buf, sizeof buf, &got, NULL) && got) WriteFile(term_out, buf, got, &put, NULL);
+    LeaveCriticalSection(&term_lock);
+}
+static DWORD WINAPI term_thread(LPVOID arg)
+{
+    (void)arg;
+    for (;;) term_copy(), Sleep(50);
+}
+static void term_last(void) { fflush(stdout), fflush(stderr), term_copy(); }
+static void term_start(const char *path, HANDLE out, LONGLONG from)
+{
+    LARGE_INTEGER at;
+    HANDLE th;
+    term_file = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING, 0, NULL);
+    if (term_file == INVALID_HANDLE_VALUE) { CloseHandle(out); return; }
+    term_out = out;
+    at.QuadPart = from;
+    SetFilePointerEx(term_file, at, NULL, FILE_BEGIN);
+    InitializeCriticalSection(&term_lock);
+    atexit(term_last);
+    if ((th = CreateThread(NULL, 0, term_thread, NULL, 0, NULL)) != NULL) CloseHandle(th);
+}
 static void log_start(void)
 {
     HANDLE e = GetStdHandle(STD_ERROR_HANDLE);
@@ -616,8 +650,15 @@ static void log_start(void)
         MoveFileExA(path, old, MOVEFILE_REPLACE_EXISTING);
     fprintf(stderr, PLAT_NAME ": the log is %s\n", path);
     fflush(stdout), fflush(stderr);
+    HANDLE term = INVALID_HANDLE_VALUE;   /* the terminal the game was started from, kept (freopen closes ours) */
+    if (t == FILE_TYPE_CHAR && !DuplicateHandle(GetCurrentProcess(), e, GetCurrentProcess(), &term, 0, FALSE, DUPLICATE_SAME_ACCESS))
+        term = INVALID_HANDLE_VALUE;
     if (!freopen(path, "a", stderr)) return;
     setvbuf(stderr, NULL, _IONBF, 0);
+    if (term != INVALID_HANDLE_VALUE) {
+        WIN32_FILE_ATTRIBUTE_DATA now_fa;
+        term_start(path, term, GetFileAttributesExA(path, GetFileExInfoStandard, &now_fa) ? ((LONGLONG)now_fa.nFileSizeHigh << 32 | now_fa.nFileSizeLow) : 0);
+    }
     if (freopen(path, "a", stdout)) setvbuf(stdout, NULL, _IONBF, 0);
     if (!getenv("UWPORT_LOOKDBG")) _putenv("UWPORT_LOOKDBG=1");
     {

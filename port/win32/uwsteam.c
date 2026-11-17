@@ -416,6 +416,7 @@ static void path_service(const UwaTile *tiles, const UwaDoor *doors, int nd, int
             memcpy(B.tiles, tiles, sizeof B.tiles), memcpy(B.doors, doors, sizeof(UwaDoor) * (size_t)nd);
             B.nd = nd, B.ceil_mat = ceil_mat, B.key = key;
             InterlockedExchange(&B.busy, 1);
+            fprintf(stderr, "fx: working out this level's sound paths (Steam Audio's pathing, in the background)\n");
             if (!(B.thread = CreateThread(NULL, 0, bake_worker, NULL, 0, NULL))) B.busy = 0, B.key = 0;
         }
     }

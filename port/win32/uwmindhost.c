@@ -171,6 +171,34 @@ static int cfg_int(const char *key, int def)
     return plat_home() && port_config_get(plat_home(), key, v, sizeof v) == 0 ? atoi(v) : def;
 }
 
+/* the Esc menu's model rows (2026-11-16: every setting of the model has its row). which: 0 llm_gpu (1 the graphics
+   card, 0 the processor; taken when the model is next loaded), 1 llm_mode (1 grammar, 0 scoring), 2 llm_rate
+   (questions a second), 3 llm_stale_ms (0 never dropped), 4 llm_idle_min (0 never let go). v < 0 reads; else it is
+   set, kept in the settings, and (1 to 4) taken at once: the worker reads these plain ints each pass */
+int port_mind_tune(int which, int v)
+{
+    static int have, gpu = 1;
+    static const char *const KEY[5] = { "llm_gpu", "llm_mode", "llm_rate", "llm_stale_ms", "llm_idle_min" };
+    int *const AT[5] = { &gpu, &use_grammar, &rate, &stale_ms, &idle_min };
+    if (which < 0 || which > 4) return 0;
+    if (!have) {                        /* (port_mind_ready reads the same keys when the worker starts) */
+        char mode[16] = "";
+        have = 1;
+        gpu = cfg_int("llm_gpu", 1) != 0;
+        if (plat_home()) port_config_get(plat_home(), "llm_mode", mode, sizeof mode);
+        use_grammar = !strcmp(mode, "grammar");
+        rate = cfg_int("llm_rate", 20), stale_ms = cfg_int("llm_stale_ms", 3000), idle_min = cfg_int("llm_idle_min", 10);
+    }
+    if (v >= 0) {
+        char b[16];
+        *AT[which] = v;
+        if (which == 1) snprintf(b, sizeof b, "%s", v ? "grammar" : "score");
+        else snprintf(b, sizeof b, "%d", v);
+        if (plat_home()) port_config_set(plat_home(), KEY[which], b);
+    }
+    return *AT[which];
+}
+
 /* the choices of a grammar root ::= "goal=" ("a" | "b" | "c"): "a|b|c" */
 static void grammar_choices(const char *g, char *out, int n)
 {

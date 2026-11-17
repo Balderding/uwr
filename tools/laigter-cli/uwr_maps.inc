@@ -217,8 +217,26 @@ static size_t uwr_tiles(const fs::path &data, const fs::path &outdir, const char
         return 1;
     }
     fs::path out = outdir / "laigter" / kind;
-    std::atomic<size_t> failed{0};
+    std::atomic<size_t> failed{0}, done{0};
+    std::mutex say;
+    const size_t step = files.size() / 10 ? files.size() / 10 : 1;
+    printf("uwr maps: %s: normal, occlusion and height maps for %zu textures\n", kind, files.size());
+    fflush(stdout);
     parallel_for(files.size(), jobs, [&](size_t i) {
+        struct Count { /* a running count as each texture is left, made or not */
+            std::atomic<size_t> &done;
+            std::mutex &say;
+            size_t n, step;
+            const char *kind;
+            ~Count() {
+                size_t d = ++done;
+                if (d % step == 0 && d < n) {
+                    std::lock_guard<std::mutex> lk(say);
+                    printf("uwr maps: %s: %zu of %zu textures\n", kind, d, n);
+                    fflush(stdout);
+                }
+            }
+        } count{done, say, files.size(), step, kind};
         Picture pic;
         std::vector<uchar> plain;
         int w = 0, h = 0;
@@ -244,7 +262,8 @@ static size_t uwr_tiles(const fs::path &data, const fs::path &outdir, const char
                   png_save(out / (stem + "_p.png"), hgt.data(), w * UWR_UP, h * UWR_UP, 1);
         if (!ok) failed++;
     });
-    printf("%s: %zu textures' maps, %zu failed\n", kind, files.size(), (size_t)failed);
+    printf("uwr maps: %s: %zu textures' maps made, %zu failed\n", kind, files.size(), (size_t)failed);
+    fflush(stdout);
     return failed;
 }
 
@@ -276,15 +295,22 @@ static int uwr_run(const char *self, const fs::path &data, const fs::path &out, 
         std::vector<const char *> a = {self, "-q", "-n", "-o", "-p", "-r", pre.c_str(), "-d", src.c_str(),
                                        "-l", dst.c_str(), "-j", js.c_str()};
         if (j.median) a.push_back("--occlusion-thresh-median");
+        printf("uwr maps: %s: normal, occlusion and height maps\n", j.src);
+        fflush(stdout);
+        uwr_progress = j.src;
         if (laigter_main((int)a.size(), (char **)a.data())) bad++;
+        uwr_progress = NULL;
+        fflush(stdout);
     }
     double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     if (bad) {
         printf("uwr maps: %zu steps FAILED, %.1f s\n", bad, s);
+        fflush(stdout);
         return 1;
     }
     std::ofstream(out / "laigter" / "made.txt") << "made by laigter-cli from the game's own textures and sprites\n";
-    printf("uwr maps made in %s, %.1f s\n", (out / "laigter").string().c_str(), s);
+    printf("uwr maps: all made in %s, %.1f s\n", (out / "laigter").string().c_str(), s);
+    fflush(stdout);
     return 0;
 }
 
@@ -340,6 +366,8 @@ static int uwr_game_main(int argc, char **argv) {
     fs::remove_all(tmp, ec); /* (ours, of a run cut short) */
     fs::create_directories(tmp, ec);
     tool_init();
+    printf("uwr maps: reading the game's own pictures from %s\n", game.string().c_str());
+    fflush(stdout);
     int made = extract_missing(tmp.string().c_str(), game.string().c_str());
     int r = 1;
     if (made < 0) fprintf(stderr, "laigter-cli: cannot read the game's files in %s\n", game.string().c_str());

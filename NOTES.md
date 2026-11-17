@@ -1944,3 +1944,33 @@ The user: "we want pathing from the steam audio", "and figure out where Baked pr
   `menucheck.py smooth original`: no FAIL after. A long hint seen wrapped in both fonts
   (work/esc_hints/wrapshot.py; pictures work/menucheck/wrap-*-w.png).
 - Built: buildview.cmd, portwin32.py, buildview_linux.py, portlinux.py; makedist and makeflat run.
+- **Menu background** (the user: "a solid color so it is easier to see"): the menu's panel is one dark brown with a
+  gold line round it (menu_draw.c md_solid, the default); the row Menu background (opt 63, settings.txt
+  menu_background solid / leather) gives the leather back. Seen in a hidden run (work/menucheck/wrap-smooth-w.png);
+  all four builds compile.
+- **The log says what a start is doing** (the user: "on first launch the log should show what it is doing ... like
+  making the textures or loading things ... a logline for everything", and: no window of its own, "the log should
+  go to the console the rest of the logs go to"). All in the one log (home/logs/uwr.log, or the terminal / a check's
+  pipe): a line BEFORE each slow step (starting the positional sound, starting the renderer, settings read,
+  reading the game's files, reading the 3D models, building level N, working out the sound paths), and the map
+  maker's own lines: laigter-cli --uwr / --uwr-game now names each stage and gives a running count every tenth
+  (uwr_maps.inc, laigter_cli.cpp's uwr_progress), and mapsmake.h hands it our stderr (Windows: the handle
+  inherited; Linux: dup2), with the seconds at the end. The maps are now made at the renderer's start (uwv_init,
+  before the title) and not at the first level; level_build still asks (one run a start: `tried`).
+  Seen: a hidden first start of a flat trial folder without maps (work/esc_hints/firstrun.py -> firstrun.err):
+  100 "uwr maps:" lines, "the relief maps: made, 11 s", made.txt there, level 2 built, exit 0. The maps' pixels
+  were not compared again (only printing was added). A console window of its own was drafted and dropped on the
+  user's word. All four game builds and both laigter-cli builds compile.
+- **The log's lines in the terminal too** (the user: started from a terminal, a few lines show there and then
+  nothing; the start's lines should go there). plat_win32.c log_start: when stderr is a console, its handle is
+  kept (duplicated before freopen), and a thread copies what is added to the log file to it every 50 ms, with a
+  last copy at exit (term_start, term_copy). The file is still written straight. Windows only (elsewhere the
+  lines already go to the terminal). Compiled; NOT seen by us: a hidden run has no console and skips log_start,
+  so it needs the user's own start from cmd / PowerShell / Windows Terminal.
+- **The same on Linux** (2026-11-17, the user: "this works in Linux too?"). It did not: plat_sdl3.c's log_start
+  also sends everything to the file (the note above, "elsewhere the lines already go to the terminal", was wrong).
+  Now, when stderr is a terminal (isatty), it is kept (dup before freopen) and a thread copies the file's growth
+  to it (term_start, term_copy; SDL thread and mutex). Seen in WSL: started through `script` (a pseudo terminal)
+  under Xvfb, the terminal got all 24 lines the log file got (work\esc_hints\termlinux.sh). That trial start
+  ended after 2 s with the game's own "Error code D004", with and without a terminal (termlinux_pipe.sh), so not
+  from this; not looked into (the trial's home and missing ROMs are the first suspects).

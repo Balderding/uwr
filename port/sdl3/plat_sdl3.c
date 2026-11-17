@@ -14,6 +14,10 @@
 #include <string.h>
 #include <time.h>
 #include <sys/stat.h>
+#ifndef _WIN32
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 #include "plat.h"
 #include "ui/settings.h"
 #include "uwfront.h"
@@ -513,6 +517,40 @@ static int loop_step(void)
 #else
 #define SEP "/"
 #endif
+#ifndef _WIN32
+/* Started from a terminal, the log's lines are shown there too, as they are written (plat_win32.c's term_start; the
+   user, 2026-11-17: "this works in Linux too?"). The log stays the file, written straight; a thread reads the file
+   from this start's first line and copies what is added to the terminal: ours, the renderer's, the map maker's. At
+   the program's end what is left is copied before it goes. */
+static int term_out = -1, term_file = -1;
+static SDL_Mutex *term_lock;
+static void term_copy(void)
+{
+    char buf[4096];
+    ssize_t got;
+    SDL_LockMutex(term_lock);
+    while ((got = read(term_file, buf, sizeof buf)) > 0)
+        for (ssize_t at = 0, put; at < got; at += put)
+            if ((put = write(term_out, buf + at, (size_t)(got - at))) <= 0) break;
+    SDL_UnlockMutex(term_lock);
+}
+static int SDLCALL term_thread(void *arg)
+{
+    (void)arg;
+    for (;;) term_copy(), SDL_Delay(50);
+    return 0;
+}
+static void term_last(void) { fflush(stdout), fflush(stderr), term_copy(); }
+static void term_start(const char *path, int out)
+{
+    SDL_Thread *th;
+    if ((term_file = open(path, O_RDONLY)) < 0 || !(term_lock = SDL_CreateMutex())) { close(out); return; }
+    lseek(term_file, 0, SEEK_END);
+    term_out = out;
+    atexit(term_last);
+    if ((th = SDL_CreateThread(term_thread, "terminal", NULL)) != NULL) SDL_DetachThread(th);
+}
+#endif
 static void log_start(void)
 {
     struct stat es;
@@ -529,9 +567,15 @@ static void log_start(void)
     }
     fprintf(stderr, PLAT_NAME ": the log is %s\n", path);
     fflush(stdout), fflush(stderr);
+#ifndef _WIN32
+    int term = isatty(2) ? dup(2) : -1;   /* the terminal the game was started from, kept (freopen closes ours) */
+#endif
     if (!freopen(path, "a", stderr)) return;
     setvbuf(stderr, NULL, _IONBF, 0);
     if (freopen(path, "a", stdout)) setvbuf(stdout, NULL, _IONBF, 0);
+#ifndef _WIN32
+    if (term >= 0) term_start(path, term);
+#endif
 #ifdef _WIN32
     if (!getenv("UWPORT_LOOKDBG")) _putenv("UWPORT_LOOKDBG=1");
 #else

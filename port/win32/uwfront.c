@@ -40,11 +40,27 @@ int port_config_set(const char *home, const char *key, const char *value);
 int port_hunter_setting(int v);   /* the game's hunter.c: llm_hunters read (v < 0) or set, taken at once */
 int port_hunter_usable(void);    /* 0 smart hunting off, 1 ready, 2 no language model */
 /* the creatures' AI levels (the game's cunning.c, 2026-11-16): 0 Original, 1 Devious, 2 Monstrous; Monstrous's parts
-   (0 hit and run, 1 calls, 2 pack courage, 3 fall back, 4 strike together, 5 calls passed on, 6 the messages); who
-   decides (0 the rules, 1 the language model). v < 0 reads, else sets, taken at once and kept */
+   (0 hit and run, 1 calls, 2 pack courage, 3 fall back, 4 strike together, 5 calls passed on, 6 the messages); part
+   7 the friendly creatures (Devious and Monstrous); who decides (0 the rules, 1 the language model). v < 0 reads,
+   else sets, taken at once and kept */
 int port_ai_level(int v);
 int port_ai_part(int part, int v);
 int port_ai_by_model(int v);
+/* the language model's own settings (uwmindhost.c): 0 the graphics card or the processor, 1 grammar or scoring,
+   2 questions a second, 3 ms before an answer is too old (0 never), 4 minutes idle before it is let go (0 never) */
+int port_mind_tune(int which, int v);
+static const int LLM_RATES[] = {1, 2, 5, 10, 20, 30, 40, 60};
+static const int LLM_STALES[] = {1000, 2000, 3000, 5000, 8000, 12000, 0};
+static const int LLM_IDLES[] = {1, 2, 5, 10, 20, 30, 60, 0};
+/* the next (step > 0) or the one before of a list's values, from the value now (one not in the list: the nearest) */
+static int list_step(const int *list, int n, int now, int step)
+{
+    int at = 0, i;
+    for (i = 0; i < n; i++) if (abs(list[i] - now) < abs(list[at] - now)) at = i;
+    for (i = 0; i < n; i++) if (list[i] == now) at = i;
+    return list[(at + (step > 0 ? 1 : n - 1)) % n];
+}
+static void our_action(int a, int down);
 /* our Esc menu (below) */
 static int menu_open, menu_sel, menu_hover = -1, menu_mx, menu_my;
 static void menu_choose(int row);
@@ -673,6 +689,7 @@ static int view_size(void)
     view_w = view_h = 0;
     client_size(&cw, &ch);
     if (cw < 64 || ch < 64) return V.ok;
+    fprintf(stderr, PLAT_NAME ": starting the renderer (%s) at %dx%d\n", view_vk ? "Vulkan" : "Direct3D 12", cw, ch);
     V.ok = V.init(uwp_window(), cw, ch);
     V.cw = cw, V.ch = ch;
 #ifdef _WIN32
@@ -1279,7 +1296,8 @@ static void inv_draw(void)
    renderer's by the DLL (uwv_option), the window's here */
 enum { MO_RESUME, MO_DISPLAY, MO_FULL, MO_SAVE, MO_LOAD, MO_NEW, MO_DLSS, MO_DLSS5, MO_STYLE, MO_RT, MO_BOUNCE, MO_SHADOWS, MO_RELIEF, MO_NSTR,
        MO_MUSIC, MO_MUSVOL, MO_SOUND, MO_FXVOL, MO_FADE, MO_MOUSE, MO_LLM, MO_FOV,
-       MO_PARTICLES, MO_DECALS, MO_WATER, MO_FOG, MO_FXAUDIO, MO_ACOUSTICS, MO_SMOOTH, MO_CONVFONT, MO_HUNTERS, MO_MENUFONT, MO_HRTF, MO_PANFIX, MO_RES, MO_DLSSMODE, MO_RR, MO_D5INT, MO_D5STR, MO_CHARSHEET, MO_LOGFONT, MO_ACWET, MO_ACSIZE, MO_ACOCCL, MO_ACDETOUR, MO_FOOTSTEPS, MO_FONT, MO_FONTSIZE, MO_QUIT, MO_TEXAO, MO_TEXSHADOW, MO_TEXRES, MO_LIGHTCOL, MO_ADAPT, MO_HDR, MO_HDRPEAK, MO_HDRPAPER, MO_RENDERER, MO_MAPNORMAL, MO_MAPAO, MO_MAPHEIGHT, MO_HEARRANGE, MO_FEETSPREAD, MO_ECHOQ, MO_STEPVOL, MO_STEPECHO, MO_AILEVEL, MO_AIBY, MO_AIP0, MO_AIP1, MO_AIP2, MO_AIP3, MO_AIP4, MO_AIP5, MO_AIP6, MO_BREATH, MO_DOORCUE, MO_LIGHTFADE, MO_DOORSTEP, MO_DOORPICK, MO_COUNT, MO_HEAD = 98 };
+       MO_PARTICLES, MO_DECALS, MO_WATER, MO_FOG, MO_FXAUDIO, MO_ACOUSTICS, MO_SMOOTH, MO_CONVFONT, MO_HUNTERS, MO_MENUFONT, MO_HRTF, MO_PANFIX, MO_RES, MO_DLSSMODE, MO_RR, MO_D5INT, MO_D5STR, MO_CHARSHEET, MO_LOGFONT, MO_ACWET, MO_ACSIZE, MO_ACOCCL, MO_ACDETOUR, MO_FOOTSTEPS, MO_FONT, MO_FONTSIZE, MO_QUIT, MO_TEXAO, MO_TEXSHADOW, MO_TEXRES, MO_LIGHTCOL, MO_ADAPT, MO_HDR, MO_HDRPEAK, MO_HDRPAPER, MO_RENDERER, MO_MAPNORMAL, MO_MAPAO, MO_MAPHEIGHT, MO_HEARRANGE, MO_FEETSPREAD, MO_ECHOQ, MO_STEPVOL, MO_STEPECHO, MO_AILEVEL, MO_AIBY, MO_AIP0, MO_AIP1, MO_AIP2, MO_AIP3, MO_AIP4, MO_AIP5, MO_AIP6, MO_BREATH, MO_DOORCUE, MO_LIGHTFADE, MO_DOORSTEP, MO_DOORPICK, MO_MENUBG, MO_AIFRIENDS, MO_AILOG, MO_LLMGPU, MO_LLMMODE, MO_LLMRATE, MO_LLMSTALE, MO_LLMIDLE, MO_COUNT, MO_HEAD = 98 };
+_Static_assert(MO_COUNT <= 98, "the rows' ids run into MO_HEAD");
 /* the language model's files and the one in use (uwmindhost.c): the Language model row */
 int port_mind_models(const char **names, const char **paths, int max);
 void port_mind_pick(const char *path);
@@ -1599,6 +1617,7 @@ static const struct { int id; const char *label; int opt; const char *hint; } ME
     {MO_FONT, "Font", 42, "The letters of the whole interface: an easy-to-read font of your choice, or The game's own."},
     {MO_FONTSIZE, "Font size", 43, "Size of the interface's letters, in steps of 5%. 100% is the size picked for your screen resolution."},
     {MO_MENUFONT, "Menu text", 18, "This menu's letters: Smooth (easy to read, the default) or the original game's small capitals."},
+    {MO_MENUBG, "Menu background", 63, "What lies behind this menu's rows and text: Solid colour (dark, easiest to read, the default) or Leather, the game's own."},
     {MO_CONVFONT, "Conversation text", 17, "The letters in conversations: Smooth (easy to read, the default) or the original game's font."},
     {MO_LOGFONT, "Message text", 41, "The message box's letters: Smooth (smaller and easier to read, the default) or the original game's font."},
     {MO_CHARSHEET, "Character sheet", 40, "The sheet in the inventory (Tab). Full: every number the rules use (the default). Or the game's own statistics page."},
@@ -1694,17 +1713,24 @@ static const struct { int id; const char *label; int opt; const char *hint; } ME
     {MO_HEAD, "#Controls", -1, ""},
     {MO_MOUSE, "Mouse sensitivity", 7, "How fast the mouse turns the view: 0.1 (slow) to 4.0 (fast), in steps of 0.1. Default 1.0."},
     {MO_HEAD, "#AI", -1, ""},
-    {MO_AILEVEL, "Creature AI", -1, "Original: the game as shipped. Devious: creatures hunt, investigate, ambush, call kin. Monstrous: also fight as packs."},
-    {MO_AIP0, "Hit and run", -1, "Monstrous only. Creatures that shoot or cast wait for you to come in range, strike, then fall back to their kin."},
-    {MO_AIP1, "Calls for help", -1, "Monstrous only. A creature that meets you alone calls its kin before it attacks."},
-    {MO_AIP2, "Pack courage", -1, "Monstrous only. Dim creatures (spiders, bats) fall back to kin nearby and attack together. The dumbest just attack."},
-    {MO_AIP3, "Fall back when hurt", -1, "Monstrous only. A wounded creature runs to its kin and comes back with them."},
-    {MO_AIP4, "Strike together", -1, "Monstrous only. Kin called to a fight gather first, then come at you together."},
-    {MO_AIP5, "Calls passed on", -1, "Monstrous only. Clever creatures repeat a call for help, so word spreads."},
-    {MO_AIP6, "AI messages", -1, "On: a message appears when a creature calls for help, runs to its kin, or a pack turns on you."},
-    {MO_AIBY, "Decisions by", -1, "Who decides what a creature does. Rules: the built-in rulebook, at once. Language model: an AI model file, slower."},
+    {MO_AILEVEL, "Creature AI", -1, "Original: as shipped. Devious: creatures hunt you, look into noises and light, ambush and fetch kin. Monstrous: packs too."},
+    {MO_AIFRIENDS, "Friendly creatures", -1, "Friendly creatures nod to you, follow a while if your weapon is drawn, back away, or point out a foe. Off: as the original."},
+    {MO_AIP0, "Hit and run", -1, "Monstrous only. Creatures that shoot or cast wait up to 20 s for you to come in range, strike, then fall back to kin or back off."},
+    {MO_AIP1, "Calls for help", -1, "Monstrous only. A creature that meets you with kin in earshot but none fighting calls them to you. Once a minute at most."},
+    {MO_AIP2, "Pack courage", -1, "Monstrous only. Spiders, bats and other dim creatures fall back to kin in earshot and attack together. Alone, they attack."},
+    {MO_AIP3, "Fall back when hurt", -1, "Monstrous only. A clever creature under about half its health runs to its kin, once a fight, and comes back with them."},
+    {MO_AIP4, "Strike together", -1, "Monstrous only. Kin called to a fight gather three squares short of it, then come at you together, after 10 s at most."},
+    {MO_AIP5, "Calls passed on", -1, "Monstrous only. A clever creature that is called repeats the call to its own neighbours, twice at most, so word spreads."},
+    {MO_AIP6, "AI messages", -1, "Lines in the message box: a creature shrieks for help or runs to its kin; a friendly one nods, follows, backs away or warns."},
+    {MO_HUNTERS, "Level hunters", -1, "One or two clever creatures a level track you across the whole level by a plan: your last place, doors, light, kin."},
+    {MO_AILOG, "AI log (Ctrl+L)", -1, "Each creature's decision and its reason, in the message box as it is made. Not kept: off again at the next start."},
+    {MO_AIBY, "Decisions by", -1, "Who picks among a creature's choices. Rules: the built-in rulebook, at once. Language model: an AI model file, slower."},
     {MO_LLM, "Language model", -1, "The AI model file creatures decide with when Decisions by is Language model. Left and Right pick another file."},
-    {MO_HUNTERS, "Level hunters", -1, "Creatures that hunt you across the whole level by a plan: Off, 1 or 2 a level. Default 2."},
+    {MO_LLMGPU, "Model runs on", -1, "Graphics card: fast, uses its memory. Processor: slower, leaves the card alone. Takes hold when the model next loads."},
+    {MO_LLMMODE, "Model answers by", -1, "Scoring: every choice rated in one pass, eight questions at once; fast. Grammar: the model writes its answer out; slower."},
+    {MO_LLMRATE, "Model questions", -1, "The most questions creatures may put to the model each second: 1 to 60. Any beyond that are not asked. Default 20."},
+    {MO_LLMSTALE, "Model answer too old", -1, "An answer that comes later than this is dropped, as the moment has passed: 1 to 12 s, or Never. Default 3 s."},
+    {MO_LLMIDLE, "Model unloaded after", -1, "Minutes without a question before the model's memory is freed; it loads again when needed: 1 to 60, or Never. Default 10."},
 };
 #define MENU_NROWS ((int)(sizeof MENU_ROWS / sizeof MENU_ROWS[0]))
 static int menu_opt(int id)   /* the renderer's option of a row, -1 none */
@@ -1771,6 +1797,29 @@ static void menu_rows_build(const char **lab, const char **val, const char **hin
         else if (id >= MO_AIP0 && id <= MO_AIP6) {   /* Monstrous's parts on Monstrous alone; the messages on both smarter levels */
             if (port_ai_level(-1) < (id == MO_AIP6 ? 1 : 2)) continue;
             snprintf(vbuf[menu_n], 128, "%s", port_ai_part(id - MO_AIP0, -1) ? "On" : "Off");
+        }
+        else if (id == MO_AIFRIENDS) {   /* the friendly creatures' part (7): the two smarter levels */
+            if (port_ai_level(-1) < 1) continue;
+            snprintf(vbuf[menu_n], 128, "%s", port_ai_part(7, -1) ? "On" : "Off");
+        }
+        else if (id == MO_AILOG) {   /* Ctrl+L's switch (hunt.c's port_ai_log; not kept) */
+#ifdef UWPORT_PLAIN
+            continue;
+#else
+            extern volatile int port_ai_log;
+            if (port_ai_level(-1) < 1) continue;
+            snprintf(vbuf[menu_n], 128, "%s", port_ai_log ? "On" : "Off");
+#endif
+        }
+        else if (id >= MO_LLMGPU && id <= MO_LLMIDLE) {   /* the model's own settings: only while the model decides */
+            int v;
+            if (port_ai_level(-1) < 1 || port_mind_models(NULL, NULL, 0) <= 0 || !port_ai_by_model(-1)) continue;
+            v = port_mind_tune(id - MO_LLMGPU, -1);
+            if (id == MO_LLMGPU) snprintf(vbuf[menu_n], 128, "%s", v ? "Graphics card" : "Processor");
+            else if (id == MO_LLMMODE) snprintf(vbuf[menu_n], 128, "%s", v ? "Grammar" : "Scoring");
+            else if (id == MO_LLMRATE) snprintf(vbuf[menu_n], 128, "%d a second", v);
+            else if (id == MO_LLMSTALE) { if (v > 0) snprintf(vbuf[menu_n], 128, "%d.%d s", v / 1000, v % 1000 / 100); else snprintf(vbuf[menu_n], 128, "Never"); }
+            else { if (v > 0) snprintf(vbuf[menu_n], 128, "%d min", v); else snprintf(vbuf[menu_n], 128, "Never"); }
         }
         else if (id == MO_AIBY) {   /* (no row at Original, or without model files: the rules decide) */
             if (port_ai_level(-1) < 1 || port_mind_models(NULL, NULL, 0) <= 0) continue;
@@ -1926,6 +1975,13 @@ static void menu_choose_step(int row, int step)
         port_ai_part(id - MO_AIP0, !port_ai_part(id - MO_AIP0, -1));
         break;
     case MO_AIBY: port_ai_by_model(!port_ai_by_model(-1)); break;
+    case MO_AIFRIENDS: port_ai_part(7, !port_ai_part(7, -1)); break;
+    case MO_AILOG: our_action(UWI_A_AI_LOG, 1); break;   /* (Ctrl+L's own switch: the note in the message box too) */
+    case MO_LLMGPU: port_mind_tune(0, !port_mind_tune(0, -1)); break;
+    case MO_LLMMODE: port_mind_tune(1, !port_mind_tune(1, -1)); break;
+    case MO_LLMRATE: port_mind_tune(2, list_step(LLM_RATES, 8, port_mind_tune(2, -1), step)); break;
+    case MO_LLMSTALE: port_mind_tune(3, list_step(LLM_STALES, 7, port_mind_tune(3, -1), step)); break;
+    case MO_LLMIDLE: port_mind_tune(4, list_step(LLM_IDLES, 8, port_mind_tune(4, -1), step)); break;
     case MO_HUNTERS:   /* Off -> 1 -> 2 a level (left: back); taken at once and kept (hunter.c) */
         port_hunter_setting((port_hunter_setting(-1) + (step > 0 ? 1 : 2)) % 3);
         break;
@@ -2943,6 +2999,7 @@ static void fx_audio_start(int again)
     fx_pan_fix = uwaudio_setting(data, "fx_pan_fix", 1);
     volumes_load();
     uwaudio_volume(fx_vol / 100.0f);
+    fprintf(stderr, "fx: starting the positional sound (OpenAL, the acoustics, the Roland's effects)\n");
     uwaudio_init(bin, data);
     fx_ac_seen = 0;   /* (the acoustics' materials are read by uwaudio_init: the level handed over again) */
 }

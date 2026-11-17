@@ -14,8 +14,10 @@
 #include "base.h"
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 #ifdef _WIN32
 #include <windows.h>
+#include <io.h>
 #else
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -25,7 +27,9 @@
 static void maps_make_if_missing(const char *root_dir, const char *data, const char *game)
 {
     char p[1024], tool[1024];
-    if (!root_dir[0] || !data[0] || !game[0]) return;
+    static int tried;   /* (asked at the renderer's start and again at the first level: one run a start) */
+    time_t t0 = time(NULL);
+    if (tried || !root_dir[0] || !data[0] || !game[0]) return;
     snprintf(p, sizeof p, "%s\\laigter\\made.txt", data);
     if (file_exists(p)) return;
     snprintf(p, sizeof p, "%s\\laigter\\walls\\000_n.png", data);
@@ -36,9 +40,17 @@ static void maps_make_if_missing(const char *root_dir, const char *data, const c
     char cmd[4096];
     STARTUPINFOA si = {sizeof si};
     PROCESS_INFORMATION pi;
+    BOOL inherit = FALSE;
+    tried = 1;
     snprintf(cmd, sizeof cmd, "\"%s\" --uwr-game \"%s\" \"%s\"", tool, game, data);
-    fprintf(stderr, "uwview: first run: making the relief maps from the game's own pictures (%s)\n", tool);
-    if (!CreateProcessA(tool, cmd, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
+    fprintf(stderr, "uwview: first run: making the relief maps from the game's own pictures (%s). This is done once: some seconds on a fast computer, a minute or two on a slow one.\n", tool);
+    {   /* what the program says (a line a stage, a running count) goes into our own log, as it happens */
+        HANDLE e = (HANDLE)_get_osfhandle(_fileno(stderr));
+        fflush(stderr);
+        if (e && e != INVALID_HANDLE_VALUE && SetHandleInformation(e, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT))
+            si.dwFlags |= STARTF_USESTDHANDLES, si.hStdOutput = e, si.hStdError = e, inherit = TRUE;
+    }
+    if (!CreateProcessA(tool, cmd, NULL, NULL, inherit, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
         fprintf(stderr, "uwview: the relief maps were not made: laigter-cli did not start (error %lu)\n", GetLastError());
         return;
     }
@@ -46,7 +58,7 @@ static void maps_make_if_missing(const char *root_dir, const char *data, const c
     if (WaitForSingleObject(pi.hProcess, 10 * 60 * 1000) != WAIT_OBJECT_0) TerminateProcess(pi.hProcess, 1);
     GetExitCodeProcess(pi.hProcess, &code);
     CloseHandle(pi.hThread), CloseHandle(pi.hProcess);
-    fprintf(stderr, "uwview: the relief maps: %s\n", code ? "NOT made (laigter-cli failed)" : "made");
+    fprintf(stderr, "uwview: the relief maps: %s, %ld s\n", code ? "NOT made (laigter-cli failed)" : "made", (long)(time(NULL) - t0));
 #else
     char g[1024], d[1024];
     size_t i;
@@ -59,18 +71,21 @@ static void maps_make_if_missing(const char *root_dir, const char *data, const c
     struct stat st;
     if (stat(tool, &st)) return;
     chmod(tool, st.st_mode | 0111);   /* (a zip does not keep the run permission) */
-    fprintf(stderr, "uwview: first run: making the relief maps from the game's own pictures (%s)\n", tool);
+    tried = 1;
+    fprintf(stderr, "uwview: first run: making the relief maps from the game's own pictures (%s). This is done once: some seconds on a fast computer, a minute or two on a slow one.\n", tool);
+    fflush(stderr);
     pid_t pid = fork();
     if (pid < 0) {
         fprintf(stderr, "uwview: the relief maps were not made: laigter-cli did not start\n");
         return;
     }
     if (!pid) {
+        dup2(2, 1);   /* what the program says goes where our own lines go */
         execl(tool, tool, "--uwr-game", g, d, (char *)NULL);
         _exit(127);
     }
     int status = 1;
     waitpid(pid, &status, 0);
-    fprintf(stderr, "uwview: the relief maps: %s\n", WIFEXITED(status) && !WEXITSTATUS(status) ? "made" : "NOT made (laigter-cli failed)");
+    fprintf(stderr, "uwview: the relief maps: %s, %ld s\n", WIFEXITED(status) && !WEXITSTATUS(status) ? "made" : "NOT made (laigter-cli failed)", (long)(time(NULL) - t0));
 #endif
 }

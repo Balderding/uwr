@@ -22,8 +22,8 @@ start". Every change is kept: the game writes it to its settings file (`settings
 file, and reads it back the next time you start.
 
 **Rows come and go.** A row is shown only when its feature can run. A graphics card without ray tracing has no
-ray-tracing rows; the sound-tuning rows for Steam Audio appear only while Acoustics is set to High; the AI part
-rows appear only at the Monstrous level. Each table below says what a row needs.
+ray-tracing rows; the sound-tuning rows for Steam Audio appear only while Acoustics is set to High; the six pack
+rows of the AI appear only at the Monstrous level, and the model tuning rows only while a language model decides. Each table below says what a row needs.
 
 **Defaults.** "Default" below is the value the game uses when your settings file says nothing. The public
 download comes with a settings file that turns the optional features on from the first start: ray tracing with
@@ -68,6 +68,7 @@ Both pages show the same five rows.
 | **Font** | The game's own, or one of the fonts found | The letters of the whole interface. The list holds the readable fonts your system has, plus any font files placed in the game's fonts folder. |
 | **Font size** | Steps of 5% (shown in pixels and percent). Default 100% | The size of the interface's letters. 100% is the size the game picks for your screen resolution. The smallest is 6 pixels, the largest 60. |
 | **Menu text** | Smooth (default) / The original's | This menu's letters: a smooth font at your screen's full sharpness, or the original game's small capitals. |
+| **Menu background** | Solid colour (default) / Leather | What lies behind this menu's rows and text: one dark colour, the easiest to read, or the game's own leather. |
 | **Conversation text** | Smooth (default) / Original | The letters in conversations. |
 | **Message text** | Smooth (default) / The original's | The letters in the message box. Smooth is smaller and easier to read. |
 | **Character sheet** | Full (default) / The game's page | The sheet in the inventory (Tab). Full shows every number the rules use; the other choice is the game's own statistics page. |
@@ -245,18 +246,48 @@ The keys themselves are listed in [KEYBINDS.md](KEYBINDS.md).
 
 ## AI
 
+The creatures' numbers (hit points, damage, speed, every dice roll) are the original's at every setting here.
+These rows change only what a creature chooses to do, and a creature acts only on what it saw or heard itself or
+was told by its kin: it never knows where you are by cheating. "Kin" are hostile creatures of the same race;
+"in earshot" is that creature type's own hearing range. A named character (one with its own conversation) keeps
+the original's behaviour, apart from a friendly one's nod or warning.
+
+### Creature AI and its parts
+
 | Row | Values | What it does | Needs |
 | --- | --- | --- | --- |
-| **Creature AI** | Original, Devious, Monstrous | How cunning creatures are. **Original** is the game as shipped. At **Devious** they hunt you, investigate noises, lie in ambush and call their kin. At **Monstrous** they also fight as packs; the six rows below are the parts of that. The game's numbers (hit points, damage, speed) are the same at every level: only the creatures' choices change. | |
-| **Hit and run** | On (default) / Off | Creatures that shoot or cast spells wait for you to come into range, strike, then fall back to their kin. | Monstrous. |
-| **Calls for help** | On (default) / Off | A creature that meets you alone calls its kin before it attacks. | Monstrous. |
-| **Pack courage** | On (default) / Off | Spiders, bats and other creatures of low wits fall back to kin nearby first and attack together. Alone, they attack. The dumbest just attack. | Monstrous. |
-| **Fall back when hurt** | On (default) / Off | A wounded creature runs to its kin and comes back with them. | Monstrous. |
-| **Strike together** | On (default) / Off | Kin called to a fight gather first and come at you together. | Monstrous. |
-| **Calls passed on** | On (default) / Off | Clever creatures repeat a call for help, so word spreads. | Monstrous. |
-| **AI messages** | On (default) / Off | A line in the message box when a creature calls for help, runs to its kin, or a pack turns on you. | Devious or Monstrous. |
-| **Decisions by** | Rules (default) / Language model | Who chooses what a creature does. Rules is the built-in rulebook, which answers at once. Language model asks an AI model file on your own computer, which is slower. | Devious or Monstrous, and at least one model file. |
-| **Language model** | The model files found | The model file used when Decisions by is Language model. Left and Right step through the files. | At least one model file. |
-| **Level hunters** | Off, 1 a level, 2 a level (default) | One or two creatures on each level hunt you across the whole level by a plan. If they cannot run, the row says why: "(Creature AI off)" or "(no model)". | Devious or Monstrous. |
+| **Creature AI** | Original, Devious, Monstrous | How cunning creatures are. **Original** is the game as shipped. At **Devious** a creature that loses you walks to where it last knew you were and searches there (about 30 seconds); one that hears a blow, a door, a lever, a spell or a hard landing, or sees your light, goes to look; goblins, mountainmen, lizardmen, outcasts and giant spiders may wait in ambush by a corner or a door (up to a minute); a clever creature may fetch its kin before it comes; a badly hurt one may run. The dimmest (worms, slugs, rats, lurkers, headlesses) just attack. At **Monstrous** creatures also fight as packs; the six "Monstrous" rows below are the parts of that. | |
+| **Friendly creatures** | On (default) / Off | Friendly creatures notice you when you come near: one may nod to you, follow you for a while if your weapon is drawn (half a minute at most, never more than 8 squares from its home), back away to its home, or turn to you and point out a hostile creature it can see. They never fight for you. Off, friendly creatures behave as in the original. | Devious or Monstrous. |
+| **Hit and run** | On (default) / Off | A creature that shoots or casts spells holds its ground and lets you come to it (for up to 20 seconds, while it can see you), strikes when you are in range, then falls back to its kin; with no kin near and you close, it backs off a few steps before it strikes again. | Monstrous. |
+| **Calls for help** | On (default) / Off | A creature that finds you while its kin are in earshot but not yet fighting calls them to the place. A creature calls once a minute at most. The dimmest creatures, and the fearless ones (skeletons, ghosts, ghouls, trolls, golems and the like), never call. | Monstrous. |
+| **Pack courage** | On (default) / Off | Spiders, bats and other creatures of low wits will not fight you alone when kin are in earshot: they fall back to them once, and then all attack together. With no kin about, with kin already beside it, or when you look badly hurt, it attacks at once. | Monstrous. |
+| **Fall back when hurt** | On (default) / Off | A clever creature whose health drops low (under about three eighths; goblins, lizardmen, mountainmen and outcasts already at half) runs to its nearest kin, once a fight, and comes back with them. It does not run when you look badly hurt yourself. The fearless creatures never do this. | Monstrous. |
+| **Strike together** | On (default) / Off | Creatures called to a fight do not arrive one by one: they gather three squares short of the place and go in together, after 10 seconds at the latest. | Monstrous. |
+| **Calls passed on** | On (default) / Off | A clever creature that is called repeats the call to the kin in its own earshot, so the word spreads beyond the first caller's hearing. A call is passed on twice at most. | Monstrous. |
+| **AI messages** | On (default) / Off | Lines in the message box that tell you what a creature chose: "The goblin shrieks for help", "runs to its kin", "falls back to its kin" (Monstrous), and a friendly creature's "nods to you", "eyes your weapon and follows you", "backs away from you", "points north: a ... is there". Off, the creatures do the same things without the lines. | Devious or Monstrous. |
+| **Level hunters** | Off, 1 a level, 2 a level (default) | One or two of the cleverest hostile creatures on each level keep track of you across the whole level. A hunter notices signs of you (noises you made, your light or a light put out, doors opened, things taken, a sprung trap, its kin found dead), makes a short plan (go to where you were last seen, wait by a door, search, follow a light, fetch its kin, go to water or rest when wounded, give up) and remembers it across a save and load. If hunters cannot run the row says why: "(no model)" means Decisions by is set to Language model and the model is not loaded. | Devious or Monstrous. |
+| **AI log (Ctrl+L)** | On / Off (default) | Shows every decision a creature makes, with its reason, in the message box as it happens ("goblin #12 at 30,14: chose: ambush"). For watching how the AI works. Ctrl+L switches it in the game too. It is not kept: off again at the next start. | Devious or Monstrous. |
+
+### Who decides
+
+| Row | Values | What it does | Needs |
+| --- | --- | --- | --- |
+| **Decisions by** | Rules (default) / Language model | Who picks among the choices a creature has (hunt, investigate, ambush, fetch kin, go back, attack, flee; a friendly one's nod, follow, keep away, warn; a hunter's plan). **Rules** is the built-in rulebook: it answers at once and needs nothing. **Language model** asks an AI model file on your own computer; its answer comes a moment later (the rulebook's answer is used until then for a creature that sees you). The model is loaded only while this row is set to it. Nothing is sent over the internet. | Devious or Monstrous, and at least one model file. |
+| **Language model** | The model files found | The model file used when Decisions by is Language model. Left and Right step through the files in the game's model folder (`.gguf` files). | At least one model file. |
+
+### Language model tuning
+
+Shown only while Decisions by is Language model. Most players never need these rows.
+
+| Row | Values | What it does |
+| --- | --- | --- |
+| **Model runs on** | Graphics card (default) / Processor | Where the model is worked out. The graphics card is much faster and holds the model in its memory beside the game's picture. The processor is slower but leaves the graphics card to the picture. Takes hold the next time the model is loaded (at the next start, or after it was unloaded for being idle). |
+| **Model answers by** | Scoring (default) / Grammar | How the answer is read from the model. Scoring gives the model the choices and rates each one in a single pass, up to eight creatures' questions at once: fast. Grammar lets the model write its answer out, held to the allowed words: slower. Takes hold at once. |
+| **Model questions** | 1, 2, 5, 10, 20 (default), 30, 40 or 60 a second | The most questions creatures may put to the model each second. Any beyond that are not asked, which keeps a crowded level from swamping the model. |
+| **Model answer too old** | 1, 2, 3 (default), 5, 8 or 12 s, or Never | An answer that arrives later than this after its question is thrown away, because the moment it was asked about has passed. |
+| **Model unloaded after** | 1, 2, 5, 10 (default), 20, 30 or 60 min, or Never | After this long without a question the model is unloaded and its memory given back to the game; it is loaded again when the next question comes. |
+
+The settings file has one more switch with no row: `llm=0` keeps the model from ever loading. Since Decisions by
+is Rules by default and the model loads only when that row asks for it, the row does the same job.
 
 More about the creatures' AI and the language model: [LLM_NPC_AI.md](../LLM_NPC_AI.md).

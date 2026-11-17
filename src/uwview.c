@@ -82,6 +82,7 @@ static int log_font_original;
 /* the Esc menu's text (the user, 2026-11-14: the game's small letters were hard to read): settings.txt menu_font,
  * smooth (0, the default: smoothtext.c) or original (1: FONT_SMALL in capitals, as it was) */
 static int menu_font_original;
+static int menu_leather;                /* Menu background (settings.txt menu_background leather): 0 the solid colour */
 /* the backend's sound settings kept here with the rest, for their rows: fx_hrtf (1 on, 0 off, 2 OpenAL's choice) and
  * fx_pan_fix (1 the effects' sides corrected, 0 as the MT-32 reads the pan); uwaudio.c reads the file itself */
 static int fx_hrtf_set = 1, fx_panfix_set = 1;
@@ -115,6 +116,7 @@ static void read_settings(const char *path)
         }
         else if (!strcmp(key, "ui_font_size")) st_set_size_pct((int)v); /* its size, % of the resolution's (st_game_em) */
         else if (!strcmp(key, "menu_font")) menu_font_original = !_stricmp(val, "original");
+        else if (!strcmp(key, "menu_background")) menu_leather = !_stricmp(val, "leather"), md_set_solid(!menu_leather);
         else if (!strcmp(key, "fx_hrtf")) fx_hrtf_set = (int)v < 0 ? 0 : (int)v > 2 ? 2 : (int)v;
         else if (!strcmp(key, "fx_pan_fix")) fx_panfix_set = (int)v != 0;
         else if (!strcmp(key, "dlss")) S.dlss = (int)v;
@@ -337,8 +339,13 @@ UWV_API int uwv_init(void *hwnd, int w, int h)
             if (k >= 0) ui_set_font(k + 1);
         }
         settings_env();
+        fprintf(stderr, "uwview: settings read from %s\n", p);
+        /* the first run of a package without our relief maps (mapsmake.h): made here, before the title
+           (2026-11-16; level_build asks again, for a renderer that had no game folder yet) */
+        if (game[0]) maps_make_if_missing(root, data, game);
     }
     RenderConfig rc = {hwnd, w, h, S.vsync != 0};
+    fprintf(stderr, "uwview: starting the graphics card's renderer (%dx%d)\n", w, h);
     /* DLSS, DLSS 5, ray tracing and ray tracing High (DLSS Ray Reconstruction) as our settings have them; each
      * falls back by itself where the card or its driver lacks it (render.c: without DLSS the scene is drawn at the
      * window's size, without DXR the shadows go through the tile grid) */
@@ -450,6 +457,7 @@ static bool level_build(int n)
                 }
                 fprintf(stderr, "uwview: the game's own files in %s; ours in %s:%s\n", game, data, has);
             }
+            fprintf(stderr, "uwview: reading the game's own files (textures, sprites, levels, texts)\n");
             if (!(e && *e && *e != '0')) file_memory_root(data);
             /* (measured 2026-11-16: 0.4 s at a start; one cache file saved 0.2 s of it and was dropped) */
             made = extract_missing(data, game);
@@ -457,12 +465,14 @@ static bool level_build(int n)
                     (long)((clock() - t0) * 1000 / CLOCKS_PER_SEC));
         }
         maps_make_if_missing(root, data, game);   /* the first run of a package without our relief maps (mapsmake.h) */
+        fprintf(stderr, "uwview: reading the game's 3D models\n");
         models_load(game);   /* the original's 3D models (game\UW.EXE), for world_model_quads */
         lv_mark = arena_mark();
         arena_ready = true;
     }
     arena_reset(lv_mark);
     lv_number = 0;
+    fprintf(stderr, "uwview: building level %d (its walls, floors, textures and lights)\n", n);
     if (!level_load(&lv, data, n)) {
         fprintf(stderr, "uwview: level %d: cannot read our level data in %s\n", n, data);
         return false;
@@ -2906,6 +2916,10 @@ UWV_API int uwv_option(int id, int step, char *value, int n)
     case 9:   /* the objects' shadows (ray tracing) */
         if (step) render_set_object_shadows(!render_object_shadows()), settings_save("object_shadows", render_object_shadows() ? "1" : "0");
         snprintf(value, (size_t)n, "%s", render_object_shadows() ? "On" : "Off");
+        return 1;
+    case 63:  /* Menu background (the user, 2026-11-16): one dark colour, the default, or the leather */
+        if (step) menu_leather = !menu_leather, md_set_solid(!menu_leather), settings_save("menu_background", menu_leather ? "leather" : "solid");
+        snprintf(value, (size_t)n, "%s", menu_leather ? "Leather" : "Solid colour");
         return 1;
     case 62:  /* Light fade (the user 2026-11-16): 50% at 2 tiles, 30% at 3, gone at 4, every light; or as before */
         if (step) render_set_light_fade(!render_light_fade()), settings_save("light_fade", render_light_fade() ? "1" : "0");

@@ -99,6 +99,10 @@ static int menu_wrap(const char *v, bool smooth, int em, int room, char lines[][
     return n;
 }
 static void md_blend(unsigned *d, int ui_w, int ui_h);
+/* the panel's ground (the user, 2026-11-16: "a solid color so it is easier to see"): one dark brown under the rows
+ * and the foot's text, with a gold line round it; 0 the leather as before (the row Menu background) */
+static int md_solid = 1;
+void md_set_solid(int on) { md_solid = on != 0; }
 
 /* uw.exe's options menu drawn (its look: the game dimmed, the leather, a button a row, the values in gold on the
  * right) over the interface layer; returns the row under the pointer, or -1.
@@ -149,7 +153,11 @@ int md_rows(unsigned char *ui_buf, int ui_w, int ui_h, bool smooth, const char *
     menu_track[0] = tx, menu_track[1] = ty, menu_track[2] = tw, menu_track[3] = th, menu_thumb_y = thumb_y, menu_thumb_h = thumb_h;
     menu_bar = bar;
     ui_fill(0, 0, o->w, o->h, 0, 0, 0, 140);
-    ui_leather(x, y, w, h);
+    if (md_solid) {
+        ui_fill(x, y, w, h, 26, 16, 10, 255);
+        ui_fill(x, y, w, 1, 120, 96, 40, 255), ui_fill(x, y + h - 1, w, 1, 120, 96, 40, 255);
+        ui_fill(x, y, 1, h, 120, 96, 40, 255), ui_fill(x + w - 1, y, 1, h, 120, 96, 40, 255);
+    } else ui_leather(x, y, w, h);
     if (bar) {
         ui_fill(tx, ty, tw, th, 40, 28, 16, 200);                                           /* the track */
         bool on = menu_drag || (px >= tx - 2 && px < tx + tw + 2 && py >= thumb_y && py < thumb_y + thumb_h);
