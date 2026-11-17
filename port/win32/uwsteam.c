@@ -400,7 +400,15 @@ static void bake_stop(void)   /* a bake under way given up and waited out; its r
 {
     if (!B.thread) return;
     InterlockedExchange(&B.cancel, 1);
-    while (B.busy) p_iplPathBakerCancelBake(S.ctx), Sleep(5);
+    /* (2026-11-17: the bake is waited out, not cancelled. iplPathBakerCancelBake is not safe in 4.8.1's Linux library:
+       called while the bake's jobs run, its pool's threads spun for ever and iplPathBakerBake never came back
+       (work\soundfix\bakequit_linux.c with a simulation thread: the second round hung, the stacks in the library), and
+       in the game a quit during the bake ended in a fault in one of those threads. B.cancel still keeps a bake that
+       has not reached the library from starting. UWPORT_FX_BAKE_CANCEL=1: the cancel as before, for a comparison.) */
+    {
+        const char *e = getenv("UWPORT_FX_BAKE_CANCEL");
+        while (B.busy) { if (e && *e == '1') p_iplPathBakerCancelBake(S.ctx); Sleep(5); }
+    }
     WaitForSingleObject(B.thread, 60000), CloseHandle(B.thread), B.thread = NULL;
     if (B.batch) p_iplProbeBatchRelease(&B.batch);
     B.batch = NULL, B.key = 0, B.cancel = 0;
@@ -588,6 +596,9 @@ int uwst_init(const char *bindir, int rate)
 
 void uwst_shutdown(void)
 {
+    /* (2026-11-16, the review: the bake's thread takes S.lock for the things' boxes (level_mesh); waited for under
+       that lock it could never end, and the game hung on the way out. Stopped first, the lock not held.) */
+    if (S.dll && S.ctx) bake_stop();
     if (S.dll && S.lock_made) EnterCriticalSection(&S.lock);
     if (S.dll) release_all();
     if (S.dll && S.lock_made) LeaveCriticalSection(&S.lock);
@@ -836,7 +847,8 @@ static void direct_run(const float lis[3], float yaw)
 {
     static IPLDeviationModel deviation;              /* (zeroed: Steam Audio's own, the UTD's) */
     IPLSimulationSharedInputs sh;
-    int any = 0;
+    int any = 0, asked[UWST_VOICES] = {0};
+    unsigned gen[UWST_VOICES];
     if (!TryEnterCriticalSection(&S.scene_lock)) return;
     if (S.tris) {
         /* the paths with it: every third block (32 ms), and at once when a sound has none yet. Measured on level 1
@@ -852,9 +864,10 @@ static void direct_run(const float lis[3], float yaw)
             float p[3];
             int state;
             EnterCriticalSection(&S.lock);
-            state = S.v[i].state, memcpy(p, S.v[i].p, sizeof p);
+            state = S.v[i].state, memcpy(p, S.v[i].p, sizeof p), gen[i] = S.v[i].gen;
             LeaveCriticalSection(&S.lock);
             if (state != 1) continue;
+            asked[i] = 1;
             memset(&in, 0, sizeof in);
             in.flags = fl;
             in.directFlags = IPL_DIRECTSIMULATIONFLAGS_OCCLUSION | IPL_DIRECTSIMULATIONFLAGS_TRANSMISSION;
@@ -881,12 +894,18 @@ static void direct_run(const float lis[3], float yaw)
             if (paths) p_iplSimulatorRunPathing(S.dsim);
             for (int i = 0; i < UWST_VOICES; i++) {
                 IPLSimulationOutputs out;
-                if (S.v[i].state != 1) continue;
+                /* (2026-11-16, the review: a sound begun on this voice while the run was under way took the numbers
+                   of the sound before it, or of no run at all, for a few blocks) */
+                if (!asked[i]) continue;
                 memset(&out, 0, sizeof out);
                 p_iplSourceGetOutputs(S.v[i].dsrc, fl, &out);
-                S.v[i].occ = out.direct.occlusion;
-                for (int k = 0; k < 3; k++) S.v[i].trans[k] = out.direct.transmission[k];
-                if (paths) S.v[i].pp = out.pathing, S.v[i].path_ok = 1;
+                EnterCriticalSection(&S.lock);
+                if (S.v[i].state == 1 && S.v[i].gen == gen[i]) {
+                    S.v[i].occ = out.direct.occlusion;
+                    for (int k = 0; k < 3; k++) S.v[i].trans[k] = out.direct.transmission[k];
+                    if (paths) S.v[i].pp = out.pathing, S.v[i].path_ok = 1;
+                }
+                LeaveCriticalSection(&S.lock);
             }
         }
     }
@@ -953,6 +972,11 @@ static int block(int hrtf)
             for (int k = 0; k < 3; k++) {
                 float g = D.occl ? v->occ + (1.0f - v->occ) * v->trans[k] : gain[k];
                 if (D.occl && floor && gain[k] > g) g = gain[k];   /* (the way round a corner, ours: never quieter than that) */
+                /* (2026-11-16, "the footsteps sound twitchy": a sound fixed to the head is the player's own, placed a
+                   third of a tile ahead; facing a wall nearer than that the place is in the rock and the step came
+                   39 dB down (work\steptwitch\steptest.c). Nothing stands between the player and their own sound:
+                   uwaudio.c's own filters never muffle it either, AC.here.) */
+                if (v->rel) g = 1.0f;
                 de.transmission[k] = g < 0 ? 0 : g > 1 ? 1 : g;
             }
             p_iplDirectEffectApply(v->dfx, &de, &S.din, &S.dmono);

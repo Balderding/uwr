@@ -12,8 +12,9 @@
    The sound is the Roland's own (2026-11-13): each SOUNDS.DAT effect (timbre of bank 1 from SOUND\UW.MT, note,
    velocity, length) is rendered once by a Munt of our own (mt32emu.dll beside the game, the user's CM-32L ROMs in
    roms\; set up as UW's MT32MPU.ADV driver sets the unit up) into a mono OpenAL buffer, on a worker thread at start;
-   OpenAL then places it. While an effect's buffer exists the game's own copy on the music driver is sent at volume 0
-   (SOUND.C fx_play through port_fx_control: uwaudio_taken), so nothing plays twice; before it is rendered, or when
+   OpenAL then places it. While an effect's buffer exists the game's own copy on the music driver is not played at all
+   (SOUND.C fx_play through port_fx_control: uwaudio_taken; no note is sent, no channel taken from the music), so
+   nothing plays twice; before it is rendered, or when
    Munt is not there, the effect plays as it always has. A data\sfx\NNN.wav (NNN the entry, three digits) still
    takes precedence when present (a pack of the user's own).
 
@@ -162,6 +163,9 @@ static int step_plain;             /* fx_step_plain: the player's own steps as t
 #define AL_DIRECT_CHANNELS_SOFT_ 0x1033
 static unsigned step_buf[2 * STEP_PRESETS];  /* the user's NNN-<preset>.wav, by (effect - 1) * 16 + preset */
 static signed char step_state[2 * STEP_PRESETS];   /* 0 not tried, 1 there, -1 none */
+static unsigned long long wav_mask;   /* bit n: effect n has a data\sfx\NNN.wav of the user's */
+static volatile LONG stand_down;   /* uwaudio_stand_down: the game's device is not the Roland */
+static int wav_load(const char *path, unsigned *out);
 static float lis[3];               /* the listener (ours) */
 static float lis_yaw;              /* its facing: 0 north, east positive (radians) */
 static float gain = 1.0f;          /* the menu's Sound volume */
@@ -233,11 +237,18 @@ static LARGE_INTEGER lbtime, lbfreq;
 static char bin_dir[MAX_PATH];     /* where soft_oal.dll (and phonon.dll) are */
 /* the samples behind our OpenAL buffers (mono, 16 bits), by the buffer's name: Acoustics High (Task 7) feeds a sound's
    own samples to Steam Audio's reflections. own: the copy is ours to free (a wav's; a rendering's is the Rend's). */
-static struct { unsigned al; const short *pcm; int frames, rate, own; } pcm_of[512];
-static int npcm;
+/* (2026-11-16, the review: the table was 512 long and a rendering past it silently got no echoes and no placing by
+   Steam Audio; every new velocity is a rendering, so a long session reached it. It grows now.) */
+static struct PcmOf { unsigned al; const short *pcm; int frames, rate, own; } *pcm_of;
+static int npcm, pcm_cap;
 static void pcm_keep(unsigned al, const short *pcm, int frames, int rate, int copy)
 {
-    if (npcm >= 512 || frames <= 0) return;
+    if (frames <= 0) return;
+    if (npcm >= pcm_cap) {
+        struct PcmOf *t = realloc(pcm_of, sizeof *t * (size_t)(pcm_cap ? pcm_cap * 2 : 256));
+        if (!t) return;
+        pcm_of = t, pcm_cap = pcm_cap ? pcm_cap * 2 : 256;
+    }
     if (copy) {
         short *c = malloc(sizeof *c * (size_t)frames);
         if (!c) return;
@@ -271,8 +282,10 @@ static struct {
     int (__cdecl *mt32emu_play_sysex_now)(mt_ctx, const unsigned char *, unsigned);
     void (__cdecl *mt32emu_render_bit16s)(mt_ctx, short *, unsigned);
     unsigned (__cdecl *mt32emu_get_actual_stereo_output_samplerate)(mt_ctx);
+    void (__cdecl *mt32emu_set_stereo_output_samplerate)(mt_ctx, double);   /* (optional) */
     mt_ctx ctx;
     unsigned rate;
+    int dry;                            /* the renderings without the Roland's own reverb (fx_roland_reverb) */
     unsigned char sounds[1 + 64 * 5];   /* SOUND\SOUNDS.DAT: the count, then 5 bytes an effect */
     int nsounds;
     unsigned char *mt;                  /* SOUND\UW.MT: the global timbre library (bank 1: the effects' timbres) */
@@ -379,6 +392,10 @@ static int mt_render_as(int slot, int n, int vel, int shift)
     }
     mt_msg(0xB1, 0x7B, 0);   /* all notes off, whatever was left */
     if (M.quit) { free(mono); return 0; }
+    {   /* (2026-11-16, the review: each rendering kept the whole 34 s it was made in, some 2 to 3 MB whatever its length) */
+        short *t = realloc(mono, sizeof *mono * (size_t)(done ? done : 1));
+        if (t) mono = t;
+    }
     r->pcm = mono, r->frames = (int)done;
     InterlockedExchange(&r->state, 2);
     return 1;
@@ -449,10 +466,11 @@ static int read_game_sound(const char *upper, const char *lower, unsigned char *
 /* Munt opened as UW's MT32MPU.ADV opens the unit (the runtime's mt32.c reset_synth / init_synth: the channel map,
    the partial reserve, the reverb) and the rendering started; 0 (with the reason logged) leaves the effects to the
    music driver as before */
+static int setting_get(const char *datadir, const char *key, int dflt);
 static int mt_start(const char *datadir)
 {
     static const unsigned char part_chans[9] = {1, 2, 3, 4, 5, 6, 7, 8, 9}, part_rsv[9] = {3, 4, 3, 4, 3, 4, 3, 4, 4},
-                               init_reverb[3] = {0, 3, 2}, master_vol = 90;
+                               init_reverb[3] = {0, 3, 2}, dry_reverb[3] = {0, 3, 0}, master_vol = 90;
     char base[MAX_PATH], p[MAX_PATH];
     const char *why = NULL, *e = getenv("UWPORT_FX_ROLAND");
     unsigned char *sd = NULL;
@@ -469,6 +487,7 @@ static int mt_start(const char *datadir)
     GET(mt32emu_free_context), GET(mt32emu_play_msg_now), GET(mt32emu_play_sysex_now), GET(mt32emu_render_bit16s);
     GET(mt32emu_get_actual_stereo_output_samplerate);
 #undef GET
+    if (!why) *(FARPROC *)&M.mt32emu_set_stereo_output_samplerate = GetProcAddress(M.dll, "mt32emu_set_stereo_output_samplerate");
     if (!why) {
         snprintf(p, sizeof p, "%s" UWOS_SEP "sound" UWOS_SEP "sounds.dat", datadir ? datadir : ".");
         if (!read_file(p, &sd, &sdlen, sizeof M.sounds) && !read_game_sound("SOUNDS.DAT", "sounds.dat", &sd, &sdlen, sizeof M.sounds)) why = "no SOUND\\SOUNDS.DAT";
@@ -487,7 +506,13 @@ static int mt_start(const char *datadir)
         snprintf(p, sizeof p, "%sroms" UWOS_SEP "cm32l_pcm.rom", base);
         int r2 = M.mt32emu_add_rom_file(M.ctx, p);
         if (r1 < 0 || r2 < 0) why = "no roms\\cm32l_ctrl_1_02.rom + cm32l_pcm.rom";
-        else if (M.mt32emu_open_synth(M.ctx) != 0) why = "Munt did not open";
+        else {
+            /* (2026-11-16, read in Exhume's audio.c mt_open: the emulator is asked for the output's own rate, its own
+               resampler doing it. Ours rendered at the unit's 32 kHz and left the rest to a straight-line resampling
+               in uwsteam.c and to OpenAL's.) */
+            if (M.mt32emu_set_stereo_output_samplerate) M.mt32emu_set_stereo_output_samplerate(M.ctx, 48000.0);
+            if (M.mt32emu_open_synth(M.ctx) != 0) why = "Munt did not open";
+        }
     }
     if (why) {
         fprintf(stderr, "fx: Roland effects off (%s): the music driver plays them\n", why);
@@ -500,14 +525,24 @@ static int mt_start(const char *datadir)
     mt_sysex(0x7F, 0, 0, part_chans, 1);          /* reset */
     mt_sysex(0x10, 0, 0x0D, part_chans, 9);       /* the channel map */
     mt_sysex(0x10, 0, 0x04, part_rsv, 9);         /* the partial reserve */
-    mt_sysex(0x10, 0, 0x01, init_reverb, 3);      /* the reverb */
+    {   /* The Roland's own reverb (2026-11-16, the review): the driver sets a small room on every note (mode 0, time 3,
+           level 2), and with the acoustics on the real room's echo was then made of a sound that already carried
+           one, its tail muffled and placed as if it were the sound. fx_roland_reverb (the Esc menu's "Roland's own
+           reverb"): 0 never, 1 always, 2 as it comes: none while the acoustics are on, the original's without them. */
+        const char *ae = getenv("UWPORT_FX_ACOUSTICS"), *re = getenv("UWPORT_FX_ROLAND_REVERB");
+        int rv = re && *re ? atoi(re) : setting_get(datadir, "fx_roland_reverb", 2);
+        int ac = ae && *ae ? atoi(ae) : setting_get(datadir, "fx_acoustics", 0);
+        M.dry = rv == 0 || (rv != 1 && ac != 0);
+    }
+    mt_sysex(0x10, 0, 0x01, M.dry ? dry_reverb : init_reverb, 3);      /* the reverb */
     mt_sysex(0x10, 0, 0x16, &master_vol, 1);      /* the master volume (the driver's "avoid MT-32 distortion") */
     M.ready = 0, M.quit = 0;
     ask_head = ask_tail = 0;
     if (!M.asked) M.asked = CreateSemaphoreA(NULL, 0, ASK_RING, NULL);
     M.thread = CreateThread(NULL, 1 << 20, mt_worker, NULL, 0, NULL);
     if (!M.thread) { fprintf(stderr, "fx: Roland effects off (no thread)\n"); return 0; }
-    fprintf(stderr, "fx: Roland effects rendered by Munt (%d effects, %u Hz)\n", M.nsounds, M.rate);
+    fprintf(stderr, "fx: Roland effects rendered by Munt (%d effects, %u Hz, %s)\n", M.nsounds, M.rate,
+            M.dry ? "without the Roland's own reverb" : "with the Roland's own reverb");
     return 1;
 }
 
@@ -1161,6 +1196,16 @@ static int start(const char *datadir)
     snprintf(sfx_dir, sizeof sfx_dir, "%s" UWOS_SEP "sfx", datadir ? datadir : ".");
     memset(buf, 0, sizeof buf), memset(buf_state, 0, sizeof buf_state);
     memset(step_buf, 0, sizeof step_buf), memset(step_state, 0, sizeof step_state);
+    /* (2026-11-16, the review: a data\sfx\NNN.wav was found at the effect's first play and never told to the game,
+       so without the Roland's renderings, no ROMs or another device, the wav and the driver's own copy both played.
+       Looked for now, and the effects that have one are ours whatever the device: uwaudio_taken) */
+    wav_mask = 0;
+    for (int fx = 0; fx < 64; fx++) {
+        char wp[MAX_PATH];
+        snprintf(wp, sizeof wp, "%s" UWOS_SEP "%03d.wav", sfx_dir, fx);
+        buf_state[fx] = wav_load(wp, &buf[fx]) ? 1 : -1;
+        if (buf_state[fx] == 1) wav_mask |= 1ull << fx;
+    }
     {   /* the footsteps' materials: data\acoustics.txt when it is there, else the table in the code (nothing written
            here: the acoustics write the file when they start) */
         char ap[MAX_PATH];
@@ -1421,13 +1466,23 @@ void uwaudio_event(int kind, float x, float y, float z, int fx, int vol)
     if (!on || fx < 0 || fx > 255) return;
     if ((kind & 0xFF) == FX_STOP) {   /* the game silenced it (kill_effect): our copy stops too (the water, 25 s long) */
         if (lbfile) fprintf(stderr, "fx: al stop %d at frame %u\n", fx, lbframes);   /* (the checks' window) */
-        for (int i = 0; i < NSRC; i++)
-            if (src_fx[i] == fx) {
-                A.alGetSourcei(src[i], AL_SOURCE_STATE, &st);
-                if (st == AL_PLAYING) A.alSourceStop(src[i]);
-                src_fx[i] = -1;
-                if (HI.on && HI.voice[i] >= 0) uwst_end(HI.voice[i]), HI.voice[i] = -1;
+        /* (2026-11-16, the review: the game ends ONE of its four slots, and every copy of that effect we played was
+           stopped. The one started longest ago and still sounding goes, as the game's slots are given in turn; one
+           that has rung out by itself is only forgotten.) */
+        {
+            int old = -1;
+            for (int i = 0; i < NSRC; i++)
+                if (src_fx[i] == fx) {
+                    A.alGetSourcei(src[i], AL_SOURCE_STATE, &st);
+                    if (st != AL_PLAYING) src_fx[i] = -1;
+                    else if (old < 0 || src_used[i] < src_used[old]) old = i;
+                }
+            if (old >= 0) {
+                A.alSourceStop(src[old]);
+                src_fx[old] = -1;
+                if (HI.on && HI.voice[old] >= 0) uwst_end(HI.voice[old]), HI.voice[old] = -1;
             }
+        }
         return;
     }
     if (kind & FX_MUTED) return;
@@ -1478,7 +1533,7 @@ void uwaudio_event(int kind, float x, float y, float z, int fx, int vol)
     } else if (buf_state[fx] == 1) {   /* a wav of the user's: the velocity as a gain by the guess below */
         use = buf[fx];
         if (vol >= 0 && base > 0 && vol != base) g = powf((float)vol / (float)base, VEL_GAIN);
-    } else if (fx < 64 && base >= 0 && (uwaudio_taken() >> fx & 1)) {   /* Munt's renderings */
+    } else if (fx < 64 && base >= 0 && !stand_down && (InterlockedOr64(&M.ready, 0) >> fx & 1)) {   /* Munt's renderings */
         if (floor && floor->step) {   /* the note moved for this floor: its own rendering (until it is made, the usual one) */
             int v = vol >= 0 ? vol : base;
             if (floor->absorb[2] > 0.5f) v /= 2;
@@ -1570,11 +1625,11 @@ void uwaudio_shutdown(void)
 /* uwaudio_stand_down(1): the game's own sound device is not the Roland (the Esc menu's "Music and effects device":
    Ad Lib, a Sound Blaster, the PC speaker), so the effects are that device's and our Roland renderings stay out of
    it: nothing is taken, the game's driver plays every effect itself (unplaced, as the original) */
-static volatile LONG stand_down;
 void uwaudio_stand_down(int yes) { InterlockedExchange(&stand_down, yes != 0); }
 unsigned long long uwaudio_taken(void)
 {
-    return on && !stand_down ? (unsigned long long)InterlockedOr64(&M.ready, 0) : 0;
+    if (!on) return 0;
+    return wav_mask | (stand_down ? 0 : (unsigned long long)InterlockedOr64(&M.ready, 0));
 }
 
 void uwaudio_volume(float g)

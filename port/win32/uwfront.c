@@ -757,6 +757,7 @@ static int view_size(void)
    get_eye: PN, the eye 0xA4 above the feet; PlayerFacing and PlayerPitch, a full turn 0x10000; heading 0 north,
    east positive as MOTION.C's sin/cos; pitch up positive as MOUSE.C's mouse look). 1 if the view is ours now. */
 static uint8_t clear_px[640 * 480];     /* per picture pixel: 1 where the layer is clear */
+static int view_marks;                  /* how many of them the game left for our view in the last picture */
 
 /* Full-screen play (with our renderer): while the game's 3D view is live and the interface is not asked for (Tab),
    our view fills the window with only the original's compass, flasks and message lines over it, and the mouse turns
@@ -772,6 +773,17 @@ int port_mouse_look(void);             /* ui/MOUSE.C: the game's mouse-look is o
 #ifndef UWPORT_PLAIN
 extern int port_pitch_wide;            /* uw-new's game/PLAYER.C: wide-pitch's bound */
 #endif
+/* the original's display is chosen (before the first frame: as the settings have it): the sound's start asks */
+static int display_orig(void)
+{
+#ifdef UWPORT_PLAIN
+    return 0;   /* (uw-original.exe: as the command line has it) */
+#else
+    char v[16];
+    if (display_mode >= 0) return display_mode == 1;
+    return plat_home() && port_config_get(plat_home(), "display", v, sizeof v) == 0 && !strcmp(v, "original");
+#endif
+}
 static void display_apply(void)
 {
 #ifdef UWPORT_PLAIN
@@ -787,10 +799,29 @@ static void display_apply(void)
     port_interact_take = display_mode != 1;   /* e takes what can be taken (port/ui/keys.c), as the old version's e */
     door_step(-1), door_pick(-1);             /* and the two door helpers */
     door_cue(-1);                             /* the door's message line as the config has it (EFFECT.C's port_door_cue_on) */
-    if (display_mode == 1) enhance_on &= ~(ours | (1u << ENH_INVERT_LOOK));
-    else {
+    /* The one switch (the user, 2026-11-17: the original "changes everything back to it and turns off our
+       enhancements and the key binding changes to the old way too", ours "changes to everything we've done"). The
+       original's: every enhancement off (creature AI, hunters and friends with them: smart-hunting is the flag their
+       hooks test), the game's own 3D picture (view_present), its own sound (fx_audio_start), its half-second fades,
+       its door rules (door_step, door_pick, door_cue). What was on is kept here and comes back with ours; nothing
+       of it is written to the settings. A replay keeps its enhancements (they are the recording's). */
+    static uint32_t enh_kept;
+    static int enh_have, fades_kept = -1;
+    extern int port_quick_fades;
+    extern int16_t rp_request;
+    if (display_mode == 1) {
+        if (rp_request == 2) enhance_on &= ~(ours | (1u << ENH_INVERT_LOOK));
+        else {
+            if (!enh_have) enh_kept = enhance_on & ~(ours | (1u << ENH_INVERT_LOOK)), enh_have = 1;
+            enhance_on = 0;
+            if (fades_kept < 0) fades_kept = port_quick_fades;
+            port_quick_fades = 0;
+        }
+    } else {
         float sens = 1;
         int inv = 0;
+        if (enh_have) enhance_on = enh_kept, enh_have = 0;
+        if (fades_kept >= 0) port_quick_fades = fades_kept, fades_kept = -1;
         enhance_on |= ours;
         if (V.mouse) V.mouse(&sens, &inv);    /* uw.exe's mouse_sensitivity and invert_mouse */
         mouse_look_speed((int)(sens * 100.0f + 0.5f));
@@ -1314,7 +1345,7 @@ static void inv_draw(void)
    renderer's by the DLL (uwv_option), the window's here */
 enum { MO_RESUME, MO_DISPLAY, MO_FULL, MO_SAVE, MO_LOAD, MO_NEW, MO_DLSS, MO_DLSS5, MO_STYLE, MO_RT, MO_BOUNCE, MO_SHADOWS, MO_RELIEF, MO_NSTR,
        MO_MUSIC, MO_MUSVOL, MO_SOUND, MO_FXVOL, MO_FADE, MO_MOUSE, MO_LLM, MO_FOV,
-       MO_PARTICLES, MO_DECALS, MO_WATER, MO_FOG, MO_FXAUDIO, MO_ACOUSTICS, MO_SMOOTH, MO_CONVFONT, MO_HUNTERS, MO_MENUFONT, MO_HRTF, MO_PANFIX, MO_RES, MO_DLSSMODE, MO_RR, MO_D5INT, MO_D5STR, MO_CHARSHEET, MO_LOGFONT, MO_ACWET, MO_ACSIZE, MO_ACOCCL, MO_ACDETOUR, MO_FOOTSTEPS, MO_FONT, MO_FONTSIZE, MO_QUIT, MO_TEXAO, MO_TEXSHADOW, MO_TEXRES, MO_LIGHTCOL, MO_ADAPT, MO_HDR, MO_HDRPEAK, MO_HDRPAPER, MO_RENDERER, MO_MAPNORMAL, MO_MAPAO, MO_MAPHEIGHT, MO_HEARRANGE, MO_FEETSPREAD, MO_ECHOQ, MO_STEPVOL, MO_STEPECHO, MO_AILEVEL, MO_AIBY, MO_AIP0, MO_AIP1, MO_AIP2, MO_AIP3, MO_AIP4, MO_AIP5, MO_AIP6, MO_BREATH, MO_DOORCUE, MO_LIGHTFADE, MO_DOORSTEP, MO_DOORPICK, MO_MENUBG, MO_AIFRIENDS, MO_AILOG, MO_LLMGPU, MO_LLMMODE, MO_LLMRATE, MO_LLMSTALE, MO_LLMIDLE, MO_COUNT, MO_HEAD = 98 };
+       MO_PARTICLES, MO_DECALS, MO_WATER, MO_FOG, MO_FXAUDIO, MO_ACOUSTICS, MO_SMOOTH, MO_CONVFONT, MO_HUNTERS, MO_MENUFONT, MO_HRTF, MO_PANFIX, MO_RES, MO_DLSSMODE, MO_RR, MO_D5INT, MO_D5STR, MO_CHARSHEET, MO_LOGFONT, MO_ACWET, MO_ACSIZE, MO_ACOCCL, MO_ACDETOUR, MO_FOOTSTEPS, MO_FONT, MO_FONTSIZE, MO_QUIT, MO_TEXAO, MO_TEXSHADOW, MO_TEXRES, MO_LIGHTCOL, MO_ADAPT, MO_HDR, MO_HDRPEAK, MO_HDRPAPER, MO_RENDERER, MO_MAPNORMAL, MO_MAPAO, MO_MAPHEIGHT, MO_HEARRANGE, MO_FEETSPREAD, MO_ECHOQ, MO_STEPVOL, MO_STEPECHO, MO_AILEVEL, MO_AIBY, MO_AIP0, MO_AIP1, MO_AIP2, MO_AIP3, MO_AIP4, MO_AIP5, MO_AIP6, MO_BREATH, MO_DOORCUE, MO_LIGHTFADE, MO_DOORSTEP, MO_DOORPICK, MO_MENUBG, MO_AIFRIENDS, MO_AILOG, MO_LLMGPU, MO_LLMMODE, MO_LLMRATE, MO_LLMSTALE, MO_LLMIDLE, MO_GLOWSTONES, MO_MOONLIGHT, MO_ELEMLIGHT, MO_CAMPSMOKE, MO_WATERMIST, MO_COUNT, MO_HEAD = 98 };
 _Static_assert(MO_COUNT <= 98, "the rows' ids run into MO_HEAD");
 /* the language model's files and the one in use (uwmindhost.c): the Language model row */
 int port_mind_models(const char **names, const char **paths, int max);
@@ -1354,7 +1385,7 @@ static int door_step(int v)
         char b[16];
         on = !(plat_home() && port_config_get(plat_home(), "door_shut_close", b, sizeof b) == 0 && !strcmp(b, "0"));
     }
-    port_door_step_on = on && rp_request != 2;
+    port_door_step_on = on && rp_request != 2 && display_mode != 1;   /* (the original's display: its rule) */
     return on;
 }
 /* a door picked by the frame and leaf our display draws, when nothing else is at the point (uwlook.c's
@@ -1369,7 +1400,7 @@ static int door_pick(int v)
         char b[16];
         on = !(plat_home() && port_config_get(plat_home(), "door_targeting", b, sizeof b) == 0 && !strcmp(b, "0"));
     }
-    uwl_door_targets = on;
+    uwl_door_targets = on && display_mode != 1;
     return on;
 }
 extern int port_door_cue_on;
@@ -1384,7 +1415,7 @@ static int door_cue(int v)
         char b[16];
         on = !(plat_home() && port_config_get(plat_home(), "door_blocked_message", b, sizeof b) == 0 && !strcmp(b, "0"));
     }
-    port_door_cue_on = on && rp_request != 2;
+    port_door_cue_on = on && rp_request != 2 && display_mode != 1;
     return on;
 }
 void port_sound_volumes(int music, int fx);   /* SOUND.C, port only: the theme's and the effects' volume, percent */
@@ -1506,7 +1537,7 @@ static void card_step(int which, int step)
     write_uw_cfg(spec);
     if (plat_home()) port_config_set(plat_home(), "sound-auto", "0");   /* the player has chosen: the port does not */
 }
-enum { DK_NUM, DK_ONOFF, DK_SECONDS, DK_BOUNCES };
+enum { DK_NUM, DK_ONOFF, DK_SECONDS, DK_BOUNCES, DK_AUTO };   /* DK_AUTO: 0 Off, 1 On, 2 Automatic */
 enum { DN_AUDIO, DN_AC, DN_HIGH, DN_EFX, DN_ALWAYS };   /* positional sound on; Acoustics On or High; High alone; On alone */
 static const struct { const char *key; int dflt, lo, hi, step, kind, need; const char *unit; } SOUND_DIALS[] = {
     /*  0 */ {"acoustics_echo_first", 1, 0, 1, 1, DK_ONOFF, DN_HIGH, ""},
@@ -1543,6 +1574,7 @@ static const struct { const char *key; int dflt, lo, hi, step, kind, need; const
     /* 31 */ {"acoustics_steam_pathing", 1, 0, 1, 1, DK_ONOFF, DN_HIGH, ""},
     /* 32 */ {"acoustics_path_level", 100, 0, 400, 10, DK_NUM, DN_HIGH, "%"},
     /* 33 */ {"acoustics_things", 1, 0, 1, 1, DK_ONOFF, DN_AC, ""},
+    /* 34 */ {"fx_roland_reverb", 2, 0, 2, 1, DK_AUTO, DN_AUDIO, ""},
 };
 #define SOUND_NDIALS ((int)(sizeof SOUND_DIALS / sizeof SOUND_DIALS[0]))
 static int dial_val[sizeof SOUND_DIALS / sizeof SOUND_DIALS[0]], dials_read;
@@ -1599,20 +1631,24 @@ static void dial_text(int i, char *out, size_t n)
     case DK_ONOFF: snprintf(out, n, "%s", v ? "On" : "Off"); break;
     case DK_SECONDS: snprintf(out, n, "%d.%02d s", v / 1000, v % 1000 / 10); break;
     case DK_BOUNCES: if (v) snprintf(out, n, "%d", v); else snprintf(out, n, "As Echo detail"); break;
+    case DK_AUTO: snprintf(out, n, "%s", v == 2 ? "Automatic" : v ? "On" : "Off"); break;
     default: snprintf(out, n, "%d%s", v, SOUND_DIALS[i].unit); break;
     }
 }
+static void fx_audio_start(int again);
 static void dial_step(int i, int step)
 {
     int v;
     dials_load();
     v = dial_val[i];
     if (SOUND_DIALS[i].kind == DK_ONOFF) v = !v;
+    else if (SOUND_DIALS[i].kind == DK_AUTO) v = (v + (step > 0 ? 1 : 2)) % 3;
     else v += step > 0 ? SOUND_DIALS[i].step : -SOUND_DIALS[i].step;
     v = v < SOUND_DIALS[i].lo ? SOUND_DIALS[i].lo : v > SOUND_DIALS[i].hi ? SOUND_DIALS[i].hi : v;
     if (v == dial_val[i]) return;
     dial_val[i] = v;
     fx_setting_save(SOUND_DIALS[i].key, v);
+    if (i == 34) { fx_audio_start(1); return; }   /* (the Roland's own reverb is in the renderings: made again) */
     fx_acoustics_tune();   /* heard at once */
 }
 static const struct { int id; const char *label; int opt; const char *hint; } MENU_ROWS[] = {
@@ -1623,7 +1659,7 @@ static const struct { int id; const char *label; int opt; const char *hint; } ME
     {MO_NEW, "New game (title screen)", -1, "Back to the title screen to start a new character. Anything not saved is lost."},
     {MO_QUIT, "Quit the game", -1, "Closes the game at once, without asking. Anything not saved is lost."},
     {MO_HEAD, "#Display", -1, ""},
-    {MO_DISPLAY, "Display", -1, "Ours: the new full-screen 3D view. The original's: the game's 1992 screen, just as it was."},
+    {MO_DISPLAY, "Display", -1, "Ours: the new 3D view with everything we added. The original's: the 1992 game as it was, all our changes off, its own keys."},
     {MO_FULL, "Full screen", -1, "On: the game fills the whole screen. Off: it runs in a window."},
     {MO_RENDERER, "Renderer", -1, "The graphics system that draws the picture: Vulkan (the default) or Direct3D 12. Takes hold at the next start."},
     {MO_FOV, "Field of view", 6, "How wide an angle you see: 50 to 120 degrees, in steps of 5. Higher shows more at the sides. Default 85."},
@@ -1671,6 +1707,11 @@ static const struct { int id; const char *label; int opt; const char *hint; } ME
     {MO_DECALS, "Decals", 11, "On: marks such as blood are left on floors and walls. Off: none."},
     {MO_WATER, "Water", 12, "On: water moves and bends the view of what is under it. Off: plain water."},
     {MO_FOG, "Fog and light shafts", 13, "Fog, and shafts of light through it."},
+    {MO_CAMPSMOKE, "Campfire smoke", 83, "On: grey smoke rises from every campfire, spreads and thins out over a few seconds. Needs Particles. Off: none."},
+    {MO_WATERMIST, "Water fog", 84, "On: a thin pale fog lies over the water near you and drifts slowly. Needs Particles. Off: none."},
+    {MO_GLOWSTONES, "Glowing stones", 80, "On: glowing rocks, orbs and orb rocks shine and light the floor about a foot round them. Off: as plain objects."},
+    {MO_MOONLIGHT, "Moonstone light", 81, "The moonstone fills the room it lies in with a deep blue light. Off, or 5% to 50% of a candle. Default 10%."},
+    {MO_ELEMLIGHT, "Fire elemental light", 82, "Fire elementals cast a smouldering orange light as they move. Off, or 10% to 100% of a candle. Default 30%."},
     {MO_HEAD, "#Sound", -1, ""},
     {MO_MUSIC, "Music on / off", -1, "Turns the game's music on or off."},
     {MO_MUSVOL, "Music volume", -1, "How loud the music is: 0% to 100%, in steps of 5."},
@@ -1704,6 +1745,7 @@ static const struct { int id; const char *label; int opt; const char *hint; } ME
     {MO_DIAL + 30, "Music thread first", -1, "On: making the music comes before the game's other work, so a busy moment leaves no gap in the tune. Default On."},
     {MO_DIAL + 28, "Music in the menu", -1, "On: the music plays on while this menu is open. Off: it stops with the paused game. Default On."},
     {MO_DIAL + 27, "Own footsteps plain", -1, "On: your own footsteps play untouched: no echo, floor sound, 3D or muffling. For comparing by ear. Default Off."},
+    {MO_DIAL + 34, "Roland's own reverb", -1, "The Roland adds a small room echo to every effect. Automatic: off while Acoustics adds the real room's. On: always."},
     {MO_DIAL + 26, "Effects interrupt music", -1, "On: as the original, each sound effect cuts notes out of the music. Off (the default): the music plays whole."},
     {MO_DIAL + 33, "Furniture in the sound", -1, "On: tables, barrels, chests, pillars and boulders block and reflect sound, each by its material. Off: empty rooms."},
     {MO_DIAL + 25, "Doorways their real size", -1, "On: for sound, a doorway is a narrow opening in a wall. Off: an open door leaves its whole square open. Default On."},
@@ -1744,6 +1786,10 @@ static const struct { int id; const char *label; int opt; const char *hint; } ME
     {MO_AIX13, "Learns how you fight", -1, "Shot from afar, a creature stops walking into it and waits out of sight. Shooters that felt your blade back off sooner."},
     {MO_AIX4, "Fetches kin", -1, "Monstrous only. A clever creature that loses you or hears you fetches the kin in its earshot and goes after you with them."},
     {MO_AIP1, "Calls for help", -1, "Monstrous only. A creature that meets you with kin in earshot but none fighting calls them to you. Once a minute at most."},
+    {MO_AIP5, "Calls passed on", -1, "Monstrous only. A clever creature that is called repeats the call to its own neighbours, twice at most, so word spreads."},
+    {MO_AIP4, "Strike together", -1, "Monstrous only. Kin called to a fight gather three squares short of it, then come at you together, after 10 s at most."},
+    {MO_AIX6, "Cut off the retreat", -1, "Monstrous only. When two or more kin are called, one goes to the door behind you, so that your way back is closed."},
+    {MO_AIX5, "The lure", -1, "Monstrous only. A clever creature shows itself, then falls back to kin who lie in wait, to lead you in among them."},
     {MO_AIP2, "Pack courage", -1, "Monstrous only. Spiders, bats and other dim creatures fall back to kin in earshot and attack together. Alone, they attack."},
     {MO_AIP3, "Fall back when hurt", -1, "Monstrous only. A clever creature under about half its health runs to its kin, once a fight, and comes back with them."},
     {MO_AIX16, "Surround", -1, "Monstrous only. When two kin already fight you hand to hand, the next one goes round to your side or back."},
@@ -1755,6 +1801,7 @@ static const struct { int id; const char *label; int opt; const char *hint; } ME
     {MO_AIP6, "AI messages", -1, "Lines in the message box: a creature shrieks for help, runs to its kin or backs away; a friendly one nods, follows or warns."},
     {MO_HUNTERS, "Level hunters", -1, "One or two clever creatures a level track you across the whole level by a plan: your last place, doors, light, kin."},
     {MO_AILOG, "AI log (Ctrl+L)", -1, "Each creature's decision and its reason, in the message box as it is made. Not kept: off again at the next start."},
+    {MO_AILOGFILE, "AI log in the log file", -1, "Every decision is also written to home\\logs\\uwr.log with the game time, Ctrl+L or not. Each part's row counts its uses."},
     {MO_AIBY, "Decisions by", -1, "Who picks among a creature's choices. Rules: the built-in rulebook, at once. Language model: an AI model file, slower."},
     {MO_LLM, "Language model", -1, "The AI model file creatures decide with when Decisions by is Language model. Left and Right pick another file."},
     {MO_LLMGPU, "Model runs on", -1, "Graphics card: fast, uses its memory. Processor: slower, leaves the card alone. Takes hold when the model next loads."},
@@ -1786,14 +1833,16 @@ static void menu_rows_build(const char **lab, const char **val, const char **hin
     }
     for (int i = 0; i < MENU_NROWS && menu_n < MENU_MAX; i++) {
         int id = MENU_ROWS[i].id;
+        /* the original's display: everything of ours is off, so only the rows that still do something are shown (the
+           game's own, the Display row to come back by, the window, the music and sound the original had, and this
+           menu's own letters and background) */
+        if (display_mode == 1 && id != MO_HEAD && id != MO_RESUME && id != MO_SAVE && id != MO_LOAD && id != MO_NEW && id != MO_QUIT
+            && id != MO_DISPLAY && id != MO_FULL && id != MO_MUSIC && id != MO_MUSVOL && id != MO_SOUND && id != MO_FXVOL
+            && id != MO_CARDMUSIC && id != MO_CARDSPEECH && id != MO_MENUFONT && id != MO_MENUBG) continue;
         vbuf[menu_n][0] = 0;
         if (id == MO_HEAD) {   /* a heading; one with no row under it is taken back (below) */
             if (menu_n && menu_ids[menu_n - 1] == MO_HEAD) menu_n--;
         } else if (MENU_ROWS[i].opt >= 0) {
-    {MO_AIP5, "Calls passed on", -1, "Monstrous only. A clever creature that is called repeats the call to its own neighbours, twice at most, so word spreads."},
-    {MO_AIP4, "Strike together", -1, "Monstrous only. Kin called to a fight gather three squares short of it, then come at you together, after 10 s at most."},
-    {MO_AIX6, "Cut off the retreat", -1, "Monstrous only. When two or more kin are called, one goes to the door behind you, so that your way back is closed."},
-    {MO_AIX5, "The lure", -1, "Monstrous only. A clever creature shows itself, then falls back to kin who lie in wait, to lead you in among them."},
             if (!V.option || !V.option(MENU_ROWS[i].opt, 0, vbuf[menu_n], 128)) continue;
         } else if (id == MO_DISPLAY) {   /* (no renderer: no display of ours to choose) */
             if (!V.ok) continue;
@@ -1801,7 +1850,6 @@ static void menu_rows_build(const char **lab, const char **val, const char **hin
         }
         else if (id == MO_CARDMUSIC || id == MO_CARDSPEECH) card_text(id == MO_CARDSPEECH, vbuf[menu_n], 128);
         else if (id == MO_ROOMINFO) {   /* what the rays measure at the listener (shown while the acoustics run) */
-    {MO_AILOGFILE, "AI log in the log file", -1, "Every decision is also written to home\\logs\\uwr.log with the game time, Ctrl+L or not. Each part's row counts its uses."},
             float rt[3], mfp = 0, first = 0;
             if (!uwaudio_acoustics_on()) continue;
             if (uwaudio_room(rt, &mfp, &first)) snprintf(vbuf[menu_n], 128, "rings %.1f / %.1f / %.1f s, %.1f m between walls", rt[0], rt[1], rt[2], mfp);
@@ -1982,6 +2030,18 @@ static void menu_choose_step(int row, int step)
         display_apply();
         if (plat_home()) port_config_set(plat_home(), "display", display_mode ? "original" : "ours");
         if (!display_mode) iface = 0;
+        fprintf(stderr, PLAT_NAME ": display: %s\n", display_mode ? "the original's (its own 3D picture, sound, keys and rules; "
+                "everything of ours off)" : "ours (everything of ours back as it was set)");
+#ifndef UWPORT_PLAIN
+        fx_audio_start(1);                  /* the sound follows: the game's own, or ours started again */
+        menu_sel = 0;                       /* (the rows changed: the choice found again below) */
+        {
+            const char *lab[MENU_MAX], *val[MENU_MAX], *hint[MENU_MAX];
+            static char vb[MENU_MAX][128];
+            menu_rows_build(lab, val, hint, vb);
+            for (int i = 0; i < menu_n; i++) if (menu_ids[i] == MO_DISPLAY) menu_sel = i;
+        }
+#endif
         break;
     case MO_FULL:
         plat_set_display(!live.fullscreen, live.scale, live.aspect, live.integer_scale);
@@ -2021,6 +2081,12 @@ static void menu_choose_step(int row, int step)
         break;
     case MO_AIBY: port_ai_by_model(!port_ai_by_model(-1)); break;
     case MO_AIFRIENDS: port_ai_part(7, !port_ai_part(7, -1)); break;
+    case MO_AIX0: case MO_AIX1: case MO_AIX2: case MO_AIX3: case MO_AIX4: case MO_AIX5: case MO_AIX6: case MO_AIX7:
+    case MO_AIX8: case MO_AIX9: case MO_AIX10: case MO_AIX11: case MO_AIX12: case MO_AIX13: case MO_AIX14: case MO_AIX15:
+    case MO_AIX16:
+        port_ai_part(8 + id - MO_AIX0, !port_ai_part(8 + id - MO_AIX0, -1));
+        break;
+    case MO_AILOGFILE: port_ai_logfile(!port_ai_logfile(-1)); break;
     case MO_AILOG: our_action(UWI_A_AI_LOG, 1); break;   /* (Ctrl+L's own switch: the note in the message box too) */
     case MO_LLMGPU: port_mind_tune(0, !port_mind_tune(0, -1)); break;
     case MO_LLMMODE: port_mind_tune(1, !port_mind_tune(1, -1)); break;
@@ -2081,12 +2147,6 @@ static int menu_event(int kind, int c, int down, int x, int y)
 /* Our taps for the game (C's F5, a click's q or e, the left button's n, o and u): the make now, the break once the game
    has taken the key. The game's own key handlers never act on key()'s result: INPUT.C's input_dispatch reads
    MOUSE.C's do_keyboard_input(1), which throws key()'s result away for do_keyarray_input's, a scan of key_on (the keys
-    case MO_AIX0: case MO_AIX1: case MO_AIX2: case MO_AIX3: case MO_AIX4: case MO_AIX5: case MO_AIX6: case MO_AIX7:
-    case MO_AIX8: case MO_AIX9: case MO_AIX10: case MO_AIX11: case MO_AIX12: case MO_AIX13: case MO_AIX14: case MO_AIX15:
-    case MO_AIX16:
-        port_ai_part(8 + id - MO_AIX0, !port_ai_part(8 + id - MO_AIX0, -1));
-        break;
-    case MO_AILOGFILE: port_ai_logfile(!port_ai_logfile(-1)); break;
    held) at most every 30 ticks of the game's clock (117 ms) since the last key it gave, round from the last one. A make
    and its break sent together are both read by key() between two scans, so such a tap counted only when no key had
    been given for 30 ticks: while W walks (the walk's X given every 30 ticks), or PageDown or a slide is held, C, a
@@ -2757,6 +2817,7 @@ static int view_world(void)
         else V.lens(tx, tx * (float)s->h / (float)s->w * 1.2f);   /* the original's pixels are 1.2 tall on the 4:3 screen */
     }
     memset(clear_px, 0, sizeof clear_px);
+    view_marks = 0;
     for (y = 0; y < s->h; y++)
         for (x = 0; x < s->w; x++) {
             int at = (UWG_VIEW_Y + y) * L.w + UWG_VIEW_X + x;
@@ -2765,6 +2826,7 @@ static int view_world(void)
                drawing, and every picture it puts into it or over it afterwards (the weapon, the ornaments, the cursor)
                leaves colour 0 alone (Transparency) */
             clear_px[at] = L.pix[at] == UWG_MARK;
+            view_marks += clear_px[at];
 #else
             clear_px[at] = L.pix[at] == uwg_fb_at(s, x, y);
 #endif
@@ -2785,12 +2847,20 @@ static void view_present(const uint32_t *src, int sw, int sh)
     int x, y;
     uint64_t t0 = plat_counter();
 #ifdef UWPORT_GAMEVIEW
-    uwg_gameview_replace(1);   /* our renderer draws the 3D view: the game leaves its rasterization out */
+    /* our renderer draws the 3D view: the game leaves its rasterization out. In the original's display the game
+       draws its own again (the user, 2026-11-17: the original is the original, nothing of ours) */
+    uwg_gameview_replace(display_mode != 1);
 #endif
     int ours = sw == L.w && sh == L.hgt && view_world();
+    int orig = 0;   /* the original's display with the game's own 3D picture in its window: shown as it is */
+#ifdef UWPORT_GAMEVIEW
+    /* (a picture the game made before the switch still has our view's marks in its window, and the game is paused
+       under the menu: our view stays in them until the game draws again) */
+    if (display_mode == 1 && ours && !view_marks) ours = 0, orig = 1;
+#endif
     if (display_mode == 0 && V.hud && uwc_talking()) ours = 0;   /* a conversation: its pieces over our last frame (uwconv.c) */
 #ifdef UWPORT_GAMEVIEW
-    if (!ours) full_live = 0;   /* view_world set it: the game's word, nothing to bridge */
+    if (!ours && !orig) full_live = 0;   /* view_world set it: the game's word, nothing to bridge */
 #else
     {   /* a frame the 3D view cannot be matched in (the game mid-redraw) is not a reason to show the original's
            screen for one frame in our display (the user saw it flash): a few in a row keep ours, the last camera;
@@ -3045,6 +3115,10 @@ static void fx_audio_start(int again)
     const char *base = plat_base_dir();
     if (!base) return;
     if (again) uwaudio_shutdown();
+    if (display_orig()) {   /* the original's display: the game's own sound alone (uwaudio_taken 0: SOUND.C plays it) */
+        fprintf(stderr, "fx: the original's display: the game's own sound, no positional sound\n");
+        return;
+    }
     snprintf(bin, sizeof bin, "%sbin", base), uwf_our_data(data, sizeof data);
     uwaudio_game_dir(plat_data_root());
     fx_pan_fix = uwaudio_setting(data, "fx_pan_fix", 1);
@@ -3177,7 +3251,7 @@ static void fx_pump(void)
     uwaudio_stand_down(cards_run[0] >= 0 && cards_run[0] != 6);   /* (this run's music card is not the Roland: its own effects) */
     port_fx_control(uwaudio_taken(), fx_pan_fix);
     dials_load();
-    port_fx_interrupts(dial_val[26]);
+    port_fx_interrupts(display_mode == 1 ? 1 : dial_val[26]);   /* (the original's display: its effects take the music's channels) */
     port_pause_music(dial_val[28]);     /* (the "Music in the menu" row: on unless turned off) */
     uwp_music_room(dial_val[29], dial_val[30]);   /* (the "Effects interrupt music" row: 0 unless turned on) */
     {   /* the music's stream (Exhume's audio.c): the times the device found it empty, into the log once a minute

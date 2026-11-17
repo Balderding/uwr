@@ -1,7 +1,7 @@
 /* uwaudio.h: our positional sound effects (uwaudio.c) over OpenAL Soft, loaded at run time (soft_oal.dll), for the
    effect events the game reports (underworld-exhumed's src/port/sys/fxevent.c). Presentation only: the game's own
    effects (the MT-32 / CM-32L through Munt) are rendered once each by a Munt of our own and placed by OpenAL where
-   the game placed the effect, the music driver's copy silenced meanwhile (uwaudio_taken -> port_fx_control); a
+   the game placed the effect, the music driver's copy not played meanwhile (uwaudio_taken -> port_fx_control); a
    data\sfx\NNN.wav (NNN the SOUNDS.DAT entry) takes precedence where present. Off unless fx_audio 1. */
 #ifndef UWAUDIO_H
 #define UWAUDIO_H

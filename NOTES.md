@@ -1988,7 +1988,28 @@ The user: "we want pathing from the steam audio", "and figure out where Baked pr
     portwin32.py and portlinux.py), marks cleared in bc_close and in bc_fopen. Proof: 20 of 20 starts pass where
     1 of 5 (ext4, sound on: linuxrepeat.sh) and 2 of 4 (drvfs: d004c.sh) failed. The same code is in the Windows
     game (rebuilt, launches). LOADGR.C now logs "gr: <file>: ..." when a picture file fails (port only).
-  - **Open, the sound session's**: quitting while the pathing bake still runs crashes in a libphonon bake thread
-    (linuxexit.sh: 3 of 4 under strace; 12 of 12 clean when the bake had ended). Sent to the sound session.
+  - Quitting while the pathing bake still ran crashed in a libphonon bake thread (linuxexit.sh: 3 of 4 under
+    strace). Fixed by the sound session the same day (bake_stop waits the bake out, never cancels); with it 6 of 6
+    quits are clean. That change is the sound session's to commit.
   - Not run: a new game from a fresh home (the old key script no longer reaches it), a real Mint machine, a real
     graphics card (llvmpipe here). strace was installed in the WSL Ubuntu for this.
+- **The Display row is the one switch between the original and everything of ours** (2026-11-17, the user: the
+  original "changes everything back to it and turns off our enhancements and the key binding changes to the old way
+  too", ours "changes to everything we've done"). Before, the original's display took back only the keys and
+  mouse-look; our renderer still drew its 3D window and the sound, creature AI, door helpers and quick fades stayed.
+  Now (uwfront.c, display_apply and its neighbours) the original's display means: enhance_on 0 (smart-hunting with
+  it, so Creature AI reads Original and hunters and friends are off), the game's own 3D picture
+  (uwg_gameview_replace(0); view_present shows the picture whole, full_live kept so the menu still opens), the
+  positional sound shut down (fx_audio_start returns; SOUND.C plays its own, effects interrupt music), quick fades
+  off, the three door helpers off. What was on is kept in memory and comes back with ours; nothing is written to
+  the settings but "display". A replay keeps its enhancements. In the original's display the menu shows only the
+  rows that still do something. Not turned off: the renderer still runs behind the original's picture (it presents
+  the screen and draws the menu). Hidden runs (work\esc_hints\origcheck.py, my build area): to the original's and
+  the picture is the 1992 screen with its own 3D view; back to ours and the full-screen view and the sound return;
+  a start with display=original starts so. Not tried by hand: the original's keys in play.
+  Linux the same day (the user: "make sure this works on both"): portlinux, makelinuxdist, makedist; in the WSL
+  Ubuntu, the trial package on ext4 with the new program (linuxnew.sh, then linuxorig2.sh, hidden under Xvfb, the
+  keys by UWPORT_MOUSETEST with UWPORT_FOCUSTEST for the focus): to the original's, the 1992 screen with its own
+  3D picture and the positional sound stopped; and back, our full-screen view and the sound started again. Both
+  exit 0. (From dist/UW1 on drvfs with the user's settings the game never left the title under llvmpipe, with or
+  without this change's keys: three wasted runs, linuxorig.sh; use the ext4 package.)

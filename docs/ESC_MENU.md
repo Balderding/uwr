@@ -56,7 +56,7 @@ Both pages show the same five rows.
 
 | Row | Values | What it does |
 | --- | --- | --- |
-| **Display** | Ours / The original's | Ours is the new full-screen 3D view with its own interface. The original's is the game's 1992 screen, drawn as it was. |
+| **Display** | Ours / The original's | The one switch between the two games. **Ours** is the new full-screen 3D view with its own interface and everything this menu offers, each row as you last set it. **The original's** is the 1992 game as it was: its own screen and its own 3D picture, its own keys and mouse, its own sound (no positional sound or acoustics), its own creatures (Creature AI Original, no hunters), its own door rules and half-second fades, and every enhancement off. While it is chosen the menu shows only the rows that still do something: the Game rows, Display, Full screen, Menu text, Menu background, and the music and sound rows the original had. Nothing you set is lost: choose Ours again and it all comes back. |
 | **Full screen** | On / Off | On fills the whole screen; Off plays in a window. |
 | **Renderer** | Vulkan (default) / Direct3D 12 | The graphics system that draws the picture. Takes hold at the next start; until then the row also shows which one is running now. Windows only. |
 | **Field of view** | 50 to 120 degrees, steps of 5. Default 85 | How wide an angle you see. A higher number shows more at the sides. |
@@ -113,8 +113,13 @@ Rows marked "card" are shown only when the graphics card and its driver can do w
 | **Particles** | On / Off | Sparks, smoke and dust in the air. |
 | **Decals** | On / Off | Marks left on floors and walls, such as blood. |
 | **Water** | On / Off | Water that moves and bends the view of what lies under it. |
+| **Campfire smoke** | On (default) / Off | Grey smoke rises from every campfire, spreads under the ceiling and thins out over a few seconds. Needs Particles. |
+| **Water fog** | On (default) / Off | A thin pale fog lies over the water near you and drifts slowly. Needs Particles. |
+| **Glowing stones** | On (default) / Off | Glowing rocks, orbs and orb rocks shine and light the floor about a foot round them. Off, they are plain objects, as in the original. |
+| **Moonstone light** | Off, or 5% to 50% of a candle, steps of 5. Default 10% | The moonstone fills the room it lies in with a deep blue light, the same everywhere in the room, round corners too. It only shines while it lies on the floor, not in your pack. |
+| **Fire elemental light** | Off, or 10% to 100% of a candle, steps of 10. Default 30% | Fire elementals cast a smouldering orange light that moves with them. |
 
-All three are off unless your settings file turns them on (the public download's does).
+Particles, Decals and Water are off unless your settings file turns them on (the public download's does).
 
 ## Sound
 
@@ -187,6 +192,7 @@ ear. Most players never need them. Each is heard at once.
 | Row | Values | What it does |
 | --- | --- | --- |
 | **Own footsteps plain** | On / Off (default) | Your own footsteps exactly as the Roland plays them: no echo, no floor sound, no placing for headphones, no muffling. A way to compare by ear with everything else left on. |
+| **Roland's own reverb** | Automatic (default) / On / Off | The Roland sound module adds a small room echo of its own to every sound effect. Automatic turns it off while Acoustics is On or High, because the game then adds the echo of the real room you stand in; with Acoustics off it stays, as in the original. On keeps it always, Off never. The effects are made again when you change it, which takes a moment. |
 | **Effects interrupt music** | On / Off (default) | The original took a music channel for every sound effect, so notes of the tune went missing while you walked or fought. Off, the music plays whole, because the positional sound plays the effects. On is the original's behaviour. |
 | **Loudness, speakers** | 25% to 1000%, steps of 5. Default 215% | The loudness of the positional sound against the game's own mix, when Headphone 3D sound is off. |
 | **Loudness, headphone 3D** | 25% to 2000%, steps of 10. Default 520% | The same when Headphone 3D sound is on (the headphone filter loses more level, so the figure is higher). |
@@ -254,6 +260,10 @@ the original's behaviour, apart from a friendly one's nod or warning.
 
 ### Creature AI and its parts
 
+**Devious** makes each creature cunning on its own. **Monstrous** adds creatures working together. Every part
+below has its own row, on by default; a row is shown from its own level up. Once a part has been used in this
+session its row shows how often: "On (used 3)".
+
 | Row | Values | What it does | Needs |
 | --- | --- | --- | --- |
 | **Creature AI** | Original, Devious, Monstrous | How cunning creatures are. **Original** is the game as shipped. At **Devious** a creature that loses you walks to where it last knew you were and searches there (about 30 seconds); one that hears a blow, a door, a lever, a spell or a hard landing, or sees your light, goes to look; some lie in ambush by a corner or a door (up to a minute); a badly hurt one may run. The dimmest (worms, slugs, rats, lurkers, headlesses) just attack. At **Monstrous** creatures also call, fetch and wait for one another, as the rows marked Monstrous describe. | |
@@ -269,10 +279,10 @@ the original's behaviour, apart from a friendly one's nod or warning.
 | **Learns how you fight** | On (default) / Off | A creature that fights hand to hand and is hurt while you are 4 squares or more away (an arrow, a spell) stops walking into it: once a fight it goes out of your sight and waits 20 seconds for you to come, then comes on as before. A shooter or caster that has felt your blade and never your arrows backs off when you are within 4 squares, not 3. | Devious or Monstrous. |
 | **Fetches kin** | On (default) / Off | A clever creature that loses you, or hears a noise you made, fetches the kin in its earshot and goes to the place with them. (Until 2026-11-17 this was part of Devious.) | Monstrous. |
 | **Calls for help** | On (default) / Off | A creature that finds you while its kin are in earshot but not yet fighting calls them to the place. A creature calls once a minute at most. The dimmest creatures, and the fearless ones (skeletons, ghosts, ghouls, trolls, golems and the like), never call. | Monstrous. |
-**Devious** makes each creature cunning on its own. **Monstrous** adds creatures working together. Every part
-below has its own row, on by default; a row is shown from its own level up. Once a part has been used in this
-session its row shows how often: "On (used 3)".
-
+| **Calls passed on** | On (default) / Off | A clever creature that is called repeats the call to the kin in its own earshot, so the word spreads beyond the first caller's hearing. A call is passed on twice at most. | Monstrous. |
+| **Strike together** | On (default) / Off | Creatures called to a fight do not arrive one by one: they gather three squares short of the place and go in together, after 10 seconds at the latest. | Monstrous. |
+| **Cut off the retreat** | On (default) / Off | When two or more kin answer a call, one of them does not come to the place: it goes to the nearest door behind you (on the far side of you from the caller, within 6 squares), or failing a door to a square three beyond you, so that your way back is closed. It knows only where the caller met you. | Monstrous. |
+| **The lure** | On (default) / Off | A clever creature that sees you from three squares or more, with kin in earshot who are not yet fighting, does not attack and does not call them to it. It tells them to lie in wait round the nearest of them, shows itself, and falls back there to turn and wait with them. If you follow, you walk in among them; if you do not, they come hunting after a minute. A creature tries this once in two minutes at most, and not when you look badly hurt. | Monstrous. |
 | **Pack courage** | On (default) / Off | Spiders, bats and other creatures of low wits will not fight you alone when kin are in earshot: they fall back to them once, and then all attack together. With no kin about, with kin already beside it, or when you look badly hurt, it attacks at once. | Monstrous. |
 | **Fall back when hurt** | On (default) / Off | A clever creature whose health drops low (under about three eighths; goblins, lizardmen, mountainmen and outcasts already at half) runs to its nearest kin, once a fight, and comes back with them. It does not run when you look badly hurt yourself. The fearless creatures never do this. | Monstrous. |
 | **Surround** | On (default) / Off | When two of its kin already fight you hand to hand and a third is 2 to 5 squares off, the third does not queue behind them: once a fight it goes to a square beside or behind you (6 seconds at most to get there), then strikes. | Monstrous. |
@@ -283,18 +293,14 @@ session its row shows how often: "On (used 3)".
 | **Hunters bring the pack** | On (default) / Off | A level hunter that goes after you fetches its nearest kin first, every time. Off, and at Devious, hunters come alone. | Monstrous, and Level hunters on. |
 | **AI messages** | On (default) / Off | Lines in the message box that tell you what a creature chose: "The goblin shrieks for help", "runs to its kin", "falls back to its kin", "backs away, watching you" (Monstrous), and a friendly creature's "nods to you", "eyes your weapon and follows you", "backs away from you", "points north: a ... is there". Off, the creatures do the same things without the lines. | Devious or Monstrous. |
 | **Level hunters** | Off, 1 a level, 2 a level (default) | One or two of the cleverest hostile creatures on each level keep track of you across the whole level. A hunter notices signs of you (noises you made, your light or a light put out, doors opened, things taken, a sprung trap, its kin found dead), makes a short plan (go to where you were last seen, wait by a door, search, follow a light, go to water or rest when wounded, give up) and remembers it across a save and load. If hunters cannot run the row says why: "(no model)" means Decisions by is set to Language model and the model is not loaded. | Devious or Monstrous. |
-| **Calls passed on** | On (default) / Off | A clever creature that is called repeats the call to the kin in its own earshot, so the word spreads beyond the first caller's hearing. A call is passed on twice at most. | Monstrous. |
-| **Strike together** | On (default) / Off | Creatures called to a fight do not arrive one by one: they gather three squares short of the place and go in together, after 10 seconds at the latest. | Monstrous. |
-| **Cut off the retreat** | On (default) / Off | When two or more kin answer a call, one of them does not come to the place: it goes to the nearest door behind you (on the far side of you from the caller, within 6 squares), or failing a door to a square three beyond you, so that your way back is closed. It knows only where the caller met you. | Monstrous. |
-| **The lure** | On (default) / Off | A clever creature that sees you from three squares or more, with kin in earshot who are not yet fighting, does not attack and does not call them to it. It tells them to lie in wait round the nearest of them, shows itself, and falls back there to turn and wait with them. If you follow, you walk in among them; if you do not, they come hunting after a minute. A creature tries this once in two minutes at most, and not when you look badly hurt. | Monstrous. |
 | **AI log (Ctrl+L)** | On / Off (default) | Shows every decision a creature makes, with its reason, in the message box as it happens ("goblin #12 at 30,14: chose: ambush"). For watching how the AI works. Ctrl+L switches it in the game too. It is not kept: off again at the next start. | Devious or Monstrous. |
+| **AI log in the log file** | On (default) / Off | Every decision a creature makes is also written to `home\logs\uwr.log` (and the terminal the game was started from), with the game time in seconds, whether Ctrl+L is on or not. A line that uses one of the parts ends with the part's name and how often it was used this session, "[Hit and run #3]"; when the game ends one line gives the whole count. | Devious or Monstrous. |
 
 ### Who decides
 
 | Row | Values | What it does | Needs |
 | --- | --- | --- | --- |
 | **Decisions by** | Rules (default) / Language model | Who picks among the choices a creature has (hunt, investigate, ambush, fetch kin, go back, attack, flee; a friendly one's nod, follow, keep away, warn; a hunter's plan). **Rules** is the built-in rulebook: it answers at once and needs nothing. **Language model** asks an AI model file on your own computer; its answer comes a moment later (the rulebook's answer is used until then for a creature that sees you). The model is loaded only while this row is set to it. Nothing is sent over the internet. | Devious or Monstrous, and at least one model file. |
-| **AI log in the log file** | On (default) / Off | Every decision a creature makes is also written to `home\logs\uwr.log` (and the terminal the game was started from), with the game time in seconds, whether Ctrl+L is on or not. A line that uses one of the parts ends with the part's name and how often it was used this session, "[Hit and run #3]"; when the game ends one line gives the whole count. | Devious or Monstrous. |
 | **Language model** | The model files found | The model file used when Decisions by is Language model. Left and Right step through the files in the game's model folder (`.gguf` files). | At least one model file. |
 
 ### Language model tuning
