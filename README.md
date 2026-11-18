@@ -63,7 +63,7 @@ ray tracing, upscaled textures, relief maps and the effects on. Click a picture 
   water and creeps across the floor, smoke climbs from campfires and torches and gathers under the ceiling, and
   you, the creatures, doors and blasts push it aside. It is lit by every light through ray-traced shadows, with
   its own shadowing and the droplets' scattering. Vulkan renderer; its own tab of sliders in the Esc menu.
-  (In the download now; its source comes with the next snapshot here.)
+  How it works, and each level's own fog file: [docs/FOG.md](docs/FOG.md).
 - **Sound.** The Roland MT-32's own voices, placed in space (OpenAL Soft, headphone 3D); walls and doors muffle,
   rooms ring by their size, sound comes round corners; with Steam Audio: ray-traced echoes through the level's
   shape, occlusion and transmission by each surface's material, pathing (a hidden sound arrives along the ways

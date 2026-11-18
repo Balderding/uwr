@@ -81,7 +81,7 @@ int world_animo_card(const Mesh *m, int frame, const float pos[3], Vertex *out, 
 
 int world_item_card(const Mesh *m, int item, const float pos[3], Vertex *out) {
     if (item < 0 || item >= MAX_SPRITES || !m->sprite_w[item]) return 0;
-    return card(out, pos, item, m->sprite_w[item], m->sprite_h[item], SPRITE_SCALE, 3);
+    return card(out, pos, item, m->sprite_w[item], m->sprite_h[item], sprite_unit(m, item), 3);
 }
 
 /* a world quad: corners a, b (bottom) and their tops at height top; u along a -> b in texels, v from the top */
@@ -320,7 +320,7 @@ int world_sprites(const Level *lv, const Mesh *m, const Light *l, int nl, Vertex
                     /* glass (ale, the potions, water, port, wine 0x0BA-0x0BF, an oil flask 0x12D): light through it,
                        tinted (the shadow rays, kind 3.3) */
                     bool glass = (o->item >= 0x0BA && o->item <= 0x0BF) || o->item == 0x12D;
-                    n += card(out + n, pos, pic, m->sprite_w[pic], m->sprite_h[pic], SPRITE_SCALE, glow ? 4 : glass ? 3.3f : 3);
+                    n += card(out + n, pos, pic, m->sprite_w[pic], m->sprite_h[pic], sprite_unit(m, pic), glow ? 4 : glass ? 3.3f : 3);
                     if (o->item == 0xAD)   /* the ankh's picture brighter, gold (its pixels are dark) */
                         for (int k = n - 6; k < n; k++) out[k].color[0] = 2.2f, out[k].color[1] = 1.9f, out[k].color[2] = 1.1f;
                 }

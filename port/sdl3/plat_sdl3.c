@@ -645,6 +645,8 @@ int plat_run(const PlatConfig *cfg0, const PlatHooks *h, int (*game)(void *), vo
     uwf_input_init();                  /* the window's input (uwinput.c) */
     targ[0] = (void *)game;
     targ[1] = arg;
+    if (g_win && !uwf_offscreen()) SDL_SyncWindow(g_win);   /* (full screen's size settled) */
+    uwf_view_warm();                   /* the renderer up before the game's thread starts: nothing heard before a picture */
     L.start = ms_now();
     {
         /* the game's thread gets a large stack: host frames are bigger than DOS's */

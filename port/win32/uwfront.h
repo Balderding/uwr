@@ -64,6 +64,7 @@ const uint32_t *uwf_frame(int *sw, int *sh);
 void uwf_client_size(int *w, int *h);        /* the renderer's pixels while it runs, else the client area's */
 int uwf_offscreen(void);                     /* UWPORT_OFFSCREEN: never shown, never full screen, the mouse untouched */
 int uwf_no_input(void);                      /* UWPORT_NO_INPUT: the window's own keys and pointer reach nothing */
+void uwf_view_warm(void);                    /* our renderer started now: before the game's thread, so nothing is heard before a picture */
 void uwf_view_start(void);                   /* our renderer loaded (uwview.dll), when it is there */
 int uwf_view_loaded(void), uwf_view_ok(void);   /* loaded; started */
 void uwf_fx_audio_start(void);               /* our positional audio (uwaudio.c) */
@@ -78,6 +79,10 @@ typedef struct {
                 int n, int sel, int mx, int my);
     void (*wheel)(int notches);
     int (*click)(int mx, int my, int down);
+    /* the menu's tabs (2026-11-17; NULL: a backend without them, the tabs then by the keys alone): their names and the
+       open one before rows, and the tab under the pointer or -1 (menu_draw.c's md_tabs, md_tab_at) */
+    void (*tabs)(const char *const *names, int n, int open);
+    int (*tab_at)(int mx, int my);
 } UwfMenuFns;
 void uwf_soft_menu(const UwfMenuFns *f);
 

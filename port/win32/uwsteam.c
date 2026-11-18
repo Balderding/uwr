@@ -415,10 +415,49 @@ static void bake_stop(void)   /* a bake under way given up and waited out; its r
 }
 /* the simulation's thread, each run: a level whose ways are not the ones in use is given to the bake; a bake that
    has ended has its probes put in the direct simulator in place of the old ones */
+/* a level change under way (the front end, when it sees one): no pathing until the new level's tiles have come
+   (path_service), 8 s at most. 2026-11-17: the game faulted inside phonon.dll (a null read) going from level 1
+   back to level 2, the paths still run with the old level's probes and the listener already in the new one; Steam
+   Audio's own release notes list faults in iplSimulatorRunPathing across a scene's and a probe batch's change */
+static volatile LONG path_hold;
+static unsigned long long path_hold_t;
+void uwst_level_change(void)
+{
+    path_hold_t = GetTickCount64();
+    InterlockedExchange(&path_hold, 1);
+}
+static int path_held(void)
+{
+    if (path_hold && GetTickCount64() - path_hold_t > 8000) InterlockedExchange(&path_hold, 0);
+    return path_hold != 0;
+}
+/* every source's paths off, where a batch of probes leaves the simulator: a source still naming a batch that has left
+   faults iplSimulatorRunPathing (2026-11-17: work\steamproof, the same calls without the game; direct_run has the
+   other half). The sounding voices are given theirs again by the next direct_run. */
+static void paths_forget(void)
+{
+    for (int i = 0; i < UWST_VOICES; i++) {
+        IPLSimulationInputs in;
+        memset(&in, 0, sizeof in);
+        p_iplSourceSetInputs(S.v[i].dsrc, IPL_SIMULATIONFLAGS_PATHING, &in);
+    }
+}
 static void path_service(const UwaTile *tiles, const UwaDoor *doors, int nd, int ceil_mat, int dirty)
 {
     if (dirty && P.on) {
         unsigned key = level_key(tiles, doors, nd);
+        if (key != S.path_key && S.probes) {
+            /* another level's probes: out at once (no paths until this level's are baked), every voice's old
+               paths forgotten */
+            EnterCriticalSection(&S.scene_lock);
+            paths_forget(), p_iplSimulatorRemoveProbeBatch(S.dsim, S.probes), p_iplProbeBatchRelease(&S.probes);
+            S.probes = NULL, S.nprobes = 0, S.path_key = 0, S.path_ran = 0;
+            p_iplSimulatorCommit(S.dsim);
+            LeaveCriticalSection(&S.scene_lock);
+            EnterCriticalSection(&S.lock);
+            for (int i = 0; i < UWST_VOICES; i++) S.v[i].path_ok = 0;
+            LeaveCriticalSection(&S.lock);
+        }
         if (key != S.path_key && key != B.key) {
             bake_stop();
             memcpy(B.tiles, tiles, sizeof B.tiles), memcpy(B.doors, doors, sizeof(UwaDoor) * (size_t)nd);
@@ -432,7 +471,7 @@ static void path_service(const UwaTile *tiles, const UwaDoor *doors, int nd, int
         WaitForSingleObject(B.thread, 60000), CloseHandle(B.thread), B.thread = NULL;
         if (B.batch) {
             EnterCriticalSection(&S.scene_lock);
-            if (S.probes) p_iplSimulatorRemoveProbeBatch(S.dsim, S.probes), p_iplProbeBatchRelease(&S.probes);
+            if (S.probes) paths_forget(), p_iplSimulatorRemoveProbeBatch(S.dsim, S.probes), p_iplProbeBatchRelease(&S.probes);
             S.probes = B.batch, S.nprobes = B.n, S.path_key = B.key, S.path_ran = 0;
             for (int i = 0; i < UWST_VOICES; i++) S.v[i].path_ok = 0;
             p_iplSimulatorAddProbeBatch(S.dsim, S.probes);
@@ -791,6 +830,7 @@ void uwst_simulate(void)
     LeaveCriticalSection(&S.lock);
     if (dirty) scene_build(tiles, ceil_mat, doors, nd);
     path_service(tiles, doors, nd, ceil_mat, dirty);
+    if (dirty) InterlockedExchange(&path_hold, 0);   /* (the new level's tiles are in: its own probes decide from here) */
     if (!S.tris) return;                             /* no level yet: nothing to ring in */
     for (int i = 0; i < UWST_VOICES; i++) {
         Voice *v = &S.v[i];
@@ -853,7 +893,7 @@ static void direct_run(const float lis[3], float yaw)
     if (S.tris) {
         /* the paths with it: every third block (32 ms), and at once when a sound has none yet. Measured on level 1
            (work\acoustics\pathing\pathtest.c): a block of seven sounds 2.51 ms with the paths, 2.26 ms without */
-        int paths = P.on && S.probes != NULL, due = S.path_tick++ % 3 == 0;
+        int paths = P.on && S.probes != NULL && !path_held(), due = S.path_tick++ % 3 == 0;
         IPLSimulationFlags fl;
         for (int i = 0; i < UWST_VOICES && paths && !due; i++) due = S.v[i].state == 1 && !S.v[i].path_ok;
         S.path_ran = paths;
@@ -866,7 +906,22 @@ static void direct_run(const float lis[3], float yaw)
             EnterCriticalSection(&S.lock);
             state = S.v[i].state, memcpy(p, S.v[i].p, sizeof p), gen[i] = S.v[i].gen;
             LeaveCriticalSection(&S.lock);
-            if (state != 1) continue;
+            if (state != 1) {
+                /* 2026-11-17, the crash on a level's load: a voice not sounding kept the inputs of its last sound,
+                   the paths on and the probes of the level it sounded on. Those probes are taken out of the
+                   simulator when the level changes, and iplSimulatorRunPathing goes through EVERY source: for a
+                   batch no longer in the simulator it has no path simulator and reads through a null one
+                   (phonon.dll + 0x27588b5, ProbeVisibilityTester::areProbesVisible; work\crashrepro). So before
+                   every run of the paths each silent voice is told: no paths, and the probes in use now. */
+                if (paths) {
+                    memset(&in, 0, sizeof in);
+                    in.flags = IPL_SIMULATIONFLAGS_DIRECT;
+                    in.pathingProbes = S.probes, in.pathingOrder = 1, in.deviationModel = &deviation;
+                    in.source = space_at(p, 0);
+                    p_iplSourceSetInputs(S.v[i].dsrc, IPL_SIMULATIONFLAGS_PATHING, &in);
+                }
+                continue;
+            }
             asked[i] = 1;
             memset(&in, 0, sizeof in);
             in.flags = fl;

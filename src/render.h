@@ -192,3 +192,27 @@ int render_decals_count(void);
 /* the water (fx_water: the scene's shader): a splash's ring at x, z (tiles), strength 1 a splash */
 void render_water_ripple(float x, float z, float strength);
 void render_water_ripples_shown(bool on);   /* (the checks) */
+
+/* --- the fog and smoke (the user, 2026-11-17: "physical simulation of smoke and water haze fog ... displaced by you
+ * when you move through it"; src\render_vk_vol.h, shaders\volume.hlsl; the Vulkan renderer's, the D3D12 one has none):
+ * a box of air cells round the eye stepped on the GPU each frame, lit by shadow rays, drawn by stepping through it.
+ * uwview.c (volfog.inc) gives each frame the dials (the Esc menu's Fog and smoke page) as the shader's own constants
+ * and what gives off, heats and pushes the air (fires, blasts, the player's and the creatures' bodies) --- */
+#define RV_EMIT_MAX 96
+/* pr: the place (a body's feet), w the radius; vh: its velocity, w its height (0: a ball); q: fog, smoke and heat
+   given off a second, w the push outward (tiles a second); k: x how far the air is carried along with it (0..1) */
+typedef struct { float pr[4], vh[4], q[4], k[4]; } RvEmit;
+enum { RVP_AIR, RVP_FOGA, RVP_FOGB, RVP_SMKA, RVP_SMKB, RVP_FOGL, RVP_FOGM, RVP_SMKL, RVP_SMKM, RVP_LIGHTP, RVP_LIGHTQ, RVP_FOGC, RVP_FOGP, RVP_EXTRA, RVP_MORE, RVP_SHAPE, RVP_SCREEN, RVP_N };   /* (RVP_SCREEN: the renderer's own) */
+typedef struct {
+    int on;
+    int cells, box;         /* cells to a tile; the box's width in tiles */
+    int pressure;           /* the pressure's passes a step */
+    int view_steps, light_share;
+    int half;               /* 1: the picture drawn at half size (cs_march), full size at edges */
+    float rate;             /* steps a second; 0: one a frame */
+    float par[RVP_N][4];    /* volume.hlsl's VC from air to lightq */
+    int nemit;
+    RvEmit emit[RV_EMIT_MAX];
+} RenderVolume;
+void render_volume(const RenderVolume *v);   /* this frame's; NULL or on 0: none */
+bool render_volume_available(void);

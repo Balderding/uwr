@@ -1748,3 +1748,7 @@ void render_shutdown(void) {
     if (R.nr_ok) logf_("DLSS 5: %d frames through the neural model, %d failed (shown with DLSS alone)\n", R.nr_frames_ok, R.nr_frames_failed);
     ngx_stop(R.dev);
 }
+
+/* the fog and smoke (render.h RenderVolume): the Vulkan renderer's alone (render_vk_vol.h); none here */
+void render_volume(const RenderVolume *v) { (void)v; }
+bool render_volume_available(void) { return false; }

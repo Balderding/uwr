@@ -177,6 +177,49 @@ void ui_draw(const Pic *p, int x, int y, int s) {
         }
 }
 
+u8 ui_new_sprite[512];
+const Pic *ui_item_pic(int item, int *div) {
+    if (div) *div = 1;
+    if (item >= 0 && item < 512 && ui_new_sprite[item]) {
+        const Pic *p = ui_pic("newsprites\\objects", item);
+        if (p && p->w <= 32 && p->h <= 32) {
+            if (div) *div = p->w > 16 || p->h > 16 ? 2 : 1;
+            return p;
+        }
+    }
+    return ui_pic("sprites\\objects", item);
+}
+
+void ui_draw_fine(const Pic *p, int x, int y, int div) {
+    if (!p) return;
+    if (div <= 1) { ui_draw(p, x, y, 1); return; }
+    int sc = O.scale, w = p->w / div, h = p->h / div;   /* its size on the overlay */
+    if (!T || sc < 2) {   /* no finer pixels to draw on: every div-th pixel on the overlay */
+        for (int py = 0; py < h; py++)
+            for (int px = 0; px < w; px++) {
+                const u8 *c = p->rgba + ((size_t)(py * div) * p->w + (size_t)(px * div)) * 4;
+                blend(x + px, y + py, c, c[3]);
+            }
+        return;
+    }
+    int X0 = x * sc, Y0 = y * sc, W = w * sc, H = h * sc;
+    for (int wy = 0; wy < H; wy++) {
+        int Y = Y0 + wy;
+        if (Y < 0 || Y >= g_wh) continue;
+        for (int wx = 0; wx < W; wx++) {
+            int X = X0 + wx;
+            if (X < 0 || X >= g_ww) continue;
+            const u8 *c = p->rgba + ((size_t)(wy * p->h / H) * p->w + (size_t)(wx * p->w / W)) * 4;
+            if (c[3] < 128) continue;
+            T[(size_t)Y * g_ww + X] = 0xFF000000u | c[0] | (unsigned)c[1] << 8 | (unsigned)c[2] << 16;
+            if (X < tx0) tx0 = X;
+            if (Y < ty0) ty0 = Y;
+            if (X > tx1) tx1 = X;
+            if (Y > ty1) ty1 = Y;
+        }
+    }
+}
+
 void ui_fill(int x, int y, int w, int h, u8 r, u8 g, u8 b, u8 a) {
     u8 c[3] = {r, g, b};
     for (int py = y; py < y + h; py++)

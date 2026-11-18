@@ -90,3 +90,7 @@ typedef struct {
     u8 *idx;
 } Image;
 bool png_read(const char *path, Image *out);
+bool png_exists(const char *path);   /* file_exists, the disk asked once for a picture png_read keeps (the relief maps) */
+/* (2026-11-17) the pictures a build is about to ask for: those png_read keeps and has not yet are read and unpacked
+ * at once by several threads; png_exists and png_read answer the same as without it, sooner */
+void png_prefetch(const char *const *paths, int n);

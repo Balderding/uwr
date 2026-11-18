@@ -63,6 +63,8 @@ typedef struct {
     int normal_maps;  /* how many were read */
     u8 animo_w[64], animo_h[64];  /* ANIMO.GR's frames' sizes (0 = none), at cell ANIMO_CELL + frame */
     u8 sprite_w[512], sprite_h[512]; /* the object pictures' sizes (0 = none); picture k is at (k % 32 * 32, 1024 + k / 32 * 32) */
+    u8 sprite_div[512];              /* 2: picture k is one of ours at twice the detail (data\newsprites\objects, over 16 a
+                                      * side): drawn at half a pixel's size, so it stands in the original's place */
     u8 door_w[16], door_h[16];       /* the door pictures (DOORS.GR): picture k at (k * 32, DOOR_ROW) */
     u8 door_top[16], door_l[16], door_r[16]; /* the door pictures' opaque part: first row, first and past-last column */
     /* the creatures this level has (object 0x40 + k): their page-0 frames in the atlas from cell `cell`, the
@@ -96,6 +98,9 @@ bool level_save(const Level *lv, const char *dir);
  * floors_normal) into the arena; each light gets a small glowing orb (colour alpha 2 = emissive) */
 /* the textures' relief meshes as geometry (true, uw.exe) or the original's flat faces (the port's renderer) */
 extern bool level_relief;
+/* 1: object k's picture is ours when its file is there (data\newsprites\objects\NNN.png, up to 32 x 32); the Esc
+ * menu's Sprites tab (uwview.c). Presentation only. */
+extern u8 level_new_sprite[512];
 bool level_mesh(const Level *lv, const char *data_dir, const float (*orbs)[6], int norbs, Mesh *m);
 /* texture i's place in the atlas (0-209 the walls, 210-261 the floors): x, y, w, h */
 void level_texture_rect(int i, float r[4]);

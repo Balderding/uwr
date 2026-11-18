@@ -85,4 +85,13 @@ void uwi_release_all(void);              /* the focus lost */
 int uwi_look_wanted(const UwiState *s);  /* mouse-look wanted (the spec's "Mouse-look") */
 int uwi_owner_of_key(int code);          /* (tests, logs) the owner of a held key, UWI_NONE when none */
 
+/* our display's commands and their keys (the Esc menu's Keys tab). A label that starts with # is a heading. A key is a
+   set-1 code (0x100 for E0), 0 for none; shift 0 the key alone, 1 with Shift, 2 with Ctrl */
+int uwi_cmd_count(void);
+const char *uwi_cmd_label(int i);
+const char *uwi_cmd_id(int i);           /* the command's name in the settings (key_<id>) */
+void uwi_cmd_get(int i, int which, int *key, int *shift);   /* which 0: now, 1: as shipped */
+int uwi_cmd_set(int i, int key, int shift, int how);        /* how 0: taken from the command that had it (returned, -1 none); 1: as loaded */
+void uwi_cmd_defaults(void);
+
 #endif

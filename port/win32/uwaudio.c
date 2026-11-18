@@ -796,8 +796,10 @@ static void hi_stop(void)
     if (!HI.on) return;
     InterlockedExchange(&HI.quit, 1);
     if (HI.sim_wake) SetEvent(HI.sim_wake);
-    if (HI.sim_thread) WaitForSingleObject(HI.sim_thread, 5000), CloseHandle(HI.sim_thread), HI.sim_thread = NULL;
-    if (HI.feed_thread) WaitForSingleObject(HI.feed_thread, 5000), CloseHandle(HI.feed_thread), HI.feed_thread = NULL;
+    /* (2026-11-17: a minute, it was 5 s: past the wait everything the threads use is freed under them, and the
+       simulation thread may be waiting out a bake of the level's sound paths) */
+    if (HI.sim_thread) WaitForSingleObject(HI.sim_thread, 60000), CloseHandle(HI.sim_thread), HI.sim_thread = NULL;
+    if (HI.feed_thread) WaitForSingleObject(HI.feed_thread, 60000), CloseHandle(HI.feed_thread), HI.feed_thread = NULL;
     if (HI.sim_wake) CloseHandle(HI.sim_wake), HI.sim_wake = NULL;
     HI.on = 0;
     if (HI.dry) fprintf(stderr, "fx: acoustics high: the echo stream ran dry %d times\n", HI.dry);
@@ -1632,6 +1634,7 @@ unsigned long long uwaudio_taken(void)
     return wav_mask | (stand_down ? 0 : (unsigned long long)InterlockedOr64(&M.ready, 0));
 }
 
+void uwaudio_level_change(void) { if (HI.on) uwst_level_change(); }
 void uwaudio_volume(float g)
 {
     gain = g < 0 ? 0 : g > 1 ? 1 : g;

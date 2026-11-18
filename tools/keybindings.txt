@@ -4,6 +4,10 @@ ULTIMA UNDERWORLD (uw-new.exe): KEYS AND WHAT IS IN THIS FOLDER
 Start uw-new.exe (or Play.cmd). Your saved games and settings are kept in home\.
 
 
+These are the keys the game comes with. The keyboard commands of play can be changed in the game:
+Esc, then the Keys tab. Enter on a command, then press the key you want.
+
+
 MOVING
 ------
   W or Up arrow ........ walk forward (hold Shift to run)

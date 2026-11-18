@@ -52,7 +52,10 @@ static int menu_rows(const char *title, const char *const *labels, const char *c
 static void menu_wheel(int notches) { md_wheel(notches); }
 static int menu_click(int mx, int my, int down) { return md_click(started, mx, my, down); }
 
-static const UwfMenuFns fns = { menu_rows, menu_wheel, menu_click };
+static void menu_tabs(const char *const *names, int n, int open) { md_tabs(names, n, open); }
+static int menu_tab_at(int mx, int my) { return md_tab_at(mx, my); }
+
+static const UwfMenuFns fns = { menu_rows, menu_wheel, menu_click, menu_tabs, menu_tab_at };
 void uwmenu_register(void) { uwf_soft_menu(&fns); }
 
 const unsigned char *uwmenu_layer(int *w, int *h)

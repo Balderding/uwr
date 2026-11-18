@@ -40,6 +40,19 @@ rem the effects' passes for the Vulkan renderer (M3, src\render_vk_fx.h): partic
 %DXC% %SPV% -T ps_6_0 -E ps -Fh %B%\gen\particles_ps_spv.h -Vn PARTICLES_PS_SPV %SH%\particles.hlsl || exit /b 1
 %DXC% %SPV% -T vs_6_0 -E vs -Fh %B%\gen\decal_vs_spv.h -Vn DECAL_VS_SPV %SH%\decal.hlsl || exit /b 1
 %DXC% %SPV% -T ps_6_0 -E ps -Fh %B%\gen\decal_ps_spv.h -Vn DECAL_PS_SPV %SH%\decal.hlsl || exit /b 1
+rem the fog and smoke (src\render_vk_vol.h, the Vulkan renderer's alone): volume.hlsl's passes; set 1 by its own vk::binding
+%DXC% %SPV% -T cs_6_0 -E cs_advect -Fh %B%\gen\volume_cs_advect_spv.h -Vn VOLUME_CS_ADVECT_SPV %SH%\volume.hlsl || exit /b 1
+%DXC% %SPV% -T cs_6_0 -E cs_curl -Fh %B%\gen\volume_cs_curl_spv.h -Vn VOLUME_CS_CURL_SPV %SH%\volume.hlsl || exit /b 1
+%DXC% %SPV% -T cs_6_0 -E cs_mac -Fh %B%\gen\volume_cs_mac_spv.h -Vn VOLUME_CS_MAC_SPV %SH%\volume.hlsl || exit /b 1
+%DXC% %SPV% -T cs_6_0 -E cs_div -Fh %B%\gen\volume_cs_div_spv.h -Vn VOLUME_CS_DIV_SPV %SH%\volume.hlsl || exit /b 1
+%DXC% %SPV% -T cs_6_0 -E cs_jac_ab -Fh %B%\gen\volume_cs_jac_ab_spv.h -Vn VOLUME_CS_JAC_AB_SPV %SH%\volume.hlsl || exit /b 1
+%DXC% %SPV% -T cs_6_0 -E cs_jac_ba -Fh %B%\gen\volume_cs_jac_ba_spv.h -Vn VOLUME_CS_JAC_BA_SPV %SH%\volume.hlsl || exit /b 1
+%DXC% %SPV% -T cs_6_0 -E cs_project -Fh %B%\gen\volume_cs_project_spv.h -Vn VOLUME_CS_PROJECT_SPV %SH%\volume.hlsl || exit /b 1
+%DXC% %SPV% -T cs_6_0 -E cs_march -Fh %B%\gen\volume_cs_march_spv.h -Vn VOLUME_CS_MARCH_SPV %SH%\volume.hlsl || exit /b 1
+%DXC% %SPV% -T cs_6_0 -E cs_light -Fh %B%\gen\volume_cs_light_grid_spv.h -Vn VOLUME_CS_LIGHT_GRID_SPV %SH%\volume.hlsl || exit /b 1
+%DXC% %SPV% -T cs_6_5 -E cs_light -D RT -Fh %B%\gen\volume_cs_light_rt_spv.h -Vn VOLUME_CS_LIGHT_RT_SPV %SH%\volume.hlsl || exit /b 1
+%DXC% %SPV% -T vs_6_0 -E vs -Fh %B%\gen\volume_vs_spv.h -Vn VOLUME_VS_SPV %SH%\volume.hlsl || exit /b 1
+%DXC% %SPV% -T ps_6_0 -E ps -Fh %B%\gen\volume_ps_spv.h -Vn VOLUME_PS_SPV %SH%\volume.hlsl || exit /b 1
 rem the effects (docs\superpowers\plans\2026-11-12-fx-audio-and-visual.md), each a pass of its own: FXSRC their C
 %DXC% -T cs_6_0 -E cs_spawn -D CS -Fh %B%\gen\particles_cs_spawn.h -Vn PARTICLES_CS_SPAWN %SH%\particles.hlsl || exit /b 1
 %DXC% -T cs_6_0 -E cs_update -D CS -Fh %B%\gen\particles_cs_update.h -Vn PARTICLES_CS_UPDATE %SH%\particles.hlsl || exit /b 1

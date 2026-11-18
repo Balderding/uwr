@@ -36,7 +36,7 @@ Saved games and settings go in home\. F11 opens the settings. Esc opens the menu
 The Esc menu
 ------------
 The menu has a tab for each group of options: Game, Display, Graphics, Effects, Fog and smoke, Sound, Sound tuning,
-Controls and AI (Tab or Page Down: the next tab; Shift+Tab or Page Up: the one before). Each tab has a Preset row
+Controls, Keys and AI (Tab or Page Down: the next tab; Shift+Tab or Page Up: the one before). Each tab has a Preset row
 and a Default settings row; change any row and the preset reads Custom. The line at the foot of the menu says
 what the row under the pointer does. Every row is explained in esc-menu.md.
 The Display row is the one switch between everything of ours and the 1992 game as it was.
@@ -47,9 +47,8 @@ If something goes wrong
   report: https://github.com/Balderding/uwr/issues
 - Too slow? Esc, the Graphics tab: its Preset row has faster settings; the Fog and smoke tab has a Faster preset
   and a main switch.
-- Known in this preview: going from one level to another takes a few seconds, and creatures may already move and
-  be heard before the new level shows; a crash at a level change has been seen with the 3D sound on. Save before
-  you take a stair. Both are being put right for the next download.
+- Entering the dungeon, and going from one level to another, takes under a second on a fast computer: the screen
+  is black while the level is prepared, and the game and its sound wait for the picture.
 
 3. Roland MT-32 music (optional)
 --------------------------------

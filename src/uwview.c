@@ -95,6 +95,7 @@ static int fx_hrtf_set = 1, fx_panfix_set = 1;
 /* the acoustics' three dials (uwaudio.c reads the file itself; uwaudio_tune after a change): acoustics_wet (the
  * reverb's level, a percentage), acoustics_tile_m (the metres a tile: the rooms' size), acoustics_occlusion (the
  * muffling by walls, a percentage) */
+static int vol_setting(const char *key, float v);   /* the fog and smoke's rows (volfog.inc) */
 static int ac_wet_set = 100, ac_occl_set = 100, ac_detour_set = 1;   /* (acoustics_detour: sound round corners) */
 static float ac_tile_set = 2.4f;
 static int fx_range_set = 6, fx_feet_set = 100, ac_quality_set = 1;   /* fx_hear_range (tiles), fx_feet_spread (%), acoustics_quality (0-3): uwaudio.c */
@@ -150,6 +151,10 @@ static void read_settings(const char *path)
         else if (!strcmp(key, "texture_ao_strength")) S.texture_ao = v; /* the walls' and floors' occlusion maps (1; 0 none) */
         else if (!strcmp(key, "texture_shadow")) S.texture_shadow = v;  /* their relief's shadows: its depth, texels (3; 0 none) */
         else if (!strcmp(key, "texture_res")) tex_res = (int)v == 512 ? 512 : (int)v == 256 ? 256 : 0;
+        else if (!strncmp(key, "sprite_new_", 11)) {   /* the Sprites tab: object NNN's picture ours (spr_option) */
+            int k = atoi(key + 11);
+            if (k >= 0 && k < 512) level_new_sprite[k] = ui_new_sprite[k] = (int)v != 0;
+        }
         else if (!strcmp(key, "normal_map_res")) map_res[0] = map_res_of(v);   /* -1 as the textures, 0, 256, 512 */
         else if (!strcmp(key, "ao_map_res")) map_res[1] = map_res_of(v);
         else if (!strcmp(key, "height_map_res")) map_res[2] = map_res_of(v);
@@ -184,6 +189,7 @@ static void read_settings(const char *path)
         else if (!strcmp(key, "fx_hear_range")) fx_range_set = (int)v < 6 ? 6 : (int)v > 32 ? 32 : (int)v;
         else if (!strcmp(key, "fx_feet_spread")) fx_feet_set = (int)v < 0 ? 0 : (int)v > 800 ? 800 : (int)v;
         else if (!strcmp(key, "acoustics_quality")) ac_quality_set = (int)v < 0 ? 0 : (int)v > 3 ? 3 : (int)v;
+        else if (vol_setting(key, v)) { /* a row of the Fog and smoke page (volfog.inc) */ }
         else if (!strcmp(key, "fx_fog")) FX.fog = (int)v < 0 ? 0 : (int)v > 3 ? 3 : (int)v;   /* fog and light shafts, quality 1-3 */
         else if (!strcmp(key, "fx_particles")) FX.particles = (int)v != 0;
         else if (!strcmp(key, "light_glowing_things")) GL.glow_things = (int)v != 0, world_glow_things = GL.glow_things;
@@ -441,6 +447,12 @@ static void doors_find(void);
 static void acoustic_built(void);
 static void fx_level_change(int n);
 static void fx_frame(void);
+static bool lv_wait;   /* (uwv_level_wait, below) */
+/* the fog and smoke (volfog.inc, included before fx_frame) */
+static void vol_blast(const float p[3], float size);
+static bool vol_covers(float x, float z, int smoke);
+static void vol_frame(float dt);
+static void vol_shot(float dt);
 static void fx_decal(float x, float z, int kind, float size, const float rgb[3], int who);
 static void fx_decal_screen(float x, float y, float z);
 static bool level_build(int n)
@@ -484,6 +496,10 @@ static bool level_build(int n)
     arena_reset(lv_mark);
     lv_number = 0;
     fprintf(stderr, "uwview: building level %d (its walls, floors, textures and lights)\n", n);
+    clock_t bt[5];   /* (2026-11-17: the parts of the build timed, a level's change took 2.8 s) */
+    extern long png_stat_n, png_stat_ticks;
+    png_stat_n = png_stat_ticks = 0;
+    bt[0] = clock();
     if (!level_load(&lv, data, n)) {
         fprintf(stderr, "uwview: level %d: cannot read our level data in %s\n", n, data);
         return false;
@@ -494,7 +510,10 @@ static bool level_build(int n)
     lights_tiles(&lv, lights, nl, tiles);
     nlights = nbase = nl, mv_index = -1, mv_tried = false, burn_sig = 0;
     level_relief = false; /* the original's flat walls and floors, the user's normal maps on them */
-    if (!level_mesh(&lv, data, NULL, 0, &m) || !render_upload(&m)) {
+    bt[1] = clock();
+    bool mesh_ok = level_mesh(&lv, data, NULL, 0, &m);
+    bt[2] = clock();
+    if (!mesh_ok || !render_upload(&m)) {
         fprintf(stderr, "uwview: level %d: no mesh\n", n);
         return false;
     }
@@ -506,8 +525,13 @@ static bool level_build(int n)
     doors_find();
     acoustic_built();  /* the sound's copy of the level is out of date (uwv_acoustic_epoch) */
     base_read = false; /* the cycling pixels found again in the new atlas */
+    bt[3] = clock();
     hires_apply();     /* the upscaled textures (once: the renderer keeps them across levels) */
+    bt[4] = clock();
     fprintf(stderr, "uwview: level %d: %d triangles, %d lights\n", n, m.indices / 3, nl);
+    fprintf(stderr, "uwview: level %d's build: the level read %ld ms, its mesh and textures %ld ms, to the graphics card %ld ms, the larger textures %ld ms; %ld pictures unpacked in %ld ms\n", n,
+            (long)((bt[1] - bt[0]) * 1000 / CLOCKS_PER_SEC), (long)((bt[2] - bt[1]) * 1000 / CLOCKS_PER_SEC),
+            (long)((bt[3] - bt[2]) * 1000 / CLOCKS_PER_SEC), (long)((bt[4] - bt[3]) * 1000 / CLOCKS_PER_SEC), png_stat_n, png_stat_ticks * 1000 / CLOCKS_PER_SEC);
     return true;
 }
 
@@ -516,9 +540,28 @@ UWV_API int uwv_level(const unsigned char *block, int n)
 {
     if (!started || !block || n < 1 || n > 9) return 0;
     lv_block = block;
-    if (n == lv_number) return 1;
-    return level_build(n);
+    /* (a level whose shape changed is built again here, where the front end holds the game, not later in
+       things_update) */
+    if (n == lv_number && shape_hash(block) == lv_shape) return 1;
+    clock_t t0 = clock();
+    bool ok = level_build(n);
+    fprintf(stderr, "uwview: level %d's scene took %ld ms to build\n", n, (long)((clock() - t0) * 1000 / CLOCKS_PER_SEC));
+    return ok;
 }
+
+/* 1: level n's scene is there (uwv_level would build nothing). The front end holds the game still while a scene
+   is built (the user, 2026-11-17: attacked on the way down to level 2 with no picture yet) */
+/* (0: the scene is level n's as the block has it; 1: another level, to be built; 2: the same level number but the
+   block's shape changed: the game reading a new level in, its number not yet the new one, or a trap's change) */
+UWV_API int uwv_level_state(const unsigned char *block, int n)
+{
+    if (!started || !block || n < 1 || n > 9 || n != lv_number) return 1;
+    return shape_hash(block) == lv_shape ? 0 : 2;
+}
+/* 1: the game's block is not to be read (it is being filled: a level change under way); the scene and its things
+   stay as they are until the front end says 0 */
+static bool lv_wait;
+UWV_API void uwv_level_wait(int on) { lv_wait = on != 0; }
 
 /* UWVIEW_COMPARE=PREFIX (the checks): when the window's screenshot is asked for, the camera and the picture are
  * held still, the frame is drawn 60 times with the normal maps on and read back (PREFIX-on.png), 60 more with them
@@ -1289,6 +1332,7 @@ static void part_burst(const Object *o, const float p[3])
             part_add(p, v, 0.5f + frand() * 0.4f, 0.02f, b0, b1, 0, 0);
         }
     } else if (item >= 0x1C2 && item <= 0x1C4) {
+        vol_blast(p, 1.0f);   /* the fog and smoke: a puff of hot smoke, the air thrown outward */
         for (int k = 0; k < 44; k++) {
             float a = frand() * 6.2831853f, e = (frand() - 0.3f) * 3.1416f * 0.5f, sp = 1.5f + frand() * 4.0f;
             float v[3] = {cosf(a) * cosf(e) * sp, sinf(e) * sp + 1.0f, sinf(a) * cosf(e) * sp};
@@ -1555,13 +1599,13 @@ static int creature_cards(const u8 *b, Vertex *out, int cap)
 }
 static void things_update(void)
 {
-    if (!lv_number || !lv_block) return;
+    if (!lv_number || !lv_block || lv_wait) return;
     crit_in_view = 0;
     unsigned shape = shape_hash(lv_block);
-    if (shape != lv_shape) {              /* the level's shape changed: built again */
-        fprintf(stderr, "uwview: level %d changed shape: built again\n", lv_number);
-        level_build(lv_number);
-    }
+    /* the level's shape changed: nothing read from the block this frame; the front end's next uwv_level_state sees
+       it, waits for the game's next frame and has the level built once, the game held (2026-11-17: built here at
+       once, it was built from a block the game was still reading a new level into) */
+    if (shape != lv_shape) return;
     level_from_block(&lv, lv_block);      /* the objects where the game has them now */
     unsigned sig = burning_find();
     if (sig != burn_sig) {
@@ -1635,9 +1679,9 @@ UWV_API int uwv_pick(float fx, float fy, int *out, int max)
                 const Object *o = &lv.obj[i];
                 float pos[3], t = -1;
                 if (world_item_shown(o) && o->item < MAX_SPRITES && m.sprite_w[o->item]) {
-                    float hw = m.sprite_w[o->item] * SPRITE_SCALE * 0.5f;
+                    float hw = m.sprite_w[o->item] * sprite_unit(&m, o->item) * 0.5f;
                     world_object_pos(&lv, tx2, tz, o, pos);
-                    t = pick_card(cam.pos, d, pos, -hw, hw, 0, m.sprite_h[o->item] * SPRITE_SCALE);
+                    t = pick_card(cam.pos, d, pos, -hw, hw, 0, m.sprite_h[o->item] * sprite_unit(&m, o->item));
                 } else if (i > 1 && i < 256 && o->item >= 0x40 && o->item < 0x80) {   /* a creature (creature_cards) */
                     size_t off = 0x4000 + (size_t)i * 27;
                     u32 pw = rd16(b + off + 2), home = rd16(b + off + 0x16);
@@ -1855,9 +1899,10 @@ static bool crosshair_ours(unsigned *d, int uw, int uh, int s)
     if (!uwv_ui_ready()) return false;
     if (hud_held >= 0) {   /* an object held on the crosshair (uwv_held): its picture there, as the old version drew the
                               thing on its pointer (inventory.c's draw_thing: twice its size, centred) */
-        const Pic *o = ui_pic("sprites\\objects", hud_held);
+        int odiv = 1;
+        const Pic *o = ui_item_pic(hud_held, &odiv);   /* (ours when the Sprites tab says so: half the pixel) */
         if (o) {
-            int k = 2 * s, x0 = uw / 2 - o->w * k / 2, y0 = uh / 2 - o->h * k / 2;
+            int k = 2 * s / odiv > 0 ? 2 * s / odiv : 1, x0 = uw / 2 - o->w * k / 2, y0 = uh / 2 - o->h * k / 2;
             for (int y = 0; y < o->h * k; y++)
                 for (int x = 0; x < o->w * k; x++) {
                     const u8 *p = o->rgba + ((size_t)(y / k) * o->w + (size_t)(x / k)) * 4;
@@ -2671,6 +2716,75 @@ static void settings_save(const char *key, const char *value)
     f = fopen(p, "w");
     if (f) fwrite(out, 1, n, f), fclose(f);
 }
+/* The Sprites tab (the user, 2026-11-17: "add these to directory for usage in the game if we select something from
+ * the esc menu", "make a new tab for sprites", "only have the options show up if there is an alternative sprite for
+ * it"): an object picture of ours, data\newsprites\objects\NNN.png (NNN the object, 000-463; up to 32 x 32: twice
+ * the original's detail in the same place), each with a row of its own, there only when its file is. settings.txt
+ * sprite_new_NNN 1; the original's picture unless set. Looked for once a run. Presentation only: the picture in the
+ * world (level.c) and in our inventory and on the crosshair (ui_item_pic); the original's own panel keeps its own. */
+static signed char spr_have[512];   /* 0 not looked for yet, 1 the file is there, -1 it is not */
+static int spr_there(int k)
+{
+    if (!spr_have[k]) {
+        char data[MAX_PATH], game[MAX_PATH], p[MAX_PATH + 64];
+        data_dirs(data, game);
+        snprintf(p, sizeof p, "%s\\newsprites\\objects\\%03d.png", data, k);
+        spr_have[k] = file_exists(p) ? 1 : -1;
+    }
+    return spr_have[k] > 0;
+}
+/* object k's name for its row: STRINGS.PAK block 4 as extracted (data\strings\block0004.txt, "k: a_hand axe&hand
+ * axes"): the singular without its article, a capital first; 0 when there is none */
+static int spr_label(int k, char *value, int n)
+{
+    static char name[512][40];
+    static bool read;
+    if (!read) {
+        char data[MAX_PATH], game[MAX_PATH], p[MAX_PATH + 64];
+        read = true;
+        data_dirs(data, game);
+        snprintf(p, sizeof p, "%s\\strings\\block0004.txt", data);
+        size_t mark = arena_mark();
+        Bytes f = file_read(p);
+        for (const char *q = (const char *)f.data, *end = q ? q + f.size : q; q && q < end;) {
+            const char *e = memchr(q, '\n', (size_t)(end - q));
+            if (!e) e = end;
+            if (*q >= '0' && *q <= '9') {
+                int i = atoi(q);
+                const char *t = memchr(q, ':', (size_t)(e - q));
+                if (t && i >= 0 && i < 512) {
+                    const char *u;
+                    int len = 0;
+                    t++;
+                    while (t < e && *t == ' ') t++;
+                    u = memchr(t, '_', (size_t)(e - t));
+                    if (u) t = u + 1;
+                    while (t < e && *t != '&' && *t != '\r' && len < 39) name[i][len++] = *t++;
+                    name[i][len] = 0;
+                    if (name[i][0] >= 'a' && name[i][0] <= 'z') name[i][0] = (char)(name[i][0] - 32);
+                }
+            }
+            q = e + 1;
+        }
+        arena_reset(mark);
+    }
+    if (k < 0 || k >= 512 || !name[k][0]) return 0;
+    snprintf(value, (size_t)n, "%s", name[k]);
+    return 1;
+}
+static int spr_option(int k, int step, char *value, int n)
+{
+    if (k < 0 || k >= 512 || !spr_there(k)) return 0;
+    if (step) {
+        char key[24];
+        level_new_sprite[k] = ui_new_sprite[k] = !level_new_sprite[k];
+        snprintf(key, sizeof key, "sprite_new_%03d", k);
+        settings_save(key, level_new_sprite[k] ? "1" : "0");
+        lv_number = 0;   /* the scene is built again with the other picture (uwv_level, the front end's next frame) */
+    }
+    snprintf(value, (size_t)n, "%s", level_new_sprite[k] ? "New" : "Original");
+    return 1;
+}
 /* the field of view (radians, vertical), the one our full-screen view uses */
 UWV_API float uwv_fov(void) { return S.fov * 3.14159265f / 180.0f; }
 /* one of our renderer's options: its value as text; step != 0 changes it (and keeps it). 0 when not offered.
@@ -2681,6 +2795,8 @@ UWV_API int uwv_option(int id, int step, char *value, int n)
     static const char *const STYLE[3] = {"A - Default", "B - Natural", "C - Cinematic"};
     char t[72];   /* (a face's name: up to 63) */
     if (!started) return 0;
+    if (id >= 1000 && id < 1512) return spr_option(id - 1000, step, value, n);   /* the Sprites tab: a picture's row */
+    if (id >= 3000 && id < 3512) return spr_label(id - 3000, value, n);          /* and the row's name */
     switch (id) {
     case 0:
         if (!render_dlss_available()) { snprintf(value, (size_t)n, "Not on this card"); return 1; }
@@ -3074,6 +3190,13 @@ UWV_API int uwv_option(int id, int step, char *value, int n)
 /* the menu's drawing: src\menu_draw.c (2026-11-15: moved there, unchanged, for the backends without this renderer) */
 UWV_API void uwv_menu_wheel(int notches) { md_wheel(notches); }
 UWV_API int uwv_menu_click(int mx, int my, int down) { return md_click(ui_ok, mx, my, down); }
+/* the rows' sliders (the Fog and smoke page; menu_draw.c): the places along their tracks for the next uwv_menu_rows2,
+   and the pointer on them */
+UWV_API void uwv_menu_sliders(const float *frac, int n) { md_sliders(frac, n); }
+UWV_API int uwv_menu_slider(int mx, int my, int row, float *frac) { return md_slider(mx, my, row, frac); }
+/* the menu's tabs (menu_draw.c): their names and the open one for the next uwv_menu_rows2; the one under the pointer */
+UWV_API void uwv_menu_tabs(const char *const *names, int n, int open) { md_tabs(names, n, open); }
+UWV_API int uwv_menu_tab_at(int mx, int my) { return md_tab_at(mx, my); }
 UWV_API int uwv_menu_rows2(const char *title, const char *const *labels, const char *const *values,
                            const char *const *hints, int n, int sel, int mx, int my)
 {
@@ -3344,6 +3467,8 @@ static int fx_emitters;    /* the flames giving embers this frame */
 static float fx_emit_screen[2] = {-1, -1};   /* the nearest one in view (0..1 across and down): the checks' region */
 /* each frame: embers and the odd spark above every flame within 14 tiles (the wall torches, the burning things), each
  * at its flame's own rate (a torch about 6 a second, a campfire about 25) */
+#include "volfog.inc"
+
 static void fx_frame(void)
 {
     static float acc[MAX_LIGHTS];
@@ -3355,6 +3480,7 @@ static void fx_frame(void)
     t0 = now;
     if (dt > 0.1f) dt = 0.1f;
     if (steady_check()) dt = 0.016f;   /* (a check's: a frame is 16 ms to the emitters, as UWVIEW_PART_DT=16 to the particles) */
+    vol_shot(dt), vol_frame(dt);   /* the fog and smoke: this frame's dials, fires and bodies to the renderer */
     if (fx_steady_reset) {
         fx_steady_reset = 0;
         render_particles_clear();
@@ -3412,7 +3538,7 @@ static void fx_frame(void)
         /* a campfire's smoke (the user, 2026-11-17: "smoke from the campfires that dissipates over time"): grey puffs
            rising from above the flames, slowing, widening and thinning out over 5 to 8 seconds, lit from below by the
            fire while young (particles.hlsl's kind 5); under the ceiling they spread */
-        if (GL.camp_smoke && L->flame >= 0.4f) {
+        if (GL.camp_smoke && L->flame >= 0.4f && !vol_covers(L->pos[0], L->pos[2], 1)) {   /* (inside the box of air: the real smoke) */
             static float sacc[MAX_LIGHTS];
             sacc[k] += dt * 5.0f;
             while (sacc[k] >= 1.0f) {
@@ -3433,7 +3559,7 @@ static void fx_frame(void)
         int nw = 0, cx = (int)cam.pos[0], cz = (int)cam.pos[2];
         for (int z = cz - 7; z <= cz + 7; z++)
             for (int x = cx - 7; x <= cx + 7; x++)
-                if (x >= 0 && x < 64 && z >= 0 && z < 64 && m.grid[(z * 64 + x) * 4 + 2] == 1) wt[nw++] = (u16)(z * 64 + x);
+                if (x >= 0 && x < 64 && z >= 0 && z < 64 && m.grid[(z * 64 + x) * 4 + 2] == 1 && !vol_covers(x + 0.5f, z + 0.5f, 0)) wt[nw++] = (u16)(z * 64 + x);
         macc += dt * (float)nw * 0.8f;
         if (!nw) macc = 0;
         while (macc >= 1.0f && nw) {

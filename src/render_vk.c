@@ -669,6 +669,9 @@ static bool start_present(void)
 /* ---------------------------------------------------------------- DLSS (M5) */
 #include "render_vk_dlss.h"
 
+/* ---------------------------------------------------------------- the fog and smoke (2026-11-17) */
+#include "render_vk_vol.h"
+
 /* ---------------------------------------------------------------- the scene (M2) */
 /* a texture from the CPU (bpt bytes a texel), copied in the command buffer now open; stage: its upload buffer, freed
    by the caller once the copy has run. The image is left for the shaders to read. */
@@ -862,6 +865,7 @@ bool render_upload(const Mesh *m)
     if (ok) scene_bind(), rt_bind_level(), V.level = true;
     else level_free();
     V.have_prev = false;
+    VL.have_prev = false;   /* (the fog and smoke: another level's air starts still and clear) */
     return ok;
 }
 
@@ -1069,6 +1073,7 @@ bool render_init(const RenderConfig *cfg)
     set_dlss_text();
     g_rp_ok = vfx_particles_start();   /* (used only while fx_particles is on) */
     g_rd_ok = vfx_decals_start();      /* (fx_decals) */
+    vvol_start();                      /* (the fog and smoke: used only while the Fog and smoke row is on) */
     if (cfg->hwnd && !make_swapchain() && !V.sc_stale) return render_shutdown(), false;
     V.up = true;
     /* (render.c's form: the GPU, the size, the shadows' way, DLSS's line) */
@@ -1093,6 +1098,7 @@ void render_shutdown(void)
         if (V.dpool) vkDestroyDescriptorPool(V.dev, V.dpool, NULL);
         if (V.dsl) vkDestroyDescriptorSetLayout(V.dev, V.dsl, NULL);
         dlss_stop();
+        vvol_stop();
         vfx_stop();
         level_free();
         rt_stop();
@@ -1297,6 +1303,8 @@ bool render_frame(const Camera *cam, const Look *look, bool reset)
         vfx_particles_frame(c->vp, cam->pos, V.cfg.exposure, right, up, torch, g_torch_rgb);
     }
     if (decals) vfx_decals_frame(c->vp);
+    /* the fog and smoke: the air's step and its light (render_vk_vol.h), drawn over the scene below */
+    const bool vol = vvol_frame(cam, view, proj, jx * 2.0f / (float)rw, -jy * 2.0f / (float)rh, rt_live, g_hold, rw, rh);
     {   /* the scene: colour (cleared 0 0 0 1), motion (0), depth (the far plane); the level indexed, then the cards.
            The viewport's height is negative (y from the bottom up), so clip space is D3D12's (y up) and the picture,
            SV_Position, ddx / ddy and the motion vectors come out as render.c's without a shader switch */
@@ -1364,6 +1372,7 @@ bool render_frame(const Camera *cam, const Look *look, bool reset)
         barrier_a(V.depth.img, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         if (high)
             for (int g = 0; g < 3; g++) barrier(guides[g]->img, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        if (vol && V.level) vvol_draw(rw, rh);
     }
     /* DLSS (or Ray Reconstruction); the present pass shows its output, or the scene's colour */
     present_source(dlss && dlss_evaluate(high, jx, jy, rw, rh, reset) ? &DL.out : &V.scene);

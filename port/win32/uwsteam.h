@@ -58,6 +58,7 @@ void uwst_direct(int voice, const float heard[3], const float gain[3], int floor
    use (0 none yet); _busy: a bake is under way; _heard: a voice's last paths, for the checks (the three bands'
    gains and the first four of the directional coefficients; 0 when it has none). */
 void uwst_pathing(int on, float level);
+void uwst_level_change(void);   /* a level change under way: no pathing until the new level's tiles come */
 int  uwst_pathing_probes(void);
 int  uwst_pathing_busy(void);
 int  uwst_pathing_heard(int voice, float eq[3], float sh[4]);

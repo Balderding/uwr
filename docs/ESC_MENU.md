@@ -8,6 +8,9 @@ of it: what it does, which values it takes, and what it needs in order to work.
 | Do this | To |
 | --- | --- |
 | Esc | Open the menu while you are in the 3D view; close it again. On the Save and Load pages Esc goes back to the options. |
+| Tab or Page Down | Open the next tab. |
+| Shift+Tab or Page Up | Open the tab before. |
+| A left click on a tab's name | Open that tab. |
 | Up / Down | Move from row to row (headings are skipped). |
 | Right, or a left click | Change the row's value: the next one, or more. |
 | Left, or a right click | Change the row's value: the one before, or less. |
@@ -16,6 +19,57 @@ of it: what it does, which values it takes, and what it needs in order to work.
 
 The game is paused while the menu is open. At the foot of the menu the row you are on is described: its
 value in full, and under it what the row does (up to three lines).
+
+**Tabs.** The rows are sorted into tabs, one for each section of this page: Game, Display, Graphics, Sprites, Effects,
+Fog and smoke, Sound, Sound tuning, Controls and AI. Their names stand in a strip under the title, on one or two lines;
+the open tab is the one in gold with a gold bar under it, and only its rows are listed. A tab that has nothing to
+show at the moment is left out of the strip. The menu opens on the tab you were on last, until you close the game.
+
+**Preset and Default settings.** Every tab except Game begins with the same two rows:
+
+| Row | What it does |
+| --- | --- |
+| **Preset** | A ready-made set of the tab's settings. Left, Right, Enter or a click go to the next one (or the one before) and apply it at once. The row always shows the preset that the tab's rows match right now. As soon as you change a row so that no preset matches, it reads **Custom**: your own mix. Nothing is lost by that; pick a preset again whenever you like. |
+| **Default settings** | Puts every row of the tab back to its default, the value the game uses when your settings file says nothing. It acts on Enter, Space or a left click only, so Left, Right and a right click cannot set it off by accident. It is the same as choosing the preset called Default. |
+
+Some rows are never touched by a preset or by Default settings, because they need a restart or depend on your
+machine: Display, Full screen, Renderer, Font, Music on / off and Sound on / off, the two sound device rows, HDR
+peak brightness and HDR paper white, Language model and Model runs on, the AI log rows, and the rows that only
+give information. Music volume and Sound volume are put back to 100% by Default only; the other Sound presets
+leave them as they are. A row that is not shown at the moment, or that your graphics card does not offer, is
+passed over.
+
+| Tab | Presets | What each one sets |
+| --- | --- | --- |
+| Display | Default | Field of view 85, Smooth motion On, Message fade 5 s, the three door rows On, Font size 100%, Menu text, Conversation text and Message text Smooth, Menu background Solid colour, Character sheet Full. |
+| Graphics | Default | DLSS Super Resolution On in DLAA mode, Ray tracing On, Ray Reconstruction Off, DLSS 5 Off (style B - Natural, intensity and structure 100%), Bounced light On, Object shadows On, Textures Original, the three map detail rows As the textures, Normal maps On at strength 1.00, Joint shadows 100%, Relief shadows Depth 3, Light colour CAT16, Light fade 2 / 3 / 4 tiles, Fire breathing 20%, Light adaptation Automatic, HDR output On. |
+| | Fastest | As Default, but DLSS mode Performance, Bounced light Off, Object shadows Off, Relief shadows Off. |
+| | Balanced | As Default, but DLSS mode Quality and Textures Upscaled 256. |
+| | Best picture | As Default (DLAA), but DLSS Ray Reconstruction On, Textures Upscaled 512 and Relief shadows Depth 8. |
+| Sprites | (no presets) | Each row is switched on its own. |
+| Effects | Default | Particles, Decals and Water Off; Campfire smoke, Water fog and Glowing stones On; Moonstone light 10%, Fire elemental light 30%. |
+| | All off | Every row of the tab Off. |
+| | All on | As Default, with Particles, Decals and Water On. |
+| Fog and smoke | Default | Every row of the tab at its default (the main Fog and smoke switch is left as it is). |
+| | Light | Fog and smoke half as thick, and less of both given off. |
+| | Heavy | Fog and smoke twice as thick, and more of both given off. |
+| | Faster | Coarser, smaller and cheaper: fewer cells, a shorter reach, fewer pressure passes and view steps, light refreshed a quarter at a time, no self-shadowing. |
+| | Finest | Finer and wider: more cells, a longer reach, more pressure passes and view steps, two light rays a cell. |
+| Sound | Default | Music and Sound volume 100%, Positional sound On, Acoustics High (as the game comes), and every other row of the tab at its default (Headphone 3D sound On, Effects' sides Corrected, Hearing range Original, Footstep width Original, Footstep volume 80%, Footstep echo 50%, Footsteps by floor On, Echo detail Medium, Reverb level 100%, Map square size 2.4 m, Muffling by walls 100%, Sound round corners On). |
+| | Original | Positional sound Off: the game's own plain sound. |
+| | Positional | Positional sound On and Acoustics On. |
+| | Full | Positional sound On, Acoustics High, Headphone 3D sound On. |
+| Sound tuning | Default | Every dial that is shown back at the default its row names. |
+| Controls | Default | Mouse sensitivity 1.0. |
+| Keys | (no presets) | Its own **Default keys** row puts every command back on the key it came with. |
+| AI | Default | Creature AI Devious, every part's row On, AI messages On, Level hunters 2 a level, Decisions by Rules, Model answers by Scoring, Model questions 20 a second, Model answer too old 3 s, Model unloaded after 10 min. |
+| | Original | Creature AI Original. |
+| | Devious | Creature AI Devious, with every part of that level On. |
+| | Monstrous | Creature AI Monstrous, with every part On. |
+
+The Sound presets other than Default, and the AI presets, also put the tab's other rows at their defaults, as
+"As Default, but" says for the Graphics ones. The public download's settings file differs from Default in a few
+rows (see Defaults below), so a fresh copy may show Custom on some tabs.
 
 **Changes take hold at once**, and you hear or see them behind the menu, unless the row says "from the next
 start". Every change is kept: the game writes it to its settings file (`settings.txt`) or to its own config
@@ -106,6 +160,20 @@ Rows marked "card" are shown only when the graphics card and its driver can do w
 | **HDR peak brightness** | The monitor's (default), or 400 to 4000 nits in steps of 100 | The brightest the highlights go. "The monitor's" uses the figure the monitor reports. (A nit is the unit of screen brightness.) | HDR. |
 | **HDR paper white** | 80 to 500 nits, steps of 10. Default 200 | How bright plain white is in HDR: the picture's normal range and the interface. | HDR. |
 
+## Sprites
+
+Items whose picture has been redrawn have a row here, named after the item (Hand axe, Battle axe ...). The tab is
+only there when at least one redrawn picture is installed, and an item without one has no row.
+
+| Row | Values | What it does |
+| --- | --- | --- |
+| **(the item's name)** | Original (default) / New | The item's picture where it lies in the world, in your pack and when you hold it on the crosshair. Original is the game's own 16 x 16 picture. New is the redrawn one: the item stands upright, drawn at twice the detail in the same space. It changes at once. |
+
+The redrawn pictures are PNG files in the folder `uwr\newsprites\objects`, named by the item's number (`000.png` is
+the hand axe). A picture may be up to 32 x 32 pixels; one larger than 16 x 16 is shown at half size, so it takes the
+same room as the original. The game looks for them when it starts. The original game's own inventory panel
+(Character sheet: the game's page, or Display: The original's) always shows the original pictures.
+
 ## Effects
 
 | Row | Values | What it does |
@@ -120,6 +188,164 @@ Rows marked "card" are shown only when the graphics card and its driver can do w
 | **Fire elemental light** | Off, or 10% to 100% of a candle, steps of 10. Default 30% | Fire elementals cast a smouldering orange light that moves with them. |
 
 Particles, Decals and Water are off unless your settings file turns them on (the public download's does).
+
+## Fog and smoke
+
+Fog and smoke have a tab of their own, next to Effects (shown when the renderer has them). It works like the
+other tabs: Up and Down move, the wheel and the scrollbar scroll, and the foot describes the row you are on.
+
+Most of its rows are **sliders**: a number on the right, and a bar in the middle of the row with a knob that
+shows where the number lies between its lowest and its highest value. There are three ways to set one:
+
+| Do this | To |
+| --- | --- |
+| Left / Right (or a right click / a left click on the row) | Move the slider one step down or up. |
+| Press the left mouse button on the bar and drag | Put the knob where you press; it follows the pointer until you let go. |
+| Type a number, then Enter | Set the value exactly. Digits, `.` and `-` work, on the main keys and the number pad. What you type is shown in place of the value, with a `_` after it. Backspace takes the last character away; Esc drops what you typed and keeps the old value (it does not close the menu); Up or Down drop it and move on. A number outside the slider's range becomes the nearest value it allows. |
+
+The other rows are switches (On / Off) and choices, which change as everywhere else in the menu. The tab's
+**Preset** row offers Default, Light, Heavy, Faster and Finest, and **Default settings** puts every row of the tab
+back to its default (see Using the menu); change any slider afterwards and Preset reads Custom.
+
+Every change is kept in `settings.txt`, as the other rows' are.
+
+### What the tab does
+
+Fog and smoke are simulated as real clouds: the air round you is divided into small cells, and many times a second
+the game works out how the air in each cell moves, what it carries, and how much light reaches it. Water gives off a
+low haze, lava gives off steam, fires give off smoke that rises and gathers under the ceiling. You, the creatures,
+doors, missiles and explosions push the air, so the fog parts and curls. With Ray tracing on, walls, pillars and
+creatures cast shadows into it.
+
+Limits to know about:
+
+- It needs the Vulkan renderer (the default). With Direct3D 12 the tab's rows are kept but nothing is drawn.
+- Only the air in a box round you is simulated (the **Reach** row). Beyond it the older particle fog and smoke stand in, or nothing (the **Beyond the reach** row).
+- A shut door does not hold fog or smoke back; walls, floors and ceilings do.
+- Fog and smoke do not change what creatures can see.
+
+### The rows
+
+**Fog and smoke**
+
+| Row | Values | What it does |
+|---|---|---|
+| **Fog and smoke** | On / Off (default On) | On: fog and smoke are real clouds in the air. They drift, rise, sink, thin out, catch the light, and you push them aside. Vulkan renderer only. |
+| **Each level's own fog** | On / Off (default On) | On: a level can have its own fog and smoke, made in the Underworld Editor (Level, Fog and smoke): more or less haze and smoke, a draught, its air's temperature, and fog and smoke placed on the map. Kept in DATA\UWRFOG.TXT. Off: every level by these rows alone. |
+
+**Fog (haze over water)**
+
+| Row | Values | What it does |
+|---|---|---|
+| **Fog** | On / Off (default On) | On: a haze lies over water and steam rises over lava. Off: no fog; smoke is not changed. |
+| **Fog thickness** | Slider: 0.00 to 4.00 x, steps of 0.05 (default 1.00) | How thick the fog looks for the same amount of it in the air: 0 (unseen) to 4. Default 1. |
+| **Fog given off** | Slider: 0.00 to 3.00 x, steps of 0.05 (default 1.00) | How much haze water and lava give off: 0 (none) to 3. Default 1. |
+| **Haze over water** | On / Off (default On) | On: every water square gives off haze. Off: water gives none. |
+| **Steam over lava** | On / Off (default On) | On: lava gives off hot steam that rises. Off: none. |
+| **Water chills the air** | Slider: 0.0 to 10.0 K, steps of 0.5 (default 3.0) | How much colder than the room the air just over water is: 0 to 10 degrees. Cold air is heavy, so the fog lies low and creeps out across the floor. Default 3. |
+| **Fog dries off in warm air** | Slider: 0.00 to 1.00 /s K, steps of 0.01 (default 0.20) | How fast fog vanishes for each degree the air is warmer than the room: real droplets are gone within a second in air a few degrees warmer. 0 (never) to 1. Default 0.2. |
+| **Fog droplets settle** | Slider: 0.0 to 5.0 cm/s, steps of 0.1 (default 1.0) | How fast the fog's droplets fall through still air: 0 to 5 cm a second. Real fog droplets of 20 thousandths of a millimetre fall about 1. Default 1. |
+| **Lava heats the air** | Slider: 0 to 400 K, steps of 10 (default 120) | How much hotter than the room the air just over lava is: 0 to 400 degrees. Hot air rises and takes the steam up with it. Default 120. |
+| **Fog spreads** | Slider: 0.00 to 0.50, steps of 0.01 (default 0.05) | How fast fog seeps sideways into clear air by itself: 0 (holds its shape) to 0.5. Default 0.05. |
+| **Fog thins out** | Slider: 0.00 to 2.00 /s, steps of 0.01 (default 0.10) | How fast fog fades away: the share lost each second, 0 (never) to 2. Default 0.10. |
+| **Fog layer height** | Slider: 0.10 to 2.00 sq, steps of 0.05 (default 0.45) | How high above the water the haze forms: 0.1 to 2 map squares. Default 0.45. |
+| **Fog colour: warm** | Slider: 0.00 to 1.00, steps of 0.01 (default 0.97) | The fog's colour, first of three sliders (the warm part of the light it sends back): 0 to 1. Default 0.97. |
+| **Fog colour: green** | Slider: 0.00 to 1.00, steps of 0.01 (default 0.98) | The fog's colour, second of three sliders: 0 to 1. Default 0.98. |
+| **Fog colour: blue** | Slider: 0.00 to 1.00, steps of 0.01 (default 1.00) | The fog's colour, third of three sliders: 0 to 1. Default 1.00. |
+| **Fog brightness** | Slider: 0.00 to 4.00 x, steps of 0.05 (default 1.00) | How brightly fog shows in light: 0 (it only dims what is behind it) to 4. Default 1. |
+| **Fog blocks light** | Slider: 0.0 to 8.0, steps of 0.1 (default 1.6) | How much a square's depth of full fog hides what is behind it: 0 (clear) to 8. Default 1.6. |
+| **Fog droplet size** | Slider: 5 to 50 um, steps of 1 (default 15) | The size of the fog's water droplets: 5 to 50 thousandths of a millimetre. It sets how fog scatters light: a bright glow round lights seen through it. Default 15. |
+| **Fog billows** | Slider: 0.00 to 1.00, steps of 0.05 (default 0.70) | Fine cloud shapes in the fog, smaller than the simulation can hold: wisps at the edges and uneven clumps that drift with the air. 0 (smooth, even haze) to 1. Default 0.7. |
+| **Mist rises in wisps** | Slider: 0.00 to 1.00, steps of 0.05 (default 0.60) | 0: water gives off its haze evenly. Higher: it comes off in separate, shifting wisps that climb a little before they sink back, as mist does over a real pond. The same amount of haze overall. 0 to 1. Default 0.6. |
+| **Cold air warms up** | Slider: 0.02 to 3.00 /s, steps of 0.01 (default 0.05) | How fast the cold air over water warms to the room's temperature: 0.02 (it stays cold and heavy, so the fog runs far across the floor and down steps) to 3 (it warms at once and the fog stays by the water). Default 0.05. |
+| **Fog in veils** | Slider: 0.00 to 1.00, steps of 0.05 (default 0.40) | The form of the fog's fine shapes: 0 (soft round clumps) to 1 (thin drifting veils and threads, as mist has). Needs the Fog billows row above 0. Default 0.4. |
+| **Moving air raises more mist** | Slider: 0.00 to 1.00, steps of 0.05 (default 0.50) | Air that moves across water takes up more haze than still air, as a light breeze does over a pond: your own passing and any draught thicken the mist. 0 (the same in still and moving air) to 1. Default 0.5. |
+| **Fog dries from its edges** | Slider: 0.00 to 1.00, steps of 0.05 (default 0.50) | 0: thin and thick fog fade at the same rate. Higher: the thin outer parts, mixed with drier air, vanish sooner and the thick middle lasts longer, so a bank of fog keeps a clearer shape. 0 to 1. Default 0.5. |
+| **Fog edge softness** | Slider: 0.00 to 1.00, steps of 0.05 (default 0.20) | 0: thin fog shows as it is. Higher: thin wisps at the edges are hidden, so the fog has a softer, later start. 0 to 1. Default 0.2. |
+
+**Smoke**
+
+| Row | Values | What it does |
+|---|---|---|
+| **Smoke** | On / Off (default On) | On: fires give off smoke that rises, gathers under the ceiling and thins out. Off: no smoke; fog is not changed. |
+| **Smoke thickness** | Slider: 0.00 to 4.00 x, steps of 0.05 (default 1.00) | How thick the smoke looks for the same amount of it in the air: 0 (unseen) to 4. Default 1. |
+| **Smoke given off** | Slider: 0.00 to 3.00 x, steps of 0.05 (default 1.00) | How much smoke the fires give off: 0 (none) to 3. Default 1. |
+| **Campfires smoke** | On / Off (default On) | On: campfires give off smoke. Off: they give none. |
+| **Torches and lanterns smoke** | On / Off (default On) | On: wall torches, lanterns and other small flames give off a thin smoke. Off: none. |
+| **Blasts smoke** | On / Off (default On) | On: an explosion leaves a puff of hot smoke. Off: none. |
+| **Campfire heat** | Slider: 50 to 800 K, steps of 10 (default 400) | How much hotter than the room the air over a campfire is: 50 to 800 degrees. Hotter: the smoke climbs faster and thinner. A real campfire (about 30 kW): 400 just over the flames, 140 a metre up. Default 400. |
+| **Torch heat** | Slider: 20 to 500 K, steps of 10 (default 120) | How much hotter than the room the air over a torch or lantern flame is: 20 to 500 degrees. Default 120. |
+| **Smoke's own weight** | Slider: -1.00 to 1.00, steps of 0.01 (default 0.00) | Real smoke weighs next to nothing and goes where the warm air goes: 0. Below 0 it sinks by itself, above 0 it floats up. -1 to 1. Default 0. |
+| **Heat lifts the air** | Slider: 0.00 to 3.00 x, steps of 0.05 (default 1.00) | How strongly warm air rises and cold air sinks, against the real force (gravity x the difference in temperature): 0 to 3. Default 1 (real). |
+| **Smoke spreads** | Slider: 0.00 to 0.50, steps of 0.01 (default 0.03) | How fast smoke seeps sideways into clear air by itself: 0 (holds its shape) to 0.5. Default 0.03. |
+| **Smoke thins out** | Slider: 0.00 to 2.00 /s, steps of 0.01 (default 0.20) | How fast smoke fades away: the share lost each second, 0 (never) to 2. Default 0.20. |
+| **Air loses its heat** | Slider: 0.02 to 3.00 /s, steps of 0.01 (default 0.25) | How fast warm air cools to the room's temperature (faster still beside rock): 0.02 (stays hot, climbs far) to 3 (cools at once). Default 0.25. |
+| **Smoke colour: warm** | Slider: 0.00 to 1.00, steps of 0.01 (default 0.80) | The smoke's colour, first of three sliders (the warm part of the light it sends back): 0 to 1. Default 0.80. |
+| **Smoke colour: green** | Slider: 0.00 to 1.00, steps of 0.01 (default 0.79) | The smoke's colour, second of three sliders: 0 to 1. Default 0.79. |
+| **Smoke colour: blue** | Slider: 0.00 to 1.00, steps of 0.01 (default 0.77) | The smoke's colour, third of three sliders: 0 to 1. Default 0.77. |
+| **Smoke brightness** | Slider: 0.00 to 4.00 x, steps of 0.05 (default 1.00) | How brightly smoke shows in light: 0 (black smoke that only hides) to 4. Default 1. |
+| **Smoke blocks light** | Slider: 0.0 to 8.0, steps of 0.1 (default 3.0) | How much a square's depth of full smoke hides what is behind it: 0 (clear) to 8. Default 3. |
+| **Smoke glow toward lights** | Slider: 0.00 to 0.90, steps of 0.05 (default 0.60) | How much brighter smoke is when you look through it toward a light: 0 (the same every way) to 0.9. Wood smoke is about 0.6. Default 0.6. |
+| **Smoke billows** | Slider: 0.00 to 1.00, steps of 0.05 (default 0.85) | Fine cloud shapes in the smoke, smaller than the simulation can hold: wisps at the edges and uneven clumps that drift with the air. 0 (smooth, even smoke) to 1. Default 0.85. |
+| **Smoke comes in puffs** | Slider: 0.00 to 1.00, steps of 0.05 (default 0.80) | 0: every fire gives off smoke evenly, as a smooth ball. Higher: it comes off in uneven puffs, as from a real fire. The same amount of smoke overall. 0 to 1. Default 0.8. |
+| **Puff rate by fire size** | On / Off (default On) | On: a fire puffs at the rate real flames do, set by its width: a torch about three times a second, a campfire about twice. Off: every fire puffs slowly and unevenly. Needs the Smoke comes in puffs row above 0. |
+| **Smoke in round puffs** | Slider: 0.00 to 1.00, steps of 0.05 (default 0.40) | The form of the smoke's fine shapes: 0 (soft clumps) to 1 (round puffs with dark creases between them, as rolling smoke has). Needs the Smoke billows row above 0. Default 0.4. |
+| **Puffs kick the air** | On / Off (default On) | On: a fire's heat comes in the same beats as its puffs, so each puff is thrown up as a rolling ring, as a real flame sheds them. Off: steady heat. Needs the Smoke comes in puffs row above 0. |
+| **Smoke edge softness** | Slider: 0.00 to 1.00, steps of 0.05 (default 0.10) | 0: thin smoke shows as it is. Higher: thin wisps at the edges are hidden. 0 to 1. Default 0.1. |
+
+**The air**
+
+| Row | Values | What it does |
+|---|---|---|
+| **Room temperature** | Slider: 0 to 30 C, steps of 1 (default 12) | The temperature of the dungeon's still air: 0 to 30 degrees Celsius. Warm air rises faster in a cold room. Default 12. |
+| **Billow size** | Slider: 0.20 to 2.00 sq, steps of 0.05 (default 0.60) | How large the fine cloud shapes of the Fog billows and Smoke billows rows are, in map squares (a square is 2.4 m). Small: fine and wispy. Large: big soft clumps. 0.2 to 2. Default 0.6. |
+| **Billows spare the thick middle** | Slider: 0.00 to 1.00, steps of 0.05 (default 0.50) | The fine cloud shapes eat into the thin outer parts of fog and smoke and leave the thick middle whole, as in a real cloud. 0 (the whole cloud is broken up) to 1 (only its edges). Default 0.5. |
+| **Wisps stretch with the air** | Slider: 0.00 to 1.00, steps of 0.05 (default 0.60) | Where the air moves, the fine cloud shapes are drawn out into streaks along its way; still air keeps its round puffs. 0 (round everywhere, a little faster) to 1. Default 0.6. |
+| **Billows where the air shears** | Slider: 0.00 to 1.00, steps of 0.05 (default 0.50) | 0: the fine cloud shapes are equally strong everywhere. Higher: stronger where layers of air slide past each other (the rolls on top of a moving sheet of fog, the edge of a rising column) and weaker in still air. 0 to 1. Default 0.5. |
+| **Sharp wisps** | On / Off (default On) | On: the moving air keeps fine wisps and edges (a second, correcting pass each step). Off: the simpler method, softer and blurred, a little faster. |
+| **Air comes to rest** | Slider: 0.00 to 3.00 /s, steps of 0.05 (default 0.10) | How soon moving air slows down by itself: 0 (it keeps going, as real air nearly does) to 3 (it stops at once). Default 0.1. |
+| **Curls kept** | Slider: 0.00 to 1.00, steps of 0.05 (default 0.35) | A coarse grid of air loses its small curls and eddies; this puts them back (vorticity confinement): 0 (smooth, lazy smoke) to 1 (lively). Default 0.35. |
+| **Draught** | Slider: 0.00 to 1.00, steps of 0.01 (default 0.00) | A steady draught through the whole level that carries fog and smoke along: 0 (still air) to 1 map square a second. Default 0. |
+| **Draught direction** | Slider: 0 to 355 deg, steps of 5 (default 0) | Which way the draught blows: 0 north, 90 east, 180 south, 270 west. Default 0. |
+
+**Pushing it**
+
+| Row | Values | What it does |
+|---|---|---|
+| **You push it** | On / Off (default On) | On: your body moves the air, so fog and smoke part in front of you and curl in behind. Off: you pass through it. |
+| **Push strength** | Slider: 0.00 to 3.00 x, steps of 0.05 (default 1.00) | How hard a moving body shoves the air aside: 0 to 3. Default 1. |
+| **Wake** | Slider: 0.00 to 1.00, steps of 0.05 (default 0.60) | How much of the air a moving body drags along behind it: 0 (none) to 1 (all of it). Default 0.6. |
+| **Creatures push it** | On / Off (default On) | On: creatures move the air as you do. Off: they pass through fog and smoke. |
+| **Doors push it** | On / Off (default On) | On: a door that swings open or shut gives the air a shove. Off: none. |
+| **Missiles push it** | On / Off (default On) | On: arrows, thrown things and spell bolts leave a trail through fog and smoke. Off: none. |
+| **Blast force** | Slider: 0.0 to 5.0 x, steps of 0.1 (default 1.0) | How hard an explosion throws the air outward: 0 (not at all) to 5. Default 1. |
+
+**Light in it**
+
+| Row | Values | What it does |
+|---|---|---|
+| **Shadows in fog and smoke** | On / Off (default On) | On: walls, pillars and creatures cast shadows into the fog, so light falls through it in shafts. Off: lit evenly, faster. |
+| **Light rays a cell** | Slider: 1 to 4, steps of 1 (default 1) | Shadow rays for each light at each cell of air: 1 to 4. More: smoother shafts from wide flames, slower. Default 1. |
+| **Light shafts strength** | Slider: 0.00 to 4.00 x, steps of 0.05 (default 1.00) | How brightly torches, fires and other placed lights show in fog and smoke: 0 (not at all) to 4. Default 1. |
+| **Your light in it** | Slider: 0.00 to 2.00 x, steps of 0.05 (default 1.00) | How brightly the light you carry shows in fog and smoke round you: 0 (not at all) to 2. 1 is real; too high hides the view. Default 1. |
+| **Placed lights light it** | On / Off (default On) | On: torches, fires and glowing things light fog and smoke. Off: only the light you carry does. |
+| **It shadows itself** | Slider: 0.00 to 2.00 x, steps of 0.05 (default 1.00) | How much thick fog and smoke keep light from the fog and smoke behind them: 0 (off, faster) to 2. Default 1. |
+| **Light scattered many times** | Slider: 0.00 to 1.00, steps of 0.05 (default 1.00) | In thick fog light bounces from droplet to droplet and gets deeper in than a straight beam: 0 (straight beams only: hard, dark cores) to 1 (real). Default 1. |
+| **Room light in it** | Slider: 0.00 to 2.00 x, steps of 0.05 (default 1.00) | How much of the light bounced off the walls also lights fog and smoke: 0 (only direct light) to 2. Needs Ray tracing and Bounced light. Default 1. |
+
+**Quality and speed**
+
+| Row | Values | What it does |
+|---|---|---|
+| **Fineness** | 3, 4, 6, 8 (default 6) | Cells of air to a map square: 3, 4, 6 or 8. More: finer wisps, more work for the graphics card. A change starts the air again. Default 6. |
+| **Reach** | 12, 16, 20, 24, 32 (default 20) | The simulated air is a box round you this many map squares wide: 12 to 32. Beyond it there is no fog or smoke. Default 20. |
+| **Simulation rate** | 30, 60, 120, Every picture (default 60) | How often the air is moved on: 30, 60 or 120 times a second, or once every picture. Default 60. |
+| **Pressure passes** | Slider: 4 to 80, steps of 2 (default 20) | How exactly air flows round walls and bodies instead of into them: 4 to 80 passes. More: truer swirls, slower. Default 20. |
+| **View steps** | Slider: 8 to 128, steps of 4 (default 48) | Samples taken along each line of sight through the fog: 8 to 128. More: smoother, slower. Default 48. |
+| **Fog drawn at half size** | On / Off (default On) | On: the fog and smoke are worked out for a quarter of the screen's pixels and brought up to full size by distance, with full detail kept at the edges of walls and creatures: much faster, and DLSS smooths it. Off: every pixel worked out, slower. |
+| **Light refresh** | All, Half, Quarter (default Half) | The share of the air's cells whose light is worked out again each picture: all, half or a quarter. Less is faster, the light follows later. |
+| **Light smoothing** | Slider: 0.00 to 0.95, steps of 0.05 (default 0.80) | How much of the light from earlier pictures is kept in each cell: 0 (none: grainy, instant) to 0.95 (smooth, slow to follow). Default 0.8. |
+| **Beyond the reach** | Particles, Nothing (default Particles) | What stands in for fog and smoke outside the simulated box: the older Particles (Water fog, Campfire smoke rows), or Nothing. |
 
 ## Sound
 
@@ -248,7 +474,26 @@ These shape the OpenAL reverb of level 2. At High the echoes come from Steam Aud
 | --- | --- | --- |
 | **Mouse sensitivity** | 0.1 to 4.0, steps of 0.1. Default 1.0 | How fast the mouse turns the view. Higher is faster. |
 
-The keys themselves are listed in [KEYBINDS.md](KEYBINDS.md).
+The keys themselves are listed in [KEYBINDS.md](KEYBINDS.md), and can be changed on the Keys tab.
+
+## Keys
+
+Every keyboard command of our display, with the key it has now. Change any of them to the key you want.
+
+| Row | Values | What it does |
+| --- | --- | --- |
+| **Default keys** | Enter | Every command goes back to the key it came with. |
+| **A command's row** (Walk forward, Use, Map ...) | A key, a key with Shift or Ctrl, or none | Enter (or a click) asks for the new key: the next key you press becomes that command's key. Hold Shift or Ctrl while pressing it for a combination. Shift on its own is taken when you let it go. Esc gives up, Delete leaves the command with no key. Left (or a right click) puts the row's own default key back. |
+
+- A key can belong to one command only. Giving a command a key that another one had takes it from that one, which
+  then shows **none** until you give it a key.
+- A key that has lost its command does nothing in play. It never falls back to an older meaning.
+- Some commands come with two keys (Walk forward: W and Up arrow). Each has its own row, marked "second key".
+- Esc, Tab, F1, F11 and the key under Esc belong to the menus and cannot be given to a command.
+- The mouse buttons, the map's and the conversations' keys, and the rune keys (Ctrl + Alt + letter) are not on this
+  tab and stay as they are.
+- Your keys are kept in the settings file as `key_<name>` lines.
+- The original's display uses the 1992 keys, so the tab is not shown there.
 
 ## AI
 

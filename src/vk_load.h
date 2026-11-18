@@ -36,7 +36,7 @@
     X(vkCmdBindDescriptorSets) X(vkCmdSetViewport) X(vkCmdSetScissor) X(vkCmdDraw) X(vkCmdCopyBufferToImage) \
     X(vkCmdCopyImageToBuffer) X(vkCmdClearColorImage) X(vkCmdBlitImage) \
     X(vkCmdBindVertexBuffers) X(vkCmdBindIndexBuffer) X(vkCmdDrawIndexed) X(vkCmdCopyBuffer) \
-    X(vkCreateComputePipelines) X(vkCmdDispatch) X(vkGetBufferDeviceAddress) X(vkCmdFillBuffer)
+    X(vkCreateComputePipelines) X(vkCmdDispatch) X(vkGetBufferDeviceAddress) X(vkCmdFillBuffer) X(vkCreateSampler) X(vkDestroySampler)
 /* ray tracing (M4): taken when the device has VK_KHR_acceleration_structure; NULL otherwise */
 #define VKL_RT(X) X(vkGetAccelerationStructureBuildSizesKHR) X(vkCreateAccelerationStructureKHR) \
     X(vkDestroyAccelerationStructureKHR) X(vkCmdBuildAccelerationStructuresKHR) X(vkGetAccelerationStructureDeviceAddressKHR)

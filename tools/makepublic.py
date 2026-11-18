@@ -91,13 +91,15 @@ for a, z in pairs:
 
 open(os.path.join(OUT, 'LICENSE.txt'), 'wb').write(git(HERE, 'show', 'HEAD:LICENSE'))
 open(os.path.join(OUT, 'THIRD-PARTY-NOTICES.md'), 'wb').write(git(HERE, 'show', 'HEAD:THIRD-PARTY-NOTICES.md'))
+# (2026-11-17: readme.txt names esc-menu.md, and it was not in the download) the Esc menu's rows, each explained
+shutil.copyfile(os.path.join(HERE, 'docs', 'ESC_MENU.md'), os.path.join(OUT, 'esc-menu.md'))
 with open(os.path.join(OUT, 'VERSION.txt'), 'w', newline='\r\n') as f:
     f.write('uwr, %s\n' % NAME)
     f.write('Built from uo-new %s, underworld-exhumed uw-new %s.\n'
             % (git(HERE, 'rev-parse', '--short', 'HEAD').decode().strip(),
                git(os.path.join(HERE, 'underworld-exhumed'), 'rev-parse', '--short', 'HEAD').decode().strip()))
     f.write('Source: https://github.com/Balderding/uwr\n')
-print('makepublic.py: %d files, %d MB -> %s' % (len(pairs) + 3, total >> 20, OUT))
+print('makepublic.py: %d files, %d MB -> %s' % (len(pairs) + 4, total >> 20, OUT))
 
 # the download itself: one zip beside the folder, with "uwr/" as its top folder. Written here (not by a zip tool) so
 # that the Linux programs keep their "may be run" mark when the zip is made on Windows; unzip on Linux restores it.

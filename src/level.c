@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 /* --- reading the text ------------------------------------------------------------------------- */
 static long num(const char **p) {
@@ -557,6 +558,10 @@ static void orb(Build *b, const float *o) {
 
 /* an image into its cell of an atlas (nearest texel when the sizes differ) */
 static void put_cell(u8 *atlas, int atlas_size, const Image *img, int x0, int y0, int cell) {
+    if (img->w == cell && img->h == cell) {   /* (2026-11-17: the cell's own size, each texel its own: whole rows) */
+        for (int y = 0; y < cell; y++) memcpy(atlas + ((size_t)(y0 + y) * atlas_size + (size_t)x0) * 4, img->rgba + (size_t)y * cell * 4, (size_t)cell * 4);
+        return;
+    }
     for (int y = 0; y < cell; y++)
         for (int x = 0; x < cell; x++) {
             const u8 *s = img->rgba + ((size_t)(y * img->h / cell) * img->w + (size_t)(x * img->w / cell)) * 4;
@@ -570,16 +575,22 @@ static void put_cell(u8 *atlas, int atlas_size, const Image *img, int x0, int y0
  * (its "height", 1 where there is none), and NAME_o.png, its occlusion map, into the pictures' AO atlas (1 where
  * there is none). Laigter's grey maps: their red channel. Made without "Use Alpha": the picture's own alpha masks
  * them (the shader discards where it is transparent). */
-static void sprite_normal(Mesh *m, const char *picture, int x0, int y0, int w, int h) {
-    char path[600];
+/* (2026-11-17: the three maps' paths apart, 0 the normal, 1 the height, 2 the occlusion, for level_mesh to name them
+ * to png_prefetch as well; false: the picture is not one that has them) */
+static bool sprite_relief_path(const char *picture, int k, char *path, size_t n) {
     const char *at = strstr(picture, "\\sprites\\");
     if (!at) at = strstr(picture, "\\ui\\animo\\");   /* the effects (blood, sparks ...): data\laigter\ui\animo */
     const char *dot = strrchr(picture, '.');
-    if (!at || !dot || dot < at) return;
+    if (!at || !dot || dot < at) return false;
     static const char SFX[3] = {'n', 'p', 'o'};
+    snprintf(path, n, "%.*s\\laigter%.*s_%c.png", (int)(at - picture), picture, (int)(dot - at), at, SFX[k]);
+    return true;
+}
+static void sprite_normal(Mesh *m, const char *picture, int x0, int y0, int w, int h) {
+    char path[600];
     for (int k = 0; k < 3; k++) {
-        snprintf(path, sizeof path, "%.*s\\laigter%.*s_%c.png", (int)(at - picture), picture, (int)(dot - at), at, SFX[k]);
-        if (!file_exists(path)) continue;
+        if (!sprite_relief_path(picture, k, path, sizeof path)) return;
+        if (!png_exists(path)) continue;
         size_t mark = arena_mark();
         Image img;
         if (png_read(path, &img) && img.w == w && img.h == h)
@@ -600,8 +611,70 @@ static void sprite_normal(Mesh *m, const char *picture, int x0, int y0, int w, i
 
 /* the textures' relief meshes as geometry (uw.exe); off: the original's flat faces, the normal maps alone */
 bool level_relief = true;
+u8 level_new_sprite[512];
+/* a wall's or floor's grey map (its height, its occlusion) stretched smooth to the normal atlas's cell (4x the
+ * texture's, the texture repeating at its edges) into one channel of it. 2026-11-17: worked out once for each texture
+ * and kept for the run (outside the arena), copied in for every level after: they are the same every level, and
+ * working them out again was 1.1 s of each level's build. */
+typedef struct {
+    int n, w, h;
+    u8 *px;
+} ReliefKept;
+static ReliefKept relief_kept[210 + 52][2];
+static void relief_stretch(Mesh *m, const float r[4], int cell, const Image *img, int channel, ReliefKept *k) {
+    int n = cell * 4;
+    if (!k->px || k->n != n || k->w != img->w || k->h != img->h) {
+        u8 *px = realloc(k->px, (size_t)n * (size_t)n);
+        if (!px) return;
+        k->px = px, k->n = n, k->w = img->w, k->h = img->h;
+        /* (2026-11-17: this was 1.1 s of the first level's build, every texel working out its own places and weights.
+         * A column's two texels and its weight are the same in every row, and a row's in every column: worked out
+         * once, by the same sums, the texel's value by the same sum from them: the same bytes. And where every
+         * texel falls on one of the map's own with no weight to its neighbours (a map of the cell's own size, as
+         * the user's are) the sum gives that texel's value itself: copied.) */
+        size_t mark = arena_mark();
+        int *xa = arena_alloc(sizeof(int) * (size_t)n * 4), *xb = xa + n, *ya = xb + n, *yb = ya + n;
+        float *ax = arena_alloc(sizeof(float) * (size_t)n * 2), *ay = ax + n;
+        bool same = img->w == n && img->h == n;
+        for (int x = 0; x < n; x++) {
+            float fx = (x + 0.5f) * (float)img->w / (float)n - 0.5f;
+            int x0 = (int)floorf(fx);
+            ax[x] = fx - (float)x0;
+            xa[x] = ((x0 % img->w) + img->w) % img->w, xb[x] = (xa[x] + 1) % img->w;
+            if (xa[x] != x || ax[x] != 0) same = false;
+        }
+        for (int y = 0; y < n; y++) {
+            float fy = (y + 0.5f) * (float)img->h / (float)n - 0.5f;
+            int y0 = (int)floorf(fy);
+            ay[y] = fy - (float)y0;
+            ya[y] = ((y0 % img->h) + img->h) % img->h, yb[y] = (ya[y] + 1) % img->h;
+            if (ya[y] != y || ay[y] != 0) same = false;
+        }
+        if (same)
+            for (size_t i = 0; i < (size_t)n * (size_t)n; i++) px[i] = img->rgba[i * 4];
+        else
+            for (int y = 0; y < n; y++) {
+                const u8 *ra = img->rgba + (size_t)ya[y] * img->w * 4, *rb = img->rgba + (size_t)yb[y] * img->w * 4;
+                float wy = ay[y];
+                for (int x = 0; x < n; x++) {
+                    float wx = ax[x];
+                    float h = (ra[xa[x] * 4] * (1 - wx) + ra[xb[x] * 4] * wx) * (1 - wy) + (rb[xa[x] * 4] * (1 - wx) + rb[xb[x] * 4] * wx) * wy;
+                    px[(size_t)y * n + x] = (u8)(h + 0.5f);
+                }
+            }
+        arena_reset(mark);
+    }
+    for (int y = 0; y < n; y++) {
+        u8 *d = m->natlas + ((size_t)((int)r[1] * 4 + y) * NATLAS_SIZE + (size_t)((int)r[0] * 4)) * 4 + channel;
+        const u8 *q = k->px + (size_t)y * n;
+        for (int x = 0; x < n; x++) d[x * 4] = q[x];
+    }
+}
 bool level_mesh(const Level *lv, const char *data_dir, const float (*orbs)[6], int norbs, Mesh *m) {
     memset(m, 0, sizeof *m);
+    clock_t lm_t[8];   /* (2026-11-17: the parts timed, UWVIEW_BUILD_LOG=1) */
+    int lm_n = 0;
+    lm_t[lm_n++] = clock();
     /* the atlas: every wall and floor texture (any size is scaled to its cell, nearest texel) */
     m->atlas = arena_alloc((size_t)ATLAS_SIZE * ATLAS_H * 4);
     m->natlas = arena_alloc((size_t)NATLAS_SIZE * NATLAS_SIZE * 4);
@@ -619,6 +692,40 @@ bool level_mesh(const Level *lv, const char *data_dir, const float (*orbs)[6], i
     }
     char path[600];
     int missing = 0;
+    {   /* (2026-11-17) the pictures the loops below ask for, named to png_prefetch first: it reads and unpacks them on
+         * several threads at once (png.c): on a run's first build the relief maps too, which are kept from then on;
+         * on every build the textures and the pictures themselves, read again each time as before. The walls' and
+         * floors' textures and three maps, the objects', switches' and decorations' pictures and their three maps,
+         * the effects' and doors' maps; the creatures' pictures and maps, and the effects' and doors' pictures, are
+         * named further down, when the creatures' tables are read. A picture not named, or not read ahead, is read
+         * when asked for, as before. */
+        enum { PF_MAX = ((210 + 52) + MAX_SPRITES + 16 + 32 + 64 + 16) * 4 };
+        size_t mark = arena_mark();
+        char (*pf)[600] = arena_alloc((size_t)PF_MAX * 600);
+        const char **pp = arena_alloc((size_t)PF_MAX * sizeof *pp);
+        int n = 0;
+        for (int i = 0; i < 210 + 52; i++) {
+            for (int k = 0; k < 3; k++)
+                snprintf(pf[n++], 600, "%s\\laigter\\%s\\%03d_%c.png", data_dir, i < 210 ? "walls" : "floors", i < 210 ? i : i - 210, "npo"[k]);
+            snprintf(pf[n++], 600, "%s\\textures\\%s\\%03d.png", data_dir, i < 210 ? "walls" : "floors", i < 210 ? i : i - 210);
+        }
+        for (int i = 0; i < MAX_SPRITES + 16 + 32 + 64 + 16; i++) {
+            int j = i - MAX_SPRITES;
+            if (j < 0) {
+                if (level_new_sprite[i]) continue;   /* (one of ours in its place: no maps) */
+                snprintf(path, sizeof path, "%s\\sprites\\objects\\%03d.png", data_dir, i);
+            } else if (j < 16) snprintf(path, sizeof path, "%s\\sprites\\flat_objects\\%03d.png", data_dir, j);
+            else if (j < 48) snprintf(path, sizeof path, "%s\\sprites\\wall_objects\\%03d.png", data_dir, j - 16);
+            else if (j < 112) snprintf(path, sizeof path, "%s\\ui\\animo\\%03d.png", data_dir, j - 48);
+            else snprintf(path, sizeof path, "%s\\sprites\\doors\\%03d.png", data_dir, j - 112);
+            if (j < 48) snprintf(pf[n++], 600, "%s", path);
+            for (int k = 0; k < 3; k++)
+                if (sprite_relief_path(path, k, pf[n], 600)) n++;
+        }
+        for (int i = 0; i < n; i++) pp[i] = pf[i];
+        png_prefetch(pp, n);
+        arena_reset(mark);
+    }
     for (int i = 0; i < 210 + 52; i++) {
         bool wall = i < 210;
         int k = wall ? i : i - 210;
@@ -631,7 +738,7 @@ bool level_mesh(const Level *lv, const char *data_dir, const float (*orbs)[6], i
         /* the normal map: the user's own made with Laigter (data\laigter\walls|floors\NNN_n.png, at the texture's size,
          * the same axes as ours: tools\laigter-cli) when there is one, else the engine's (textures\walls_normal ...) */
         snprintf(path, sizeof path, "%s\\laigter\\%s\\%03d_n.png", data_dir, wall ? "walls" : "floors", k);
-        if (!file_exists(path))
+        if (!png_exists(path))   /* (2026-11-17: png_exists, the disk asked once a run as for the other maps, not at every build) */
             snprintf(path, sizeof path, "%s\\textures\\%s_normal\\%03d.png", data_dir, wall ? "walls" : "floors", k);
         if (png_read(path, &img)) {
             put_cell(m->natlas, NATLAS_SIZE, &img, (int)r[0] * 4, (int)r[1] * 4, cell * 4);
@@ -644,19 +751,8 @@ bool level_mesh(const Level *lv, const char *data_dir, const float (*orbs)[6], i
          * NNN_o.png, its occlusion map (the joints), into the pictures' AO atlas at the texture's own place (rows
          * the pictures do not use; 1 where there is none). Laigter's grey maps: their red channel. */
         snprintf(path, sizeof path, "%s\\laigter\\%s\\%03d_p.png", data_dir, wall ? "walls" : "floors", k);
-        if (file_exists(path) && png_read(path, &img) && img.w > 0 && img.h > 0) {
-            int n = cell * 4;
-            for (int y = 0; y < n; y++)
-                for (int x = 0; x < n; x++) {
-                    float fx = (x + 0.5f) * (float)img.w / (float)n - 0.5f, fy = (y + 0.5f) * (float)img.h / (float)n - 0.5f;
-                    int x0 = (int)floorf(fx), y0 = (int)floorf(fy);
-                    float ax = fx - (float)x0, ay = fy - (float)y0;
-                    int xa = ((x0 % img.w) + img.w) % img.w, xb = (xa + 1) % img.w;
-                    int ya = ((y0 % img.h) + img.h) % img.h, yb = (ya + 1) % img.h;
-                    float h = (img.rgba[((size_t)ya * img.w + xa) * 4] * (1 - ax) + img.rgba[((size_t)ya * img.w + xb) * 4] * ax) * (1 - ay) +
-                              (img.rgba[((size_t)yb * img.w + xa) * 4] * (1 - ax) + img.rgba[((size_t)yb * img.w + xb) * 4] * ax) * ay;
-                    m->natlas[((size_t)((int)r[1] * 4 + y) * NATLAS_SIZE + (size_t)((int)r[0] * 4 + x)) * 4 + 3] = (u8)(h + 0.5f);
-                }
+        if (png_exists(path) && png_read(path, &img) && img.w > 0 && img.h > 0) {
+            relief_stretch(m, r, cell, &img, 3, &relief_kept[i][0]);
         }
         arena_reset(mark);
         snprintf(path, sizeof path, "%s\\laigter\\%s\\%03d_o.png", data_dir, wall ? "walls" : "floors", k);
@@ -666,23 +762,12 @@ bool level_mesh(const Level *lv, const char *data_dir, const float (*orbs)[6], i
         for (int y = 0; y < cell * 4; y++)
             for (int x = 0; x < cell * 4; x++)
                 m->natlas[((size_t)((int)r[1] * 4 + y) * NATLAS_SIZE + (size_t)((int)r[0] * 4 + x)) * 4 + 2] = 255;
-        if (file_exists(path) && png_read(path, &img) && img.w > 0 && img.h > 0) {
+        if (png_exists(path) && png_read(path, &img) && img.w > 0 && img.h > 0) {
             for (int y = 0; y < cell; y++)
                 for (int x = 0; x < cell; x++)
                     m->saoatlas[(size_t)((int)r[1] + y) * ATLAS_SIZE + (size_t)((int)r[0] + x)] =
                         img.rgba[((size_t)(y * img.h / cell) * img.w + (size_t)(x * img.w / cell)) * 4];
-            int n = cell * 4;
-            for (int y = 0; y < n; y++)
-                for (int x = 0; x < n; x++) {
-                    float fx = (x + 0.5f) * (float)img.w / (float)n - 0.5f, fy = (y + 0.5f) * (float)img.h / (float)n - 0.5f;
-                    int x0 = (int)floorf(fx), y0 = (int)floorf(fy);
-                    float ax = fx - (float)x0, ay = fy - (float)y0;
-                    int xa = ((x0 % img.w) + img.w) % img.w, xb = (xa + 1) % img.w;
-                    int ya = ((y0 % img.h) + img.h) % img.h, yb = (ya + 1) % img.h;
-                    float h = (img.rgba[((size_t)ya * img.w + xa) * 4] * (1 - ax) + img.rgba[((size_t)ya * img.w + xb) * 4] * ax) * (1 - ay) +
-                              (img.rgba[((size_t)yb * img.w + xa) * 4] * (1 - ax) + img.rgba[((size_t)yb * img.w + xb) * 4] * ax) * ay;
-                    m->natlas[((size_t)((int)r[1] * 4 + y) * NATLAS_SIZE + (size_t)((int)r[0] * 4 + x)) * 4 + 2] = (u8)(h + 0.5f);
-                }
+            relief_stretch(m, r, cell, &img, 2, &relief_kept[i][1]);
         }
         arena_reset(mark);
         snprintf(path, sizeof path, "%s\\textures\\%s\\%03d.png", data_dir, wall ? "walls" : "floors", k);
@@ -700,10 +785,26 @@ bool level_mesh(const Level *lv, const char *data_dir, const float (*orbs)[6], i
         arena_reset(mark);
     }
     if (missing) logf_("level: %d textures could not be read (drawn magenta)\n", missing);
+    lm_t[lm_n++] = clock();
     /* the object pictures, at their own size in 32 x 32 cells below the textures */
     for (int k = 0; k < MAX_SPRITES; k++) {
         size_t mark = arena_mark();
         Image img;
+        /* one of ours in its place (the Esc menu's Sprites tab: level_new_sprite): up to 32 x 32, over 16 a side at
+         * twice the detail (sprite_div 2: world.h's sprite_unit draws it at half a pixel's size). It has no relief
+         * maps of its own: flat, as any picture without them */
+        bool ours = false;
+        if (level_new_sprite[k]) {
+            snprintf(path, sizeof path, "%s\\newsprites\\objects\\%03d.png", data_dir, k);
+            ours = png_exists(path) && png_read(path, &img) && img.w > 0 && img.h > 0 && img.w <= 32 && img.h <= 32;
+        }
+        if (ours) {
+            int x0 = k % 32 * 32, y0 = 1024 + k / 32 * 32;
+            for (int y = 0; y < img.h; y++) memcpy(m->atlas + ((size_t)(y0 + y) * ATLAS_SIZE + (size_t)x0) * 4, img.rgba + (size_t)y * img.w * 4, (size_t)img.w * 4);
+            m->sprite_w[k] = (u8)img.w, m->sprite_h[k] = (u8)img.h, m->sprite_div[k] = img.w > 16 || img.h > 16 ? 2 : 1;
+            arena_reset(mark);
+            continue;
+        }
         snprintf(path, sizeof path, "%s\\sprites\\objects\\%03d.png", data_dir, k);
         if (png_read(path, &img) && img.w <= 32 && img.h <= 32) {
             int x0 = k % 32 * 32, y0 = 1024 + k / 32 * 32;
@@ -713,6 +814,7 @@ bool level_mesh(const Level *lv, const char *data_dir, const float (*orbs)[6], i
         }
         arena_reset(mark);
     }
+    lm_t[lm_n++] = clock();
     /* the switches' pictures (TMFLAT.GR: 0x170 + k is picture k) in the free cells from TMFLAT_CELL */
     for (int j = 0; j < 16; j++) {
         size_t mark = arena_mark();
@@ -742,6 +844,7 @@ bool level_mesh(const Level *lv, const char *data_dir, const float (*orbs)[6], i
         }
         arena_reset(mark);
     }
+    lm_t[lm_n++] = clock();
     /* the creatures on this level: anim.txt and the page-0 frames into 80 x 80 cells from CRIT_ROW */
     {
         bool want[64] = {0};
@@ -828,6 +931,36 @@ bool level_mesh(const Level *lv, const char *data_dir, const float (*orbs)[6], i
                 }
                 shelf_x = sx, shelf_y = sy, shelf_h = sh;
             }
+            cell += m->crit[k].nframes;
+        }
+        /* (2026-11-17) the kinds' frames are read in a second round, after every kind's table and places are known (as
+         * before: a kind's frames change neither): so that all their pictures and relief maps, and the effects' and
+         * doors' pictures read after them, are named to png_prefetch at once, as the walls' above */
+        {
+            int total = 64 + 16, n = 0;
+            for (int k = 0; k < 64; k++)
+                if (want[k]) total += m->crit[k].nframes * 4;
+            size_t mark = arena_mark();
+            char (*pf)[600] = arena_alloc((size_t)total * 600);
+            const char **pp = arena_alloc((size_t)total * sizeof *pp);
+            for (int k = 0; k < 64; k++)
+                for (int fr = 0; want[k] && fr < m->crit[k].nframes; fr++) {
+                    bool p1 = m->crit[k].base1 >= 0 && fr >= m->crit[k].base1;
+                    snprintf(path, sizeof path, "%s\\sprites\\creatures\\%02d\\p%d_%03d.png", data_dir, k, p1 ? 1 : 0,
+                             p1 ? fr - m->crit[k].base1 : fr);
+                    snprintf(pf[n++], 600, "%s", path);
+                    for (int j = 0; j < 3; j++)
+                        if (sprite_relief_path(path, j, pf[n], 600)) n++;
+                }
+            for (int k = 0; k < 64; k++) snprintf(pf[n++], 600, "%s\\ui\\animo\\%03d.png", data_dir, k);
+            for (int k = 0; k < 16; k++) snprintf(pf[n++], 600, "%s\\sprites\\doors\\%03d.png", data_dir, k);
+            for (int i = 0; i < n; i++) pp[i] = pf[i];
+            png_prefetch(pp, n);
+            arena_reset(mark);
+        }
+        for (int k = 0; k < 64; k++) {
+            if (!want[k]) continue;
+            size_t mark;
             for (int fr = 0; fr < m->crit[k].nframes; fr++) {
                 mark = arena_mark();
                 Image img;
@@ -843,10 +976,10 @@ bool level_mesh(const Level *lv, const char *data_dir, const float (*orbs)[6], i
                 arena_reset(mark);
             }
             m->crit[k].loaded = m->crit[k].nframes > 0;
-            cell += m->crit[k].nframes;
         }
     }
     terrain_load(data_dir);
+    lm_t[lm_n++] = clock();
     {   /* the particles' picture (uwview.c's sparks, drops, embers, smoke): a soft round dot, white at the middle,
            dark at its edge, in the free cell after the object pictures (DOT_CELL) */
         int c = DOT_CELL, x0 = c % 32 * 32, y0 = 1024 + c / 32 * 32;
@@ -894,11 +1027,13 @@ bool level_mesh(const Level *lv, const char *data_dir, const float (*orbs)[6], i
         arena_reset(mark);
     }
 
+    png_prefetch(NULL, 0);   /* (2026-11-17: the build's pictures are in: what was read ahead and not asked for is dropped) */
     Build b = {0};
     b.cap = 3 << 20, b.icap = 12 << 20, b.fcap = 64 * 64 * 8;
     b.v = arena_alloc(sizeof(Vertex) * (size_t)b.cap);
     b.idx = arena_alloc(sizeof(u32) * (size_t)b.icap);
     b.f = arena_alloc(sizeof(Face) * (size_t)b.fcap);
+    lm_t[lm_n++] = clock();
     /* the textures' relief meshes (only those this level uses are read) */
     static Relief relief[262];
     static bool tried[262];
@@ -967,6 +1102,7 @@ bool level_mesh(const Level *lv, const char *data_dir, const float (*orbs)[6], i
                 }
             }
         }
+    lm_t[lm_n++] = clock();
     /* the faces as triangles, raised by their textures' relief */
     set_tapers(&b);
     int relief_faces = 0;
@@ -1000,6 +1136,27 @@ bool level_mesh(const Level *lv, const char *data_dir, const float (*orbs)[6], i
         m->grid[i * 4] = lv->tile[i].type;
         m->grid[i * 4 + 1] = lv->tile[i].height;
         m->grid[i * 4 + 2] = lv->tile[i].type == T_SOLID ? 0 : (u8)terr[clampi(lv->floors[lv->tile[i].floor % 10], 0, 51)];   /* 1 water, 2 lava: the lava's glow */
+    }
+    lm_t[lm_n++] = clock();
+    if (getenv("UWVIEW_BUILD_LOG"))
+        fprintf(stderr, "uwview: the mesh's parts: walls and floors %ld, objects %ld, switches and decorations %ld, creatures %ld, effects and doors %ld, tiles %ld, triangles %ld ms\n",
+                (long)(lm_t[1] - lm_t[0]) * 1000 / CLOCKS_PER_SEC, (long)(lm_t[2] - lm_t[1]) * 1000 / CLOCKS_PER_SEC, (long)(lm_t[3] - lm_t[2]) * 1000 / CLOCKS_PER_SEC,
+                (long)(lm_t[4] - lm_t[3]) * 1000 / CLOCKS_PER_SEC, (long)(lm_t[5] - lm_t[4]) * 1000 / CLOCKS_PER_SEC, (long)(lm_t[6] - lm_t[5]) * 1000 / CLOCKS_PER_SEC,
+                (long)(lm_t[7] - lm_t[6]) * 1000 / CLOCKS_PER_SEC);
+    /* (2026-11-17: the atlases' sums, to prove a change to the build left every byte as it was: with UWVIEW_BUILD_LOG=2
+     * only, the summing takes 140 ms that uwview.c's "its mesh and textures" then counts) */
+    if (getenv("UWVIEW_BUILD_LOG") && atoi(getenv("UWVIEW_BUILD_LOG")) >= 2) {
+        Fnv fa, fn, fs, fo, ft;
+        fnv_init(&fa), fnv_init(&fn), fnv_init(&fs), fnv_init(&fo), fnv_init(&ft);
+        fnv_bytes(&ft, m->crit, sizeof m->crit), fnv_bytes(&ft, m->sprite_w, sizeof m->sprite_w), fnv_bytes(&ft, m->sprite_h, sizeof m->sprite_h);
+        fnv_bytes(&ft, m->sprite_div, sizeof m->sprite_div), fnv_bytes(&ft, m->animo_w, sizeof m->animo_w), fnv_bytes(&ft, m->animo_h, sizeof m->animo_h);
+        fnv_bytes(&ft, m->door_w, sizeof m->door_w), fnv_bytes(&ft, m->door_h, sizeof m->door_h), fnv_bytes(&ft, m->door_top, sizeof m->door_top);
+        fnv_bytes(&ft, m->door_l, sizeof m->door_l), fnv_bytes(&ft, m->door_r, sizeof m->door_r);
+        fnv_bytes(&fa, m->atlas, (size_t)ATLAS_SIZE * ATLAS_H * 4);
+        fnv_bytes(&fn, m->natlas, (size_t)NATLAS_SIZE * NATLAS_SIZE * 4);
+        fnv_bytes(&fs, m->snatlas, (size_t)ATLAS_SIZE * ATLAS_H * 4);
+        fnv_bytes(&fo, m->saoatlas, (size_t)ATLAS_SIZE * ATLAS_H);
+        fprintf(stderr, "uwview: the atlases' sums: pictures %08x, normals %08x, pictures' normals %08x, pictures' occlusion %08x, the pictures' and creatures' tables %08x\n", fa.h, fn.h, fs.h, fo.h, ft.h);
     }
     return true;
 }

@@ -545,10 +545,27 @@ static struct view {
     int (*menu_rows2)(const char *title, const char *const *labels, const char *const *values, const char *const *hints, int n, int sel, int mx, int my);
     void (*menu_wheel)(int notches);          /* the menu's list scrolled (the wheel: up positive) */
     int (*menu_click)(int mx, int my, int down); /* a left press / release on the menu's scrollbar: 1 taken */
+    /* the Fog and smoke page (2026-11-17; all NULL in an older DLL: no page): the rows' sliders drawn and under the
+       pointer (uwv_menu_sliders, uwv_menu_slider), and the rows themselves (src\volfog.inc's uwv_vol_*) */
+    void (*menu_sliders)(const float *frac, int n);
+    int (*menu_slider)(int mx, int my, int row, float *frac);
+    int (*vol_rows)(void);
+    int (*vol_row)(int i, const char **label, const char **hint, int *kind, float *frac);
+    int (*vol_value)(int i, int step, char *value, int n);
+    int (*vol_set)(int i, const char *text);
+    int (*vol_set_frac)(int i, float frac);
+    const char *(*vol_preset_name)(int i);    /* the Fog and smoke tab's presets (uwv_vol_preset_name, uwv_vol_preset) */
+    int (*vol_preset)(int set);
+    /* the menu's tabs (2026-11-17; NULL in an older DLL: no strip, the tabs by the keys alone): their names and the
+       open one before the rows, and the tab under the pointer (uwv_menu_tabs, uwv_menu_tab_at) */
+    void (*menu_tabs)(const char *const *names, int n, int open);
+    int (*menu_tab_at)(int mx, int my);
     float (*fov)(void);
     void (*want_shot)(void);
     int (*readback)(unsigned char *rgba);
     int (*level)(const unsigned char *block, int n);
+    int (*level_state)(const unsigned char *block, int n);
+    void (*level_wait)(int on);
     void (*camera)(float x, float y, float z, float yaw, float pitch);
     void (*roll)(float roll);
     void (*palette)(const unsigned char *pal);
@@ -640,6 +657,17 @@ static void view_open(const char *dll)
     V.menu_rows2 = (int (*)(const char *, const char *const *, const char *const *, const char *const *, int, int, int, int))uwp_lib_sym(V.dll, "uwv_menu_rows2");
     V.menu_wheel = (void (*)(int))uwp_lib_sym(V.dll, "uwv_menu_wheel");
     V.menu_click = (int (*)(int, int, int))uwp_lib_sym(V.dll, "uwv_menu_click");
+    V.menu_sliders = (void (*)(const float *, int))uwp_lib_sym(V.dll, "uwv_menu_sliders");
+    V.menu_slider = (int (*)(int, int, int, float *))uwp_lib_sym(V.dll, "uwv_menu_slider");
+    V.vol_rows = (int (*)(void))uwp_lib_sym(V.dll, "uwv_vol_rows");
+    V.vol_row = (int (*)(int, const char **, const char **, int *, float *))uwp_lib_sym(V.dll, "uwv_vol_row");
+    V.vol_value = (int (*)(int, int, char *, int))uwp_lib_sym(V.dll, "uwv_vol_value");
+    V.vol_set = (int (*)(int, const char *))uwp_lib_sym(V.dll, "uwv_vol_set");
+    V.vol_set_frac = (int (*)(int, float))uwp_lib_sym(V.dll, "uwv_vol_set_frac");
+    V.vol_preset_name = (const char *(*)(int))uwp_lib_sym(V.dll, "uwv_vol_preset_name");
+    V.vol_preset = (int (*)(int))uwp_lib_sym(V.dll, "uwv_vol_preset");
+    V.menu_tabs = (void (*)(const char *const *, int, int))uwp_lib_sym(V.dll, "uwv_menu_tabs");
+    V.menu_tab_at = (int (*)(int, int))uwp_lib_sym(V.dll, "uwv_menu_tab_at");
     V.inventory = (int (*)(const UwiSnap *, int, int, int))uwp_lib_sym(V.dll, "uwv_inventory");
     V.inv_hit = (int (*)(const UwiSnap *, int, int, int, float *, float *))uwp_lib_sym(V.dll, "uwv_inv_hit");
     V.inv_wheel = (void (*)(int))uwp_lib_sym(V.dll, "uwv_inv_wheel");
@@ -658,6 +686,8 @@ static void view_open(const char *dll)
     V.want_shot = (void (*)(void))uwp_lib_sym(V.dll, "uwv_want_shot");
     V.readback = (int (*)(unsigned char *))uwp_lib_sym(V.dll, "uwv_readback");
     V.level = (int (*)(const unsigned char *, int))uwp_lib_sym(V.dll, "uwv_level");
+    V.level_state = (int (*)(const unsigned char *, int))uwp_lib_sym(V.dll, "uwv_level_state");
+    V.level_wait = (void (*)(int))uwp_lib_sym(V.dll, "uwv_level_wait");
     V.camera = (void (*)(float, float, float, float, float))uwp_lib_sym(V.dll, "uwv_camera");
     V.roll = (void (*)(float))uwp_lib_sym(V.dll, "uwv_roll");
     V.palette = (void (*)(const unsigned char *))uwp_lib_sym(V.dll, "uwv_palette");
@@ -739,6 +769,7 @@ static int view_size(void)
     view_w = cw, view_h = ch;
 #ifdef UWPORT_GAMEVIEW
     uwg_gameview_replace(1);   /* the game leaves its 3D drawing out from its very first frame */
+    uwg_scene_beat();          /* the display is alive from here: the gate waits for the first level's scene */
 #endif
     free(V.ui);
     V.ui = calloc((size_t)V.uw * (size_t)V.uh, 4);
@@ -1448,6 +1479,16 @@ static int menu_ids[160], menu_n;   /* (160: MENU_MAX, below; 64 until 2026-11-1
    a page's rows are the four slots (MO_SLOT + 1..4) and Back. The save goes through the game's own DoSaveRest on its
    thread (uwinv.c's UWI_OP_SAVE / UWI_OP_LOAD), the description written for the player: the level and the time */
 enum { MO_BACK = 99, MO_SLOT = 100 };
+/* the Fog and smoke tab (2026-11-17, the user: fog and smoke with "esc menu sliders and inputs"; a page until the
+   menu had tabs): MO_VOLPAGE stands in MENU_ROWS where the renderer's own rows go (uwv_vol_row: MO_VOL + its number
+   there), none named here. MO_PRESET and MO_DEFAULTS: the two rows at the top of a tab (its presets, its defaults) */
+enum { MO_VOLPAGE = 105, MO_PRESET = 106, MO_DEFAULTS = 107, MO_VOL = 400 };
+/* the Keys tab (key_rows_build): MO_KEYPAGE stands in MENU_ROWS where uwinput.c's commands go (MO_KEY + its number
+   there); MO_KEYDEFAULT its Default keys row */
+enum { MO_KEYPAGE = 108, MO_KEYDEFAULT = 109, MO_KEY = 2000 };
+/* the Sprites tab (spr_rows_build): MO_SPRPAGE stands in MENU_ROWS where the rows of our own object pictures go
+   (MO_SPR + the object: one for each picture that is in uwr\newsprites\objects, none when there is none) */
+enum { MO_SPRPAGE = 110, MO_SPR = 3000 };
 static int menu_page;
 static char slot_desc[4][48], slot_time[4][24];
 static int slot_used[4];
@@ -1636,6 +1677,12 @@ static void dial_text(int i, char *out, size_t n)
     }
 }
 static void fx_audio_start(int again);
+/* 2026-11-17: a row's change that needs the positional sound started again asks for it here; fx_pump does it once,
+   a third of a second after the last asking. A preset steps its rows one after the other (Positional sound,
+   Acoustics, Headphone 3D sound), and each step started everything again at once: OpenAL, Steam Audio and the
+   level's sound paths five times for one preset, ten in the user's log of that day. */
+static uint64_t fx_restart_at;
+static void fx_restart_soon(void) { fx_restart_at = ms_now() + 300; }
 static void dial_step(int i, int step)
 {
     int v;
@@ -1648,7 +1695,7 @@ static void dial_step(int i, int step)
     if (v == dial_val[i]) return;
     dial_val[i] = v;
     fx_setting_save(SOUND_DIALS[i].key, v);
-    if (i == 34) { fx_audio_start(1); return; }   /* (the Roland's own reverb is in the renderings: made again) */
+    if (i == 34) { fx_restart_soon(); return; }   /* (the Roland's own reverb is in the renderings: made again) */
     fx_acoustics_tune();   /* heard at once */
 }
 static const struct { int id; const char *label; int opt; const char *hint; } MENU_ROWS[] = {
@@ -1702,6 +1749,8 @@ static const struct { int id; const char *label; int opt; const char *hint; } ME
     {MO_HDR, "HDR output", 33, "On an HDR monitor (HDR on in Windows): fire and bright light go brighter than white. Other monitors: no change."},
     {MO_HDRPEAK, "HDR peak brightness", 34, "The brightest that HDR highlights go: The monitor's (what it reports), or 400 to 4000 nits in steps of 100."},
     {MO_HDRPAPER, "HDR paper white", 35, "How bright plain white and the interface are in HDR: 80 to 500 nits, in steps of 10. Default 200."},
+    {MO_HEAD, "#Sprites", -1, ""},
+    {MO_SPRPAGE, "", -1, ""},   /* (a row for each object picture of ours that is there: spr_rows_build) */
     {MO_HEAD, "#Effects", -1, ""},
     {MO_PARTICLES, "Particles", 10, "On: sparks, smoke and dust in the air. Off: none."},
     {MO_DECALS, "Decals", 11, "On: marks such as blood are left on floors and walls. Off: none."},
@@ -1712,6 +1761,8 @@ static const struct { int id; const char *label; int opt; const char *hint; } ME
     {MO_GLOWSTONES, "Glowing stones", 80, "On: glowing rocks, orbs and orb rocks shine and light the floor about a foot round them. Off: as plain objects."},
     {MO_MOONLIGHT, "Moonstone light", 81, "The moonstone fills the room it lies in with a deep blue light. Off, or 5% to 50% of a candle. Default 10%."},
     {MO_ELEMLIGHT, "Fire elemental light", 82, "Fire elementals cast a smouldering orange light as they move. Off, or 10% to 100% of a candle. Default 30%."},
+    {MO_HEAD, "#Fog and smoke", -1, ""},
+    {MO_VOLPAGE, "", -1, ""},   /* (the renderer's rows: vol_rows_build) */
     {MO_HEAD, "#Sound", -1, ""},
     {MO_MUSIC, "Music on / off", -1, "Turns the game's music on or off."},
     {MO_MUSVOL, "Music volume", -1, "How loud the music is: 0% to 100%, in steps of 5."},
@@ -1772,6 +1823,8 @@ static const struct { int id; const char *label; int opt; const char *hint; } ME
     {MO_DIAL + 18, "Loudness, headphone 3D", -1, "Loudness of positional sound against the game's own mix, Headphone 3D sound on: 25% to 2000%. Default 520%."},
     {MO_HEAD, "#Controls", -1, ""},
     {MO_MOUSE, "Mouse sensitivity", 7, "How fast the mouse turns the view: 0.1 (slow) to 4.0 (fast), in steps of 0.1. Default 1.0."},
+    {MO_HEAD, "#Keys", -1, ""},
+    {MO_KEYPAGE, "", -1, ""},
     {MO_HEAD, "#AI", -1, ""},
     {MO_AILEVEL, "Creature AI", -1, "Original: as shipped. Devious: each creature is cunning on its own. Monstrous: they also work together, as packs."},
     {MO_AIFRIENDS, "Friendly creatures", -1, "Friendly creatures nod to you, follow a while if your weapon is drawn, back away, or point out a foe. Off: as the original."},
@@ -1811,14 +1864,353 @@ static const struct { int id; const char *label; int opt; const char *hint; } ME
     {MO_LLMIDLE, "Model unloaded after", -1, "Minutes without a question before the model's memory is freed; it loads again when needed: 1 to 60, or Never. Default 10."},
 };
 #define MENU_NROWS ((int)(sizeof MENU_ROWS / sizeof MENU_ROWS[0]))
+/* The Fog and smoke tab's rows, as the renderer has them (uwv_vol_row: 0 a heading, 1 a switch, 2 a slider, 3 a
+   choice, 4 an action that Enter does). A slider's row has its track drawn (vol_frac, to uwv_menu_sliders
+   before the rows), is dragged with the left button (vol_drag: the row held) and takes a number typed in (vol_edit,
+   shown as the row's value with a mark after it, until Enter gives it to uwv_vol_set). */
+static float vol_frac[MENU_MAX];
+static int vol_kind[MENU_MAX], vol_edit_on, vol_drag = -1;
+static char vol_edit[16];
+static int vol_have(void) { return V.dll && V.vol_rows && V.vol_row && V.vol_value; }
+static void vol_rows_build(const char **lab, const char **val, const char **hint, char vbuf[][128])
+{
+    int n = vol_have() ? V.vol_rows() : 0;
+    for (int i = 0; i < n && menu_n < MENU_MAX - 1; i++) {
+        const char *l = "", *h = "";
+        int kind = 0;
+        float f = -1;
+        if (!V.vol_row(i, &l, &h, &kind, &f) || !l) continue;
+        if (l[0] == '#') kind = 0;
+        vbuf[menu_n][0] = 0;
+        if (kind == 0) {   /* (a heading with no row under it is taken back, as the options') */
+            if (menu_n && menu_ids[menu_n - 1] == MO_HEAD) menu_n--;
+        } else V.vol_value(i, 0, vbuf[menu_n], 128);
+        if (kind == 2 && vol_edit_on && menu_n == menu_sel) snprintf(vbuf[menu_n], 128, "%s_", vol_edit);   /* the number being typed */
+        vol_kind[menu_n] = kind, vol_frac[menu_n] = kind == 2 ? (f < 0 ? 0 : f) : -1;
+        menu_ids[menu_n] = kind == 0 ? MO_HEAD : MO_VOL + i, lab[menu_n] = l, val[menu_n] = vbuf[menu_n], hint[menu_n] = h ? h : "", menu_n++;
+    }
+    if (menu_n && menu_ids[menu_n - 1] == MO_HEAD) menu_n--;
+}
+/* The Sprites tab's rows (the user, 2026-11-17: "make a new tab for sprites", "only have the options show up if there
+   is an alternative sprite for it"): one for each object picture of ours that is there, as the renderer says
+   (uwv_option 1000 + the object: its value, 0 when it has no picture of ours; 3000 + the object: its name). list: the
+   tab is open, its rows are listed. 1 when there is any (the tab is shown). */
+static char spr_lab[MENU_MAX][48];
+static int spr_rows_build(int list, const char **lab, const char **val, const char **hint, char vbuf[][128])
+{
+    int any = 0;
+    char v[128];
+    if (!V.dll || !V.option) return 0;
+    for (int k = 0; k < 512; k++) {
+        if (!V.option(1000 + k, 0, v, sizeof v)) continue;
+        any = 1;
+        if (!list || menu_n >= MENU_MAX - 1) continue;
+        snprintf(vbuf[menu_n], 128, "%s", v);
+        if (!V.option(3000 + k, 0, spr_lab[menu_n], sizeof spr_lab[0])) snprintf(spr_lab[menu_n], sizeof spr_lab[0], "Object %03d", k);
+        menu_ids[menu_n] = MO_SPR + k, lab[menu_n] = spr_lab[menu_n], val[menu_n] = vbuf[menu_n];
+        hint[menu_n] = "This item's picture, lying in the world and in your pack. Original: the game's own. New: ours, redrawn at twice the detail. Changes at once.";
+        menu_n++;
+    }
+    return any;
+}
+/* The tabs (2026-11-17, the user: "a tab for each section of the esc menu to make it easier to get to the option ...
+   give each tab a default button and a few presets that they can use, then when they change something it goes to
+   custom"). A tab is a section of MENU_ROWS (the rows from one heading to the next); the menu lists the open tab's
+   rows alone (menu_tab: kept while the game runs), the strip of names is drawn by the renderer (uwv_menu_tabs). A tab
+   none of whose rows is shown now is left out (tab_shown: the rows shown in each, counted as the rows are built). */
+#define MENU_TABS 16
+static int menu_tab, menu_ntabs, tab_shown[MENU_TABS], tab_vis[MENU_TABS], tab_nvis, menu_shift;
+static int tab_last[MENU_TABS];   /* the preset last taken on each tab, + 1: named first when two presets match */
+static const char *tab_name(int t)
+{
+    for (int i = 0, sec = -1; i < MENU_NROWS; i++)
+        if (MENU_ROWS[i].id == MO_HEAD && ++sec == t) return MENU_ROWS[i].label + 1;
+    return "";
+}
+static int menu_tab_of(int id)   /* the tab a row is on */
+{
+    for (int i = 0, sec = -1; i < MENU_NROWS; i++) {
+        if (MENU_ROWS[i].id == MO_HEAD) sec++;
+        else if (MENU_ROWS[i].id == id) return sec < 0 ? 0 : sec;
+    }
+    return 0;
+}
+/* A tab's presets. A preset is a list of rows and the value each should show; the tab's first preset, Default, lists
+   every row the tab can put back (the value the game has when the settings say nothing), and each other preset is
+   Default with the rows it lists changed. A value ending in * is matched by its start (the rest is the machine's,
+   "DLAA (1920 x 1080)", or a count), one beginning with * anywhere in the text. A row that is not shown now, or
+   reads "Not on this card" or "Needs ...", is passed over. own: set by Default alone (the other presets leave it).
+   Not in any preset, as they need a restart or are the machine's: Display, Full screen, Renderer, Font, the two
+   device rows, Music and Sound on / off (the game's own panel), the HDR levels, the language model's file and where
+   it runs, the AI log's rows, and the rows that only tell. */
+typedef struct { int id; const char *want; int own; } PresetRow;
+static const PresetRow PR_DISPLAY[] = {
+    {MO_FOV, "85"}, {MO_SMOOTH, "On"}, {MO_FADE, "5 s"}, {MO_DOORSTEP, "On"}, {MO_DOORPICK, "On"}, {MO_DOORCUE, "On"},
+    {MO_FONTSIZE, "*(100%)"}, {MO_MENUFONT, "Smooth"}, {MO_MENUBG, "Solid colour"}, {MO_CONVFONT, "Smooth"}, {MO_LOGFONT, "Smooth"},
+    {MO_CHARSHEET, "Full"},
+};
+static const PresetRow PR_GRAPHICS[] = {   /* (uwview.c's S, render.c's and render_vk.c's statics) */
+    {MO_DLSS, "On"}, {MO_DLSSMODE, "DLAA*"}, {MO_RT, "On"}, {MO_RR, "Off"}, {MO_DLSS5, "Off"}, {MO_STYLE, "B - Natural"},
+    {MO_D5INT, "100%"}, {MO_D5STR, "100%"}, {MO_BOUNCE, "On"}, {MO_SHADOWS, "On"}, {MO_TEXRES, "Original"},
+    {MO_MAPNORMAL, "As the textures"}, {MO_MAPAO, "As the textures"}, {MO_MAPHEIGHT, "As the textures"}, {MO_RELIEF, "On"},
+    {MO_NSTR, "1.00"}, {MO_TEXAO, "100%"}, {MO_TEXSHADOW, "Depth 3"}, {MO_LIGHTCOL, "CAT16"}, {MO_LIGHTFADE, "2 / 3 / 4 tiles"},
+    {MO_BREATH, "20%"}, {MO_ADAPT, "Automatic*"}, {MO_HDR, "On*"},
+};
+static const PresetRow PR_G_FAST[] = { {MO_DLSSMODE, "Performance*"}, {MO_BOUNCE, "Off"}, {MO_SHADOWS, "Off"}, {MO_TEXSHADOW, "Off"} };
+static const PresetRow PR_G_BALANCED[] = { {MO_DLSSMODE, "Quality*"}, {MO_TEXRES, "Upscaled 256"} };
+static const PresetRow PR_G_BEST[] = { {MO_RR, "On"}, {MO_TEXRES, "Upscaled 512"}, {MO_TEXSHADOW, "Depth 8"} };
+static const PresetRow PR_EFFECTS[] = {    /* (uwview.c's FX, all off, and GL) */
+    {MO_PARTICLES, "Off"}, {MO_DECALS, "Off"}, {MO_WATER, "Off"}, {MO_CAMPSMOKE, "On"}, {MO_WATERMIST, "On"}, {MO_GLOWSTONES, "On"},
+    {MO_MOONLIGHT, "10% of a candle"}, {MO_ELEMLIGHT, "30% of a candle"},
+};
+static const PresetRow PR_E_OFF[] = { {MO_CAMPSMOKE, "Off"}, {MO_WATERMIST, "Off"}, {MO_GLOWSTONES, "Off"}, {MO_MOONLIGHT, "Off"}, {MO_ELEMLIGHT, "Off"} };
+static const PresetRow PR_E_ON[] = { {MO_PARTICLES, "On"}, {MO_DECALS, "On"}, {MO_WATER, "On"} };
+/* (Positional sound and Acoustics last: the rows above them are shown only while those are on) */
+static const PresetRow PR_SOUND[] = {
+    {MO_MUSVOL, "100%", 1}, {MO_FXVOL, "100%", 1}, {MO_HRTF, "On"}, {MO_PANFIX, "Corrected"}, {MO_HEARRANGE, "Original (6 tiles)"},
+    {MO_FEETSPREAD, "Original"}, {MO_STEPVOL, "80%"}, {MO_STEPECHO, "50%"}, {MO_FOOTSTEPS, "On"}, {MO_ECHOQ, "Medium (2,048 rays)"},
+    {MO_ACWET, "100%"}, {MO_ACSIZE, "2.4 m a tile"}, {MO_ACOCCL, "100%"}, {MO_ACDETOUR, "On"}, {MO_FXAUDIO, "On"}, {MO_ACOUSTICS, "High"},   /* (2026-11-17: as the game comes, settings.txt; it was Off, Off) */
+};
+static const PresetRow PR_S_ORIGINAL[] = { {MO_FXAUDIO, "Off"} };
+static const PresetRow PR_S_POSITIONAL[] = { {MO_FXAUDIO, "On"}, {MO_ACOUSTICS, "On"} };
+static const PresetRow PR_S_FULL[] = { {MO_FXAUDIO, "On"}, {MO_ACOUSTICS, "High"}, {MO_HRTF, "On"} };
+static const PresetRow PR_CONTROLS[] = { {MO_MOUSE, "1.0"} };
+/* (the level first: the parts' rows are shown from their level up. With nothing in the settings the game starts at
+   Devious: main.c's smart-hunting on; every part on: cunning.c; 2 hunters a level: hunter.c; uwmindhost.c's tuning) */
+static const PresetRow PR_AI[] = {
+    {MO_AILEVEL, "Devious"}, {MO_AIFRIENDS, "On*"},
+    {MO_AIP0, "On*"}, {MO_AIP1, "On*"}, {MO_AIP2, "On*"}, {MO_AIP3, "On*"}, {MO_AIP4, "On*"}, {MO_AIP5, "On*"}, {MO_AIP6, "On"},
+    {MO_AIX0, "On*"}, {MO_AIX1, "On*"}, {MO_AIX2, "On*"}, {MO_AIX3, "On*"}, {MO_AIX4, "On*"}, {MO_AIX5, "On*"}, {MO_AIX6, "On*"},
+    {MO_AIX7, "On*"}, {MO_AIX8, "On*"}, {MO_AIX9, "On*"}, {MO_AIX10, "On*"}, {MO_AIX11, "On*"}, {MO_AIX12, "On*"}, {MO_AIX13, "On*"},
+    {MO_AIX14, "On*"}, {MO_AIX15, "On*"}, {MO_AIX16, "On*"},
+    {MO_HUNTERS, "2 a level*"}, {MO_AIBY, "Rules"}, {MO_LLMMODE, "Scoring"}, {MO_LLMRATE, "20 a second"}, {MO_LLMSTALE, "3.0 s"},
+    {MO_LLMIDLE, "10 min"},
+};
+static const PresetRow PR_AI_ORIGINAL[] = { {MO_AILEVEL, "Original"} };
+static const PresetRow PR_AI_DEVIOUS[] = { {MO_AILEVEL, "Devious"} };
+static const PresetRow PR_AI_MONSTROUS[] = { {MO_AILEVEL, "Monstrous"} };
+#define PR(a) a, (int)(sizeof a / sizeof a[0])
+static const struct { const char *tab, *name; const PresetRow *rows; int n; } TAB_PRESETS[] = {   /* a tab's first: its Default */
+    {"Display", "Default", PR(PR_DISPLAY)},
+    {"Graphics", "Default", PR(PR_GRAPHICS)}, {"Graphics", "Fastest", PR(PR_G_FAST)}, {"Graphics", "Balanced", PR(PR_G_BALANCED)},
+    {"Graphics", "Best picture", PR(PR_G_BEST)},
+    {"Effects", "Default", PR(PR_EFFECTS)}, {"Effects", "All off", PR(PR_E_OFF)}, {"Effects", "All on", PR(PR_E_ON)},
+    {"Sound", "Default", PR(PR_SOUND)}, {"Sound", "Original", PR(PR_S_ORIGINAL)}, {"Sound", "Positional", PR(PR_S_POSITIONAL)},
+    {"Sound", "Full", PR(PR_S_FULL)},
+    {"Controls", "Default", PR(PR_CONTROLS)},
+    {"AI", "Default", PR(PR_AI)}, {"AI", "Original", PR(PR_AI_ORIGINAL)}, {"AI", "Devious", PR(PR_AI_DEVIOUS)},
+    {"AI", "Monstrous", PR(PR_AI_MONSTROUS)},
+};
+#undef PR
+#define TAB_NPRESETS ((int)(sizeof TAB_PRESETS / sizeof TAB_PRESETS[0]))
+/* two tabs have their presets elsewhere: Fog and smoke the renderer's (uwv_vol_preset), Sound tuning one Default,
+   the dials' own (SOUND_DIALS' dflt) */
+static int tab_is_vol(int t) { return t == menu_tab_of(MO_VOLPAGE); }
+static int tab_is_dials(int t) { return t == menu_tab_of(MO_ROOMINFO); }
+static int tab_preset_at(int t, int k)   /* tab t's k-th preset in TAB_PRESETS, -1 none */
+{
+    const char *nm = tab_name(t);
+    for (int i = 0; i < TAB_NPRESETS; i++) if (!strcmp(TAB_PRESETS[i].tab, nm) && k-- == 0) return i;
+    return -1;
+}
+static const char *tab_preset_name(int t, int k)   /* NULL past the last */
+{
+    if (tab_is_vol(t)) return vol_have() && V.vol_preset_name && V.vol_preset ? V.vol_preset_name(k) : NULL;
+    if (tab_is_dials(t)) return k == 0 ? "Default" : NULL;
+    k = tab_preset_at(t, k);
+    return k < 0 ? NULL : TAB_PRESETS[k].name;
+}
+static int tab_preset_count(int t)
+{
+    int n = 0;
+    while (n < 32 && tab_preset_name(t, n)) n++;
+    return n;
+}
+/* tab t's k-th preset as rows: Default's, each replaced by the preset's own where it has one; the count */
+static int tab_preset_rows(int t, int k, PresetRow *out, int cap)
+{
+    int d = tab_preset_at(t, 0), p = tab_preset_at(t, k), n = 0;
+    if (d < 0 || p < 0) return 0;
+    for (int i = 0; i < TAB_PRESETS[d].n && n < cap; i++) {
+        PresetRow r = TAB_PRESETS[d].rows[i];
+        if (p != d) {
+            if (r.own) continue;
+            for (int j = 0; j < TAB_PRESETS[p].n; j++) if (TAB_PRESETS[p].rows[j].id == r.id) r = TAB_PRESETS[p].rows[j];
+        }
+        out[n++] = r;
+    }
+    return n;
+}
+static int preset_text_is(const char *have, const char *want)
+{
+    size_t l = strlen(want);
+    if (want[0] == '*') return strstr(have, want + 1) != NULL;
+    if (l && want[l - 1] == '*') return !strncmp(have, want, l - 1);
+    return !strcmp(have, want);
+}
+static int preset_text_none(const char *have) { return !strncmp(have, "Not on this card", 16) || !strncmp(have, "Needs ", 6); }
+/* the preset the open tab's rows match now (the rows as just built: val), -1 none: Custom. Never kept: worked out
+   from the rows each time the menu is built */
+static int tab_preset_now(int t, const char **val)
+{
+    int n = tab_preset_count(t), first = -1;
+    if (tab_is_vol(t)) return n ? V.vol_preset(-1) : -1;
+    if (tab_is_dials(t)) {
+        dials_load();
+        for (int i = 0; i < SOUND_NDIALS; i++) if (dial_shown(i) && dial_val[i] != SOUND_DIALS[i].dflt) return -1;
+        return 0;
+    }
+    for (int k = 0; k < n; k++) {
+        PresetRow rows[64];
+        int nr = tab_preset_rows(t, k, rows, 64), same = 1;
+        for (int i = 0; i < nr && same; i++)
+            for (int r = 0; r < menu_n; r++)
+                if (menu_ids[r] == rows[i].id && !preset_text_none(val[r]) && !preset_text_is(val[r], rows[i].want)) same = 0;
+        if (same && tab_last[t] == k + 1) return k;
+        if (same && first < 0) first = k;
+    }
+    return first;
+}
+/* the two rows at the top of a tab that has presets: Preset (its value is filled in when the tab's rows are built:
+   menu_rows_build) and Default settings (Enter alone does it: vol_kind 4, as an action of the renderer's) */
+static void tab_head_rows(int t, const char **lab, const char **val, const char **hint, char vbuf[][128])
+{
+    if (display_mode == 1 || menu_n > MENU_MAX - 2 || tab_preset_count(t) <= 0) return;
+    vbuf[menu_n][0] = 0;
+    menu_ids[menu_n] = MO_PRESET, lab[menu_n] = "Preset", val[menu_n] = vbuf[menu_n];
+    hint[menu_n] = "A ready-made set of this tab's settings. Left and Right pick one, and it is applied at once. Custom: your own mix, which matches none of them.", menu_n++;
+    snprintf(vbuf[menu_n], 128, "%s", "Enter");
+    vol_kind[menu_n] = 4;
+    menu_ids[menu_n] = MO_DEFAULTS, lab[menu_n] = "Default settings", val[menu_n] = vbuf[menu_n];
+    hint[menu_n] = "Enter: every row of this tab goes back to its default. Rows that need a restart or depend on your machine are left alone.", menu_n++;
+}
 static int menu_opt(int id)   /* the renderer's option of a row, -1 none */
 {
     for (int i = 0; i < MENU_NROWS; i++) if (MENU_ROWS[i].id == id && id != MO_HEAD) return MENU_ROWS[i].opt;
     return -1;
 }
-static void menu_rows_build(const char **lab, const char **val, const char **hint, char vbuf[][128])
+/* The Keys tab (the user, 2026-11-17: "another menu to the esc menu to rebind all commands the way the user wants",
+   "in its own tab"): a row for each command of our display (uwinput.c's CMD), its value the key it has. Enter (or a
+   click) asks for the new key: the next key pressed is it, with Shift or Ctrl if one is held; Shift alone is taken
+   when it is let go with nothing else pressed. Esc gives up, Delete leaves the command with no key. A key another
+   command had is taken from it (that one then shows "none"). Left (or a right click) puts the shipped key back.
+   Kept in the settings as key_<id>=<code>,<modifier>. Esc, Tab, F1, F11 and ` are the menu's, the panel's and the
+   settings screen's own and cannot be given away. The original's display has its own keys: no tab there. */
+static int key_ask = -1, key_ask_mod;
+static const char *key_name(int c)
 {
+    static const struct { int c; const char *n; } K[] = {
+        {0x10, "Q"}, {0x11, "W"}, {0x12, "E"}, {0x13, "R"}, {0x14, "T"}, {0x15, "Y"}, {0x16, "U"}, {0x17, "I"}, {0x18, "O"}, {0x19, "P"},
+        {0x1E, "A"}, {0x1F, "S"}, {0x20, "D"}, {0x21, "F"}, {0x22, "G"}, {0x23, "H"}, {0x24, "J"}, {0x25, "K"}, {0x26, "L"},
+        {0x2C, "Z"}, {0x2D, "X"}, {0x2E, "C"}, {0x2F, "V"}, {0x30, "B"}, {0x31, "N"}, {0x32, "M"},
+        {0x02, "1"}, {0x03, "2"}, {0x04, "3"}, {0x05, "4"}, {0x06, "5"}, {0x07, "6"}, {0x08, "7"}, {0x09, "8"}, {0x0A, "9"}, {0x0B, "0"},
+        {0x0C, "-"}, {0x0D, "="}, {0x0E, "Backspace"}, {0x1A, "["}, {0x1B, "]"}, {0x1C, "Enter"}, {0x27, ";"}, {0x28, "'"},
+        {0x2A, "Left Shift"}, {0x2B, "\\"}, {0x33, ","}, {0x34, "."}, {0x35, "/"}, {0x36, "Right Shift"}, {0x37, "Keypad *"},
+        {0x39, "Space"}, {0x3A, "Caps Lock"}, {0x3B, "F1"}, {0x3C, "F2"}, {0x3D, "F3"}, {0x3E, "F4"}, {0x3F, "F5"}, {0x40, "F6"},
+        {0x41, "F7"}, {0x42, "F8"}, {0x43, "F9"}, {0x44, "F10"}, {0x57, "F11"}, {0x58, "F12"},
+        {0x47, "Keypad 7"}, {0x48, "Keypad 8"}, {0x49, "Keypad 9"}, {0x4A, "Keypad -"}, {0x4B, "Keypad 4"}, {0x4C, "Keypad 5"},
+        {0x4D, "Keypad 6"}, {0x4E, "Keypad +"}, {0x4F, "Keypad 1"}, {0x50, "Keypad 2"}, {0x51, "Keypad 3"}, {0x52, "Keypad 0"},
+        {0x53, "Keypad ."}, {0x11C, "Keypad Enter"}, {0x135, "Keypad /"}, {0x147, "Home"}, {0x148, "Up arrow"}, {0x149, "Page Up"},
+        {0x14B, "Left arrow"}, {0x14D, "Right arrow"}, {0x14F, "End"}, {0x150, "Down arrow"}, {0x151, "Page Down"}, {0x152, "Insert"},
+    };
+    static char other[16];
+    for (int i = 0; i < (int)(sizeof K / sizeof K[0]); i++) if (K[i].c == c) return K[i].n;
+    snprintf(other, sizeof other, "Key %X", c);
+    return other;
+}
+static void key_text(int key, int shift, char *out, size_t n)
+{
+    if (!key) snprintf(out, n, "%s", "none");
+    else snprintf(out, n, "%s%s", shift == 1 ? "Shift + " : shift == 2 ? "Ctrl + " : "", key_name(key));
+}
+static void keys_load(void)   /* once, when the settings can be read */
+{
+    static int done;
+    char name[48], v[32];
+    if (done || !plat_home()) return;
+    done = 1;
+    for (int i = 0; i < uwi_cmd_count(); i++) {
+        int k = 0, sh = 0;
+        if (uwi_cmd_label(i)[0] == '#') continue;
+        snprintf(name, sizeof name, "key_%s", uwi_cmd_id(i));
+        if (port_config_get(plat_home(), name, v, sizeof v) != 0 || sscanf(v, "%d,%d", &k, &sh) != 2) continue;
+        if (k >= 0 && k < 0x200 && sh >= 0 && sh <= 2) uwi_cmd_set(i, k, sh, 1);
+    }
+}
+static void keys_save(int i)   /* command i's key to the settings (-1: every command's) */
+{
+    char name[48], v[32];
+    if (!plat_home()) return;
+    for (int c = 0; c < uwi_cmd_count(); c++) {
+        int k, sh;
+        if ((i >= 0 && c != i) || uwi_cmd_label(c)[0] == '#') continue;
+        uwi_cmd_get(c, 0, &k, &sh);
+        snprintf(name, sizeof name, "key_%s", uwi_cmd_id(c)), snprintf(v, sizeof v, "%d,%d", k, sh);
+        port_config_set(plat_home(), name, v);
+    }
+}
+static void key_bind(int i, int key, int shift)
+{
+    char t[48];
+    int lost = uwi_cmd_set(i, key, shift, 0);
+    keys_save(i);
+    if (lost >= 0) keys_save(lost);
+    key_text(key, shift, t, sizeof t);
+    fprintf(stderr, PLAT_NAME ": keys: %s = %s%s%s\n", uwi_cmd_label(i), t, lost >= 0 ? ", taken from " : "", lost >= 0 ? uwi_cmd_label(lost) : "");
+}
+/* a key while the Keys tab asks for one: 1 always (every key is the question's) */
+static int key_ask_event(int c, int down)
+{
+    int shiftkey = c == 0x2A || c == 0x36, mod = shiftkey || c == 0x1D || c == 0x11D || c == 0x38 || c == 0x138;
+    if (down == 1) {
+        if (c == 0x01) key_ask = -1;
+        else if (c == 0x153) key_bind(key_ask, 0, 0), key_ask = -1;                    /* Delete: no key */
+        else if (mod) key_ask_mod = c;
+        else if (c != 0x57 && c != 0x0F && c != 0x29 && c != 0x3B)                     /* (F11, Tab, `, F1: not to be given away) */
+            key_bind(key_ask, c, menu_shift ? 1 : uwp_ctrl_down() ? 2 : 0), key_ask = -1, key_ask_mod = 0;
+    } else if (!down && key_ask_mod == c) {
+        if (shiftkey) key_bind(key_ask, c, 0), key_ask = -1;                           /* Shift alone, let go */
+        key_ask_mod = 0;
+    }
+    return 1;
+}
+static void key_rows_build(const char **lab, const char **val, const char **hint, char vbuf[][128])
+{
+    static char hints[96][224];
+    keys_load();
+    if (menu_n < MENU_MAX - 2) {
+        snprintf(vbuf[menu_n], 128, "%s", "Enter");
+        vol_kind[menu_n] = 4;
+        menu_ids[menu_n] = MO_KEYDEFAULT, lab[menu_n] = "Default keys", val[menu_n] = vbuf[menu_n];
+        hint[menu_n] = "Enter: every command goes back to the key it came with.", menu_n++;
+    }
+    for (int i = 0; i < uwi_cmd_count() && i < 96 && menu_n < MENU_MAX - 1; i++) {
+        const char *l = uwi_cmd_label(i);
+        int k, sh, dk, dsh;
+        char d[48];
+        vbuf[menu_n][0] = 0;
+        if (l[0] == '#') {   /* (a heading with no row under it is taken back, as the options') */
+            if (menu_n && menu_ids[menu_n - 1] == MO_HEAD) menu_n--;
+            menu_ids[menu_n] = MO_HEAD, lab[menu_n] = l, val[menu_n] = vbuf[menu_n], hint[menu_n] = "", menu_n++;
+            continue;
+        }
+        uwi_cmd_get(i, 0, &k, &sh), uwi_cmd_get(i, 1, &dk, &dsh);
+        if (key_ask == i) snprintf(vbuf[menu_n], 128, "%s", "press a key ...");
+        else key_text(k, sh, vbuf[menu_n], 128);
+        key_text(dk, dsh, d, sizeof d);
+        snprintf(hints[i], sizeof hints[i], "Enter, then the new key (hold Shift or Ctrl for a combination). Esc: give up. Delete: no key. Left: back to %s.", d);
+        menu_ids[menu_n] = MO_KEY + i, lab[menu_n] = l, val[menu_n] = vbuf[menu_n], hint[menu_n] = hints[i], menu_n++;
+    }
+    if (menu_n && menu_ids[menu_n - 1] == MO_HEAD) menu_n--;
+}
+/* the rows of the open tab (menu_tab), and how many rows each tab shows now (tab_shown); menu_rows_build, below, is
+   what the menu calls */
+static void menu_rows_pass(const char **lab, const char **val, const char **hint, char vbuf[][128])
+{
+    int sec = -1;   /* the section (the tab) the row is in */
     menu_n = 0;
+    memset(tab_shown, 0, sizeof tab_shown);
+    for (int i = 0; i < MENU_MAX; i++) vol_kind[i] = 0, vol_frac[i] = -1;
     if (menu_page) {
         static const char *SL[4] = {"Slot I", "Slot II", "Slot III", "Slot IV"};
         for (int i = 0; i < 4; i++) {
@@ -1840,9 +2232,11 @@ static void menu_rows_build(const char **lab, const char **val, const char **hin
             && id != MO_DISPLAY && id != MO_FULL && id != MO_MUSIC && id != MO_MUSVOL && id != MO_SOUND && id != MO_FXVOL
             && id != MO_CARDMUSIC && id != MO_CARDSPEECH && id != MO_MENUFONT && id != MO_MENUBG) continue;
         vbuf[menu_n][0] = 0;
-        if (id == MO_HEAD) {   /* a heading; one with no row under it is taken back (below) */
-            if (menu_n && menu_ids[menu_n - 1] == MO_HEAD) menu_n--;
-        } else if (MENU_ROWS[i].opt >= 0) {
+        if (id == MO_HEAD) {   /* a section's heading: a tab (its name is in the strip, not in the list); the open tab's own two rows first */
+            if (++sec < MENU_TABS && sec == menu_tab) tab_head_rows(sec, lab, val, hint, vbuf);
+            continue;
+        } else if (sec < 0 || sec >= MENU_TABS) continue;
+        else if (MENU_ROWS[i].opt >= 0) {
             if (!V.option || !V.option(MENU_ROWS[i].opt, 0, vbuf[menu_n], 128)) continue;
         } else if (id == MO_DISPLAY) {   /* (no renderer: no display of ours to choose) */
             if (!V.ok) continue;
@@ -1858,6 +2252,22 @@ static void menu_rows_build(const char **lab, const char **val, const char **hin
         else if (id >= MO_DIAL && id < MO_DIAL + SOUND_NDIALS) {
             if (!dial_shown(id - MO_DIAL)) continue;
             dial_text(id - MO_DIAL, vbuf[menu_n], 128);
+        }
+        else if (id == MO_KEYPAGE) {   /* the Keys tab: the commands' rows */
+            tab_shown[sec]++;
+            if (sec == menu_tab) key_rows_build(lab, val, hint, vbuf);
+            continue;
+        }
+        else if (id == MO_VOLPAGE) {   /* the Fog and smoke tab: the renderer's rows, when it has them */
+            if (vol_have()) {
+                tab_shown[sec]++;
+                if (sec == menu_tab) vol_rows_build(lab, val, hint, vbuf);
+            }
+            continue;
+        }
+        else if (id == MO_SPRPAGE) {   /* the Sprites tab: our own object pictures that are there */
+            if (spr_rows_build(sec == menu_tab, lab, val, hint, vbuf)) tab_shown[sec]++;
+            continue;
         }
         else if (id == MO_FULL) snprintf(vbuf[menu_n], 128, "%s", live.fullscreen ? "On" : "Off");
         else if (id == MO_RENDERER) {   /* (Windows with a renderer up: the two DLLs; the one wanted, and the one running) */
@@ -1931,9 +2341,53 @@ static void menu_rows_build(const char **lab, const char **val, const char **hin
             snprintf(vbuf[menu_n], 128, "%s%s", hv <= 0 ? "Off" : hv == 1 ? "1 a level" : "2 a level",
                      hv <= 0 ? "" : us == 0 ? " (Creature AI off)" : us == 2 ? " (no model)" : "");
         }
+        tab_shown[sec]++;
+        if (sec != menu_tab) continue;   /* (another tab's row: counted, not listed) */
         menu_ids[menu_n] = id, lab[menu_n] = MENU_ROWS[i].label, val[menu_n] = vbuf[menu_n], hint[menu_n] = MENU_ROWS[i].hint, menu_n++;
     }
+    menu_ntabs = sec + 1 > MENU_TABS ? MENU_TABS : sec + 1;
     if (menu_n && menu_ids[menu_n - 1] == MO_HEAD) menu_n--;
+}
+static void menu_rows_build(const char **lab, const char **val, const char **hint, char vbuf[][128])
+{
+    menu_rows_pass(lab, val, hint, vbuf);
+    if (menu_page) return;
+    if (menu_tab < 0 || menu_tab >= menu_ntabs || !tab_shown[menu_tab]) {   /* the open tab shows no row now: the first that does */
+        for (int t = 0; t < menu_ntabs; t++) if (tab_shown[t]) { menu_tab = t, menu_sel = 0; break; }
+        menu_rows_pass(lab, val, hint, vbuf);
+    }
+    if (menu_n && menu_ids[0] == MO_PRESET) {   /* the Preset row: the one the tab's rows match, or Custom */
+        int now = tab_preset_now(menu_tab, val);
+        snprintf(vbuf[0], 128, "%s", now < 0 ? "Custom" : tab_preset_name(menu_tab, now));
+    }
+}
+/* the tabs: another one opened (its first row chosen), the next or the one before that shows a row, and the shown
+   tabs' names given to whoever draws the menu (before the rows) */
+static void menu_tab_set(int t)
+{
+    if (t == menu_tab || t < 0 || t >= menu_ntabs) return;
+    menu_tab = t, menu_sel = 0, vol_edit_on = 0, vol_drag = -1;
+}
+static void menu_tab_go(int dir)
+{
+    for (int k = 1; k < menu_ntabs; k++) {
+        int t = ((menu_tab + dir * k) % menu_ntabs + menu_ntabs) % menu_ntabs;
+        if (tab_shown[t]) { menu_tab_set(t); return; }
+    }
+}
+static void menu_tabs_give(void)
+{
+    const char *names[MENU_TABS];
+    int open = 0;
+    tab_nvis = 0;
+    if (!menu_page)
+        for (int t = 0; t < menu_ntabs; t++)
+            if (tab_shown[t]) {
+                if (t == menu_tab) open = tab_nvis;
+                names[tab_nvis] = tab_name(t), tab_vis[tab_nvis++] = t;
+            }
+    if (soft_menu_up()) { if (soft_menu->tabs) soft_menu->tabs(names, tab_nvis, open); }
+    else if (V.menu_tabs) V.menu_tabs(names, tab_nvis, open);
 }
 /* the chosen row is never a heading: moved on the way dir (1 down, -1 up) to the next row that can be chosen */
 static void menu_sel_fix(int dir)
@@ -1941,6 +2395,70 @@ static void menu_sel_fix(int dir)
     if (menu_n <= 0) return;
     if (menu_sel < 0 || menu_sel >= menu_n) menu_sel = 0;
     for (int k = 0; k < menu_n && menu_ids[menu_sel] == MO_HEAD; k++) menu_sel = (menu_sel + dir + menu_n) % menu_n;
+}
+/* the sliders' own keys (a press or a repeat of set-1 code c): 1 taken. On a slider's row a digit, '.' (or ',') or '-'
+   (the main keys and the number pad) starts a number or adds to it, Backspace takes the last one away, Enter gives
+   the number to the renderer (which keeps it inside the slider's range), Esc drops it and leaves the menu open; any
+   other key drops it and does what it does. With no number being typed: Left and Right do nothing on a row that
+   Enter acts on (Default settings). */
+static int vol_key(int c)
+{
+    static const struct { int code; char ch; } K[] = {
+        {0x02, '1'}, {0x03, '2'}, {0x04, '3'}, {0x05, '4'}, {0x06, '5'}, {0x07, '6'}, {0x08, '7'}, {0x09, '8'}, {0x0A, '9'}, {0x0B, '0'},
+        {0x0C, '-'}, {0x34, '.'}, {0x33, '.'},
+        {0x47, '7'}, {0x48, '8'}, {0x49, '9'}, {0x4A, '-'}, {0x4B, '4'}, {0x4C, '5'}, {0x4D, '6'}, {0x4F, '1'}, {0x50, '2'}, {0x51, '3'},
+        {0x52, '0'}, {0x53, '.'},
+    };
+    int kind = menu_sel >= 0 && menu_sel < menu_n ? vol_kind[menu_sel] : 0, len;
+    char ch = 0;
+    for (int i = 0; i < (int)(sizeof K / sizeof K[0]); i++) if (K[i].code == c) ch = K[i].ch;
+    if (ch && kind == 2 && V.vol_set) {
+        if (!vol_edit_on) vol_edit_on = 1, vol_edit[0] = 0;
+        len = (int)strlen(vol_edit);
+        if (len < 12 && (ch != '-' || len == 0) && (ch != '.' || !strchr(vol_edit, '.'))) vol_edit[len] = ch, vol_edit[len + 1] = 0;
+        return 1;
+    }
+    if (vol_edit_on) {
+        len = (int)strlen(vol_edit);
+        if (c == 0x0E) {   /* Backspace; the last one gone: no number being typed any more */
+            if (len > 0) vol_edit[--len] = 0;
+            if (len == 0) vol_edit_on = 0;
+            return 1;
+        }
+        if (c == 0x39) return 1;   /* (Space: nothing while a number is typed) */
+        vol_edit_on = 0;
+        if (c == 0x1C || c == 0x11C) {
+            if (kind == 2 && V.vol_set) V.vol_set(menu_ids[menu_sel] - MO_VOL, vol_edit);
+            return 1;
+        }
+        if (c == 0x01) return 1;
+        return 0;
+    }
+    if ((c == 0x14B || c == 0x14D) && kind == 4) return 1;
+    return 0;
+}
+/* the sliders' pointer (menu_event's, after the pointer's place is kept): 1 taken. A left press on a slider's track
+   puts the value there and holds the slider, which then follows the pointer until the release (the scrollbar and
+   the row's own click never see that press); any press drops a number being typed */
+static int vol_mouse(int kind, int c, int down, int x, int y)
+{
+    float f = 0;
+    if (kind == UWI_BUTTON && down) vol_edit_on = 0;
+    if (kind == UWI_BUTTON && c == PLAT_BUTTON_LEFT && !down) { vol_drag = -1; return 0; }
+    if (!V.menu_slider || !V.vol_set_frac) return 0;
+    if (kind == UWI_BUTTON && c == PLAT_BUTTON_LEFT && down) {
+        int r = V.menu_slider(x, y, -1, &f);
+        if (r < 0 || r >= menu_n || vol_kind[r] != 2) return 0;
+        vol_drag = r, menu_sel = r;
+        V.vol_set_frac(menu_ids[r] - MO_VOL, f);
+        return 1;
+    }
+    if (vol_drag >= 0 && vol_drag < menu_n && vol_kind[vol_drag] == 2) {
+        if (V.menu_slider(x, y, vol_drag, &f) >= 0) V.vol_set_frac(menu_ids[vol_drag] - MO_VOL, f);
+        return 1;
+    }
+    if (kind == UWI_BUTTON && down && c == PLAT_BUTTON_RIGHT && menu_hover >= 0 && menu_hover < menu_n && vol_kind[menu_hover] == 4) return 1;
+    return 0;
 }
 static int panel_wait;                /* the original's options panel (save, restore, quit) is up: no mouse-look till it is gone */
 static unsigned long long panel_t0;
@@ -1982,12 +2500,46 @@ static void panel_toggle(int ctrl_scan, int now_on)
 static void fx_audio_start(int again);
 static void fx_pan_fix_read(void);
 static void fx_acoustics_tune(void);
+static void tab_preset_apply(int k);
 static void menu_choose_step(int row, int step)
 {
     char v[128];
     if (row < 0 || row >= menu_n) return;
     int id = menu_ids[row];
     if (id == MO_HEAD) return;
+    if (id >= MO_VOL && id < MO_VOL + 1000) {   /* a row of the Fog and smoke tab: the renderer steps it */
+        if (vol_have()) V.vol_value(id - MO_VOL, step, v, sizeof v);
+        return;
+    }
+    if (id >= MO_SPR && id < MO_SPR + 512) {   /* a row of the Sprites tab: the other picture, at once */
+        if (V.option) V.option(1000 + id - MO_SPR, step ? step : 1, v, sizeof v);
+        return;
+    }
+    if (id == MO_KEYDEFAULT) {          /* the Keys tab: every command's shipped key */
+        uwi_cmd_defaults(), keys_save(-1);
+        fprintf(stderr, PLAT_NAME ": keys: every command back to its default key\n");
+        return;
+    }
+    if (id >= MO_KEY && id < MO_KEY + 200) {   /* a command's row: Enter or Right asks for the key, Left its shipped one */
+        if (step > 0) key_ask = id - MO_KEY, key_ask_mod = 0;
+        else {
+            int k, sh;
+            uwi_cmd_get(id - MO_KEY, 1, &k, &sh);
+            key_bind(id - MO_KEY, k, sh);
+        }
+        return;
+    }
+    if (id == MO_DEFAULTS) { tab_preset_apply(0); return; }   /* the tab's rows back to their defaults */
+    if (id == MO_PRESET) {   /* the next preset (or the one before) taken; from Custom, the first (or the last) */
+        const char *lab[MENU_MAX], *val[MENU_MAX], *hint[MENU_MAX];
+        static char vb[MENU_MAX][128];
+        int n = tab_preset_count(menu_tab), now;
+        if (n <= 0) return;
+        menu_rows_build(lab, val, hint, vb);
+        now = tab_preset_now(menu_tab, val);
+        tab_preset_apply(now < 0 ? (step > 0 ? 0 : n - 1) : (now + (step > 0 ? 1 : n - 1)) % n);
+        return;
+    }
     if (id == MO_BACK) { menu_page = 0, menu_sel = 0; return; }
     if (id > MO_SLOT && id <= MO_SLOT + 4) {
         int slot = id - MO_SLOT;
@@ -2017,7 +2569,7 @@ static void menu_choose_step(int row, int step)
         if (id == MO_MOUSE) display_apply();   /* the new speed to the port's mouse-look */
         /* the setting (the renderer keeps it) read again: the audio started again for these three, the effects' sides
            taken at once */
-        if (id == MO_FXAUDIO || id == MO_ACOUSTICS || id == MO_HRTF) fx_audio_start(1);
+        if (id == MO_FXAUDIO || id == MO_ACOUSTICS || id == MO_HRTF) fx_restart_soon();
         if (id == MO_PANFIX) fx_pan_fix_read();
         if (id == MO_ACWET || id == MO_ACSIZE || id == MO_ACOCCL || id == MO_ACDETOUR || id == MO_FOOTSTEPS || id == MO_HEARRANGE || id == MO_FEETSPREAD || id == MO_ECHOQ || id == MO_STEPVOL || id == MO_STEPECHO) fx_acoustics_tune();   /* heard at once, no restart */
         return;
@@ -2113,6 +2665,49 @@ static void menu_choose_step(int row, int step)
     }
 }
 static void menu_choose(int row) { menu_choose_step(row, 1); }
+/* the open tab's k-th preset taken (0: its defaults). The renderer's for Fog and smoke; the dials' own numbers for
+   Sound tuning; else each listed row is stepped, as Right and Left step it, until it shows the value wanted: up
+   first, and back down when it comes to its end or round to where it began. Twice over the list, as a row may only
+   be shown once another is set (DLSS mode with DLSS, the sound rows with Positional sound). */
+static void tab_preset_apply(int k)
+{
+    const char *lab[MENU_MAX], *val[MENU_MAX], *hint[MENU_MAX];
+    static char vb[MENU_MAX][128];
+    PresetRow rows[64];
+    int t = menu_tab, nr;
+    if (k < 0 || k >= tab_preset_count(t)) return;
+    tab_last[t] = k + 1;
+    if (tab_is_vol(t)) { V.vol_preset(k); return; }
+    if (tab_is_dials(t)) {
+        int again = 0, any = 0;
+        dials_load();
+        for (int i = 0; i < SOUND_NDIALS; i++) {
+            if (!dial_shown(i) || dial_val[i] == SOUND_DIALS[i].dflt) continue;
+            dial_val[i] = SOUND_DIALS[i].dflt, any = 1;
+            fx_setting_save(SOUND_DIALS[i].key, dial_val[i]);
+            if (i == 34) again = 1;   /* (the Roland's own reverb: the renderings made again, as dial_step) */
+        }
+        if (again) fx_restart_soon();
+        else if (any) fx_acoustics_tune();
+        return;
+    }
+    nr = tab_preset_rows(t, k, rows, 64);
+    for (int pass = 0; pass < 2; pass++)
+        for (int i = 0; i < nr; i++)
+            for (int dir = 1, done = 0; dir >= -1 && !done; dir -= 2) {
+                char first[128] = "", prev[128] = "";
+                for (int n = 0; n < 420; n++) {
+                    int r = -1;
+                    menu_rows_build(lab, val, hint, vb);
+                    for (int q = 0; q < menu_n; q++) if (menu_ids[q] == rows[i].id) r = q;
+                    if (r < 0 || preset_text_none(val[r]) || preset_text_is(val[r], rows[i].want)) { done = 1; break; }
+                    if (n && (!strcmp(val[r], prev) || !strcmp(val[r], first))) break;   /* at its end, or round once: the other way */
+                    if (!n) snprintf(first, sizeof first, "%s", val[r]);
+                    snprintf(prev, sizeof prev, "%s", val[r]);
+                    menu_choose_step(r, dir);
+                }
+            }
+}
 /* our menu's events (uwinput's MENU owner). Esc opens it while the game's 3D view is live (uwinput gives it Esc's
    press then: esc_menu; elsewhere, on the map, in a conversation, Esc is the game's); while it is open it has the keys
    (their repeats too: down 2): up and down choose, Enter acts, Esc closes; and the pointer: a left click acts, a right
@@ -2120,11 +2715,19 @@ static void menu_choose(int row) { menu_choose_step(row, 1); }
 static int menu_event(int kind, int c, int down, int x, int y)
 {
     if (kind == UWI_KEY) {
+        if (c == 0x2A || c == 0x36) menu_shift = down != 0;   /* (Shift held: Shift+Tab, the tab before) */
         if (!menu_open) {
+            key_ask = -1;
             if (c == 0x01 && down == 1 && ((V.ok && V.menu) || soft_live())) menu_open = 1, menu_sel = 0, port_pause(1);
             return 1;
         }
+        if (key_ask >= 0 && !menu_page) return key_ask_event(c, down);   /* the Keys tab asks: this key is the answer */
         if (!down) return 1;
+        if (!menu_page && vol_key(c)) return 1;   /* a slider's row: a number typed in; a row that only Enter acts on */
+        if (!menu_page && (c == 0x0F || c == 0x149 || c == 0x151)) {   /* Tab, PgDn: the next tab; Shift+Tab, PgUp: the one before */
+            quit_armed = 0, menu_tab_go(c == 0x149 || (c == 0x0F && menu_shift) ? -1 : 1);
+            return 1;
+        }
         if (c == 0x01) { if (menu_page) menu_page = 0, menu_sel = 0; else menu_close(); }   /* Esc: a page back to the options */
         else if (c == 0x148) quit_armed = 0, menu_sel = (menu_sel + menu_n - 1) % (menu_n ? menu_n : 1), menu_sel_fix(-1);   /* up (never onto a heading) */
         else if (c == 0x150) quit_armed = 0, menu_sel = (menu_sel + 1) % (menu_n ? menu_n : 1), menu_sel_fix(1);            /* down */
@@ -2138,6 +2741,12 @@ static int menu_event(int kind, int c, int down, int x, int y)
     }
     if (!menu_open) return 1;           /* (a press's release after the menu closed: nothing) */
     menu_mx = x, menu_my = y;
+    if (key_ask >= 0 && kind == UWI_BUTTON && down) { key_ask = -1; return 1; }   /* a click while a key is asked: given up */
+    if (!menu_page && kind == UWI_BUTTON && down && c == PLAT_BUTTON_LEFT) {   /* a left press on a tab's name opens it */
+        int t = soft_menu_up() ? (soft_menu->tab_at ? soft_menu->tab_at(x, y) : -1) : V.menu_tab_at ? V.menu_tab_at(x, y) : -1;
+        if (t >= 0 && t < tab_nvis) { quit_armed = 0, vol_edit_on = 0, menu_tab_set(tab_vis[t]); return 1; }
+    }
+    if (!menu_page && vol_mouse(kind, c, down, x, y)) return 1;   /* the sliders (the Fog and smoke tab's) */
     /* the scrollbar's (the renderer's: a press on its track or thumb scrolls and drags, the release ends the drag) */
     if (kind == UWI_BUTTON && c == PLAT_BUTTON_LEFT && menu_click_pass(x, y, down ? 1 : 0)) return 1;
     if (kind == UWI_BUTTON && down && c == PLAT_BUTTON_LEFT && menu_hover >= 0) menu_sel = menu_hover, menu_choose(menu_hover);
@@ -2182,6 +2791,12 @@ static void tap_pump(void)
 static void send_key(uint8_t make)
 {
     if (!hooks || !hooks->key) return;
+#ifndef UWPORT_PLAIN
+    /* a click's key with Ctrl held (the user, 2026-11-17: Ctrl + a left click opened the original's quit panel: the
+       look's q read as Ctrl+Q, PLAYER.C's do_option_shortcut). Our display has no way to the original's interface but
+       the Display row, so Ctrl is let go to the game first, both of them; the next press of it is seen as ever */
+    if (display_mode != 1 && uwp_ctrl_down()) key_byte(0x9D), key_byte(0xE0), key_byte(0x9D);
+#endif
     for (int i = ntaps - 1; i >= 0; i--) if (taps[i].make == make) tap_end(i);   /* (the same key again: the last let go first) */
     if (ntaps == (int)(sizeof taps / sizeof taps[0])) tap_end(0);
 #ifndef UWPORT_PLAIN
@@ -2227,6 +2842,7 @@ static void first_pick(void)
     {
         const char *lab[MENU_MAX], *val[MENU_MAX], *hint[MENU_MAX];
         static char vb[MENU_MAX][128];
+        menu_tab = menu_tab_of(MO_LLM);   /* (the row's tab opened) */
         menu_rows_build(lab, val, hint, vb);
         for (int i = 0; i < menu_n; i++) if (menu_ids[i] == MO_LLM) menu_sel = i;
     }
@@ -2238,6 +2854,7 @@ static void display_init(void)
 {
     if (display_mode >= 0) return;
     char v[16];
+    keys_load();                        /* the player's own keys (the Esc menu's Keys tab) */
     display_mode = plat_home() && port_config_get(plat_home(), "display", v, sizeof v) == 0 && !strcmp(v, "original") ? 1 : 0;
 #ifndef UWPORT_PLAIN
     {   /* quick_fades (1 unless set to 0; the user 2026-11-13): UWEDIT.C strt_demscr's fades instant (the map, a
@@ -2719,6 +3336,69 @@ static int keep_last(const char *why, int have)
     return 1;
 }
 #endif
+/* the level's scene, the game held still while it is built (the user, 2026-11-17: "i was being attacked and i could
+   hear it in the background but i couldn't do anything because there was no screen yet", at a start, a load and a
+   level change: the game's thread ran on while this one built the scene). Held as under our menu (port_pause: the
+   game gets no time and waits at its next clock read); not when the menu or the settings screen holds it already */
+static unsigned game_renders;   /* the game's count of frames drawn (view_world: uwg_gameview's) */
+/* our sound silent from the moment a level change is seen until a quarter of a second after its scene is up (the
+   user, 2026-11-17: "i can still hear sounds before i can see the level", "two footsteps when i loaded the
+   game"), and Steam Audio's pathing told (uwaudio_level_change) */
+#ifndef UWPORT_GAMEVIEW
+#define uwg_scene(level, building) ((void)0)
+#define uwg_scene_beat() ((void)0)
+#define uwg_scene_level() (-1)
+#endif
+static int hush_on;
+static uint64_t hush_end;
+static void hush(int begin)
+{
+    if (begin) {
+        if (!hush_on) uwaudio_volume(0), uwaudio_level_change();
+        hush_on = 1, hush_end = 0;
+    } else if (hush_on && !hush_end) hush_end = ms_now() + 250;
+}
+static void hush_tick(void)
+{
+    if (hush_on && hush_end && ms_now() >= hush_end) hush_on = 0, hush_end = 0, uwaudio_volume(fx_vol / 100.0f);
+}
+static int game_level;          /* and the level of its last one */
+static int level_scene(const unsigned char *block, int level)
+{
+    int st =V.level_state ? V.level_state(block, level) : 0, hold, r;
+#ifdef UWPORT_GAMEVIEW
+    /* (the user, later that day: "now the game crashes when i zone ... it put me in a inbetween level or area".
+       The block's shape changed under the same level number: the game is reading a new level in, and the number
+       we have is the last drawn frame's. Nothing is built from that mix, and uwview does not read the block,
+       until the game has drawn a frame again (its number is then the block's); 15 s at most) */
+    static int waiting;
+    static unsigned wait_from;
+    static uint64_t wait_t;
+    if (st == 2 && V.level_wait) {
+        if (!waiting) waiting = 1, wait_from = game_renders, wait_t = ms_now();
+        if ((game_renders == wait_from || game_level != level) && ms_now() - wait_t < 15000) {
+            V.level_wait(1);
+            hush(1);
+            return 1;   /* (the scene there stays up) */
+        }
+    }
+    if (waiting && V.level_wait) V.level_wait(0);
+    waiting = 0;
+#endif
+    hold = st != 0 && !menu_open && !settings_open();
+    if (st != 0) hush(1), uwg_scene(-1, 1);
+    if (hold) {
+#ifndef UWPORT_PLAIN
+        port_pause_music(0);   /* nothing heard without a picture: the music stands still too (fx_pump gives the row's choice back) */
+#endif
+        port_pause(1);
+    }
+    r = V.level(block, level);
+    uwg_scene(level, 0);   /* (done, or as far as it goes: the gate does not wait for a scene that cannot be made) */
+    hush(0);
+    if (hold) port_pause(0);
+    return r;
+}
 static int view_world(void)
 {
 #ifdef UWPORT_GAMEVIEW
@@ -2734,7 +3414,18 @@ static int view_world(void)
     full_live = 0;
     if (epoch != view_epoch) epoch = view_epoch, one.w = prev.w = 0;   /* the last game's view gone: nothing to keep */
     if (!V.level || !V.camera || L.w != 320 || L.hgt != 200) return 0;
-    if (!uwg_gameview(&g)) {
+    int gok = uwg_gameview(&g);
+    if (gok) game_renders = g.renders, game_level = g.level;
+    uwg_scene_beat(), hush_tick();
+    /* the game stands at the gate with a level we have no scene for (uwgame.c's scene_gate): built now, whatever
+       its screen shows, and the kept frame's level and camera are that frame's from here */
+    if (gok && g.block && g.level >= 1 && g.level <= 9 && g.level != uwg_scene_level()) {
+        level_scene(g.block, g.level);
+        if (one.w > 0)
+            one.x = g.x, one.y = g.y, one.z = g.z, one.facing = g.facing, one.pitch = g.pitch, one.bank = g.bank, one.eye = 1,
+            one.level = g.level, one.light = g.light, one.zoom = g.zoom, one.block = g.block, prev = one;
+    }
+    if (!gok) {
         if (!keep_last("no view", one.w)) return 0;
         stale = 1;
     } else if (!g.on_screen || g.w <= 0 || g.w > 320 - UWG_VIEW_X || g.h <= 0 || g.h > 200 - UWG_VIEW_Y) {
@@ -2759,7 +3450,7 @@ static int view_world(void)
     static struct { int on, level, kept, kept_level; const void *block, *kept_block; uint64_t t; } lv_fail;
     int retry = !(lv_fail.on && lv_fail.block == (const void *)s->block && lv_fail.level == s->level
                   && ms_now() - lv_fail.t < 1000);
-    if (!retry || !V.level(s->block, s->level)) {
+    if (!retry || !level_scene(s->block, s->level)) {
         /* the frame's level has no scene (yet): the last frame's camera and level stay */
         if (stale || !keep_last("level", prev.w)) return 0;
         if (retry) {
@@ -2771,7 +3462,7 @@ static int view_world(void)
         one = prev, stale = 1;
         if (!(lv_fail.kept && lv_fail.kept_block == (const void *)s->block && lv_fail.kept_level == s->level)) {
             lv_fail.kept = 0;
-            if (!V.level(s->block, s->level)) return 0;   /* (s is &one: now prev's level, built again) */
+            if (!level_scene(s->block, s->level)) return 0;   /* (s is &one: now prev's level, built again) */
             lv_fail.kept = 1, lv_fail.kept_block = (const void *)s->block, lv_fail.kept_level = s->level;
         }
     } else if (lv_fail.on && lv_fail.block == (const void *)s->block && lv_fail.level == s->level) lv_fail.on = 0, lv_fail.kept = 0;
@@ -2793,7 +3484,7 @@ static int view_world(void)
     }
     if (bk < 0 || best * 10 < n * 8) return 0;
     const UwgSnap *s = &k[bk];
-    if (!V.level(s->block, s->level)) return 0;
+    if (!level_scene(s->block, s->level)) return 0;
 #endif
     /* the eye: get_eye's (every camera the original has, its jolts included), or the feet 0xA4 below it */
     V.camera((float)s->x / 256.0f, (float)(s->z + (s->eye ? 0 : 0xA4)) / 256.0f, (float)s->y / 256.0f,
@@ -3000,6 +3691,8 @@ composed:
         const char *title = menu_page == 1 ? "Save game" : menu_page == 2 ? "Load game" : pick_prompt ? "Pick a model" : "Options";
         menu_rows_build(lab, val, hint, vbuf);
         menu_sel_fix(1);
+        menu_tabs_give();
+        if (V.menu_sliders) V.menu_sliders(!menu_page ? vol_frac : NULL, !menu_page ? menu_n : 0);   /* (the sliders' rows: the Fog and smoke tab's) */
         menu_hover = V.menu_rows2 ? V.menu_rows2(title, lab, val, hint, menu_n, menu_sel, menu_mx, menu_my)
                                   : V.menu_rows(title, lab, val, menu_n, menu_sel, menu_mx, menu_my);
     }
@@ -3123,7 +3816,7 @@ static void fx_audio_start(int again)
     uwaudio_game_dir(plat_data_root());
     fx_pan_fix = uwaudio_setting(data, "fx_pan_fix", 1);
     volumes_load();
-    uwaudio_volume(fx_vol / 100.0f);
+    uwaudio_volume(hush_on ? 0 : fx_vol / 100.0f);   /* (a level's build under way stays silent) */
     fprintf(stderr, "fx: starting the positional sound (OpenAL, the acoustics, the Roland's effects)\n");
     uwaudio_init(bin, data);
     fx_ac_seen = 0;   /* (the acoustics' materials are read by uwaudio_init: the level handed over again) */
@@ -3224,6 +3917,7 @@ static void underruns_at_exit(void)
 static void fx_pump(void)
 {
 #ifndef UWPORT_PLAIN
+    if (fx_restart_at && ms_now() >= fx_restart_at) fx_restart_at = 0, fx_audio_start(1);
     fx_acoustic_level();
     PortFxEvent ev[64];
     float ex = 0, ey = 0, ez = 0;
@@ -3329,6 +4023,7 @@ const uint32_t *uwf_frame(int *swp, int *shp)
         const char *title = menu_page == 1 ? "Save game" : menu_page == 2 ? "Load game" : pick_prompt ? "Pick a model" : "Options";
         menu_rows_build(lab, val, hint, vbuf);
         menu_sel_fix(1);
+        menu_tabs_give();
         menu_hover = soft_menu->rows(title, lab, val, hint, menu_n, menu_sel, menu_mx, menu_my);
     }
     *swp = sw, *shp = sh;
@@ -3468,6 +4163,9 @@ void uwf_client_size(int *w, int *h) { client_size(w, h); }
 int uwf_offscreen(void) { return offscreen(); }
 int uwf_no_input(void) { return no_input(); }
 void uwf_view_start(void) { view_start(); }
+/* 2026-11-17: the renderer was started by the first frame, the game's thread already running: three or four seconds
+   (a first run, its relief maps: eleven more) of the game's music and sounds over a window with no picture */
+void uwf_view_warm(void) { view_size(); }
 int uwf_view_loaded(void) { return V.dll != NULL; }
 int uwf_view_ok(void) { return V.ok; }
 void uwf_fx_audio_start(void) { fx_audio_start(0); }   /* fx_audio 1: OpenAL Soft (bin\soft_oal.dll); else nothing */

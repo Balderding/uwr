@@ -28,6 +28,13 @@ const Pic *ui_pic_file(const char *rel);
  * middle */
 void ui_cursor(int n, int x, int y);
 void ui_draw(const Pic *p, int x, int y, int scale);
+/* an object's picture for the interface: ours (data\newsprites\objects, the Esc menu's Sprites tab: ui_new_sprite[item]
+ * 1) when its file is there, else the original's. *div: 2 when it is at twice the detail (over 16 a side), else 1 */
+extern u8 ui_new_sprite[512];
+const Pic *ui_item_pic(int item, int *div);
+/* a picture at 1 / div of its size, top left at the overlay's (x, y): div 2 at the window's own pixels (the text
+ * layer), so that none of its detail is lost */
+void ui_draw_fine(const Pic *p, int x, int y, int div);
 void ui_set_scale(int s);
 void ui_fill(int x, int y, int w, int h, u8 r, u8 g, u8 b, u8 a);
 /* text in the game's font; returns its width; colour rgb */

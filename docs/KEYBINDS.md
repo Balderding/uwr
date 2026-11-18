@@ -1,5 +1,8 @@
 # uwr keybinds
 
+These are the keys the game comes with. The keyboard commands of play can be changed in the Esc menu, on the **Keys** tab
+(see [ESC_MENU.md](ESC_MENU.md)).
+
 Two programs read keys differently, so there are two tables.
 
 - **uw-new.exe** (the port, `dist\UW1\uw-new.exe`): the fixed table in `port/win32/uwinput.c`, plus F11 / Esc / Tab. Not rebindable.

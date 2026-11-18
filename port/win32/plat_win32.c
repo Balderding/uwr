@@ -668,6 +668,35 @@ static void log_start(void)
         fprintf(stderr, "\n==== uwr started %s ====\n", ts);
     }
 }
+/* 2026-11-17: the window while our renderer starts (three or four seconds; a first run makes the relief maps first,
+   some seconds to a minute or two): black with a line of text, not the unpainted white it was. Drawn once with GDI
+   before the renderer has the window; the renderer's first frame covers it. Not when the window is never shown. */
+static void start_note(void)
+{
+    static const WCHAR l1[] = L"Starting\x2026";
+    static const WCHAR l2[] = L"The first start prepares the game's pictures. That can take up to a minute or two.";
+    RECT r, a;
+    HDC dc;
+    HFONT f1, f2, old;
+    if (!g_win || uwf_offscreen() || !IsWindowVisible(g_win) || !GetClientRect(g_win, &r) || r.bottom < 64) return;
+    if (!(dc = GetDC(g_win))) return;
+    FillRect(dc, &r, (HBRUSH)GetStockObject(BLACK_BRUSH));
+    SetBkMode(dc, TRANSPARENT);
+    f1 = CreateFontW(-(r.bottom / 22), 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
+    f2 = CreateFontW(-(r.bottom / 44), 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
+    old = SelectObject(dc, f1);
+    SetTextColor(dc, RGB(222, 190, 110));   /* gold */
+    a = r, a.bottom = r.bottom / 2 - r.bottom / 40;
+    DrawTextW(dc, l1, -1, &a, DT_CENTER | DT_BOTTOM | DT_SINGLELINE | DT_NOPREFIX);
+    SelectObject(dc, f2);
+    SetTextColor(dc, RGB(150, 150, 140));
+    a = r, a.top = r.bottom / 2 + r.bottom / 40;
+    DrawTextW(dc, l2, -1, &a, DT_CENTER | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+    SelectObject(dc, old);
+    DeleteObject(f1), DeleteObject(f2);
+    ReleaseDC(g_win, dc);
+    GdiFlush();
+}
 
 int plat_run(const PlatConfig *cfg0, const PlatHooks *h, int (*game)(void *), void *arg)
 {
@@ -725,7 +754,8 @@ int plat_run(const PlatConfig *cfg0, const PlatHooks *h, int (*game)(void *), vo
         }
         if (live.fullscreen) set_fullscreen(1);
         if (live.mouse_lock) uwf_mouse_title(0);
-        if (getenv("UWPV_VEH")) AddVectoredExceptionHandler(1, veh_where);
+        /* (2026-11-17: always, unless UWPV_VEH=0: a fault's place in the log; "host fault" alone told nothing) */
+        { const char *e = getenv("UWPV_VEH"); if (!e || *e != '0') AddVectoredExceptionHandler(1, veh_where); }
         uwf_view_start();
         uwf_fx_audio_start();   /* fx_audio 1: OpenAL Soft (bin\soft_oal.dll); else nothing */
         fprintf(stderr, PLAT_NAME ": Win32 window, %s\n", uwf_view_loaded() ? "our renderer (Vulkan or D3D12: the line below)" : "GDI, paced by the compositor");
@@ -733,6 +763,8 @@ int plat_run(const PlatConfig *cfg0, const PlatHooks *h, int (*game)(void *), vo
     uwf_input_init();                  /* the window's input (uwinput.c) */
     targ[0] = (void *)game;
     targ[1] = arg;
+    start_note();                      /* (said in the window: the renderer's start shows nothing by itself) */
+    uwf_view_warm();                   /* the renderer up before the game's thread starts: nothing heard before a picture */
     L.start = ms_now();
     /* the game's thread gets a large stack: host frames are bigger than DOS's */
     gt = CreateThread(NULL, 16 << 20, game_thread, targ, STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);

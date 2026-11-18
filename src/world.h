@@ -5,6 +5,8 @@
 #include "lights.h"
 
 #define SPRITE_SCALE (1.0f / 48.0f) /* tiles a picture pixel */
+/* the same for object picture k: one of ours at twice the detail (Mesh.sprite_div 2) has pixels half as large */
+static inline float sprite_unit(const Mesh *m, int k) { return m->sprite_div[k] > 1 ? SPRITE_SCALE / (float)m->sprite_div[k] : SPRITE_SCALE; }
 #define MAX_SPRITE_VERTS (6 * 4096)
 
 /* is an object drawn as a picture (an item lying about, not a door, trap, trigger, creature or wall decoration) */

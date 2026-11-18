@@ -79,6 +79,33 @@ void __wrap_cFBtoScreen(void)
 static UwgView gv;
 static int gv_any;
 
+/* the gate (the user, 2026-11-17: attacked, and sounds heard, before the level could be seen): the game's thread
+   waits here, at the first frame it draws of a level, until our display has had that level's scene built (as a
+   scene held back until it may activate). Only while the display is alive (a beat within the last second, or a
+   build under way); 30 s at most, and a level given up on once is not waited for again */
+static volatile LONG scene_level, scene_building;
+static volatile unsigned long long scene_beat;
+void uwg_scene(int level, int building)
+{
+    if (level >= 0) InterlockedExchange(&scene_level, level);
+    InterlockedExchange(&scene_building, building != 0);
+    scene_beat = GetTickCount64();
+}
+void uwg_scene_beat(void) { scene_beat = GetTickCount64(); }
+int uwg_scene_level(void) { return (int)scene_level; }
+static void scene_gate(int lv)
+{
+    static int gave_up;
+    unsigned long long t0 = GetTickCount64();
+    if (lv < 1 || lv > 9 || lv == gave_up || !scene_beat) return;
+    while ((int)scene_level != lv) {
+        unsigned long long now = GetTickCount64();
+        if (!scene_building && now - scene_beat > 1000) return;   /* (no display at work: through) */
+        if (now - t0 > 30000) { gave_up = lv; return; }
+        Sleep(5);
+    }
+}
+
 /* portview.c's port_view_notify, on the game's thread after each change */
 static void gv_notify(int ev)
 {
@@ -95,6 +122,7 @@ static void gv_notify(int ev)
     gv.on_screen = port_view.on_screen, gv.regular = port_view.regular, gv.effect = port_view.effect;
     gv_any = port_view.renders > 0;
     ReleaseSRWLockExclusive(&lock);
+    scene_gate(port_view.level);
     if (ev == PV_SHOWN && port_view.regular) {   /* a main-loop frame on the screen (send_db) */
         uwi_capture();   /* the inventory, for our panel (uwinv.c) */
         uwl_capture();   /* what the crosshair is on, for the readout (uwlook.c): the original's own pick pass */

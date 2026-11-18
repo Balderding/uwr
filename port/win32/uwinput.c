@@ -18,45 +18,101 @@
 #define NKEYS 0x200
 enum { SH_ANY = 0, SH_SHIFT = 1, SH_CTRL = 2 };   /* an entry's modifier: none needed, Shift, Ctrl */
 
-/* our display's controls: exactly the old our_keys (plat_win32.c b9ba607). Entries with a modifier come before the
-   key's plain entry; a key not here goes on to CENTRED / GAME (O alone, S, A, D, E, the digits, ...) */
-static const struct { int key; int shift; int action; int code; } keys[] = {
-    { 0x2A,  SH_ANY,   UWI_RUN,  0 },                 /* Shift (left): ours, the run */
-    { 0x36,  SH_ANY,   UWI_RUN,  0 },                 /* Shift (right) */
-    { 0x11,  SH_ANY,   UWI_WALK, 0x2D },              /* W: walk (the port's X), with Shift run (W, 0x11) */
-    { 0x148, SH_ANY,   UWI_WALK, 0x2D },              /* Up: the same */
-    { 0x150, SH_ANY,   UWI_HOLD, 0x1F },              /* Down: back (S) */
-    { 0x149, SH_ANY,   UWI_HOLD, 0x148 },             /* PageUp: look up */
-    { 0x151, SH_ANY,   UWI_HOLD, 0x150 },             /* PageDown: look down */
-    { 0x39,  SH_ANY,   UWI_HOLD, 0x2A },              /* Space: jump (the port's Shift) */
-    { 0x26,  SH_CTRL,  UWI_OURS, UWI_A_AI_LOG },      /* Ctrl+L: the AI log on / off */
-    { 0x26,  SH_SHIFT, UWI_OURS, UWI_A_FULLBRIGHT },  /* Shift+L: full bright */
-    { 0x26,  SH_ANY,   UWI_HOLD, 0x10 },              /* L: look (the port's Q) */
-    { 0x10,  SH_ANY,   UWI_HOLD, 0x42 },              /* Q: cast (F8, PLAYER.C's try_cast) */
-    { 0x2C,  SH_ANY,   UWI_HOLD, 0x44 },              /* Z: sleep (F10, player_key_sleep) */
-    { 0x25,  SH_ANY,   UWI_HOLD, 0x43 },              /* K: track (F9, player_use_skill 2) */
-    { 0x3F,  SH_ANY,   UWI_OURS, UWI_A_SAVE_PAGE },   /* F5: our save page */
-    { 0x43,  SH_ANY,   UWI_OURS, UWI_A_LOAD_PAGE },   /* F9: our load page */
-    { 0x19,  SH_SHIFT, UWI_OURS, UWI_A_RECORD },      /* Shift+P: 15 s of video */
-    { 0x19,  SH_ANY,   UWI_OURS, UWI_A_SHOT },        /* P: a screenshot to the clipboard */
-    { 0x34,  SH_ANY,   UWI_OURS, UWI_A_SHADOWS },     /* .: the objects' shadows on / off */
-    { 0x18,  SH_SHIFT, UWI_OURS, UWI_A_SHADOWS },     /* Shift+O: the same (O alone the game's) */
-    { 0x2E,  SH_ANY,   UWI_OURS, UWI_A_FIGHT },       /* C: fight mode, the original's F5 (the fight icon) */
-    { 0x17,  SH_ANY,   UWI_OURS, UWI_A_PANEL },       /* I: our inventory panel */
-    { 0x13,  SH_ANY,   UWI_OURS, UWI_A_RUNES },       /* R: our panel on our rune page */
-    { 0x33,  SH_ANY,   UWI_OURS, UWI_A_CHARACTER },   /* ,: our panel, its character sheet */
-    { 0x32,  SH_ANY,   UWI_HOLD, 0x2C },              /* M: the map (the port's Z) */
-    { 0x28,  SH_ANY,   UWI_OURS, UWI_A_DLSS5 },       /* ': DLSS 5 */
-    { 0x27,  SH_ANY,   UWI_OURS, UWI_A_RT },          /* ;: ray tracing */
-    { 0x1B,  SH_ANY,   UWI_OURS, UWI_A_STYLE },       /* ]: DLSS 5's style */
-    { 0x40,  SH_ANY,   UWI_OURS, UWI_A_NORMALS },     /* F6: the normal maps */
+/* our display's commands, each with the key it has as shipped (the old our_keys, plat_win32.c b9ba607, and the keys
+   that went straight to the game: A, D, S, E, the arrows ...), and bind[], the key each has now: the player's own
+   (the Esc menu's Keys tab; the backend loads and keeps them). A label with # is a heading of that tab, no command.
+   A WALK's or RUN's code is its bit in w_held / run_held. A key that is some command's shipped key and has no
+   command now does nothing in the world (it must not fall through to the game as the command it was); any other
+   key without a command goes on to CENTRED / GAME as ever (O alone, N, U, the digits ...). */
+static const struct { const char *label, *id; int action, code, key, shift; } CMD[] = {
+    { "#Moving", "", 0, 0, 0, 0 },
+    { "Walk forward",              "walk",      UWI_WALK, 1,     0x11,  SH_ANY },    /* W: walk (the port's X), with the run key run (W, 0x11) */
+    { "Walk forward (second key)", "walk2",     UWI_WALK, 2,     0x148, SH_ANY },    /* Up: the same */
+    { "Walk back",                 "back",      UWI_HOLD, 0x1F,  0x1F,  SH_ANY },    /* S */
+    { "Walk back (second key)",    "back2",     UWI_HOLD, 0x1F,  0x150, SH_ANY },    /* Down: back (S) */
+    { "Step left",                 "left",      UWI_HOLD, 0x1E,  0x1E,  SH_ANY },    /* A */
+    { "Step right",                "right",     UWI_HOLD, 0x20,  0x20,  SH_ANY },    /* D */
+    { "Turn left",                 "turnleft",  UWI_HOLD, 0x14B, 0x14B, SH_ANY },    /* Left */
+    { "Turn right",                "turnright", UWI_HOLD, 0x14D, 0x14D, SH_ANY },    /* Right */
+    { "Run (held)",                "run",       UWI_RUN,  1,     0x2A,  SH_ANY },    /* Shift (left): ours, the run */
+    { "Run (second key)",          "run2",      UWI_RUN,  2,     0x36,  SH_ANY },    /* Shift (right) */
+    { "Jump",                      "jump",      UWI_HOLD, 0x2A,  0x39,  SH_ANY },    /* Space: jump (the port's Shift) */
+    { "Look up",                   "lookup",    UWI_HOLD, 0x148, 0x149, SH_ANY },    /* PageUp */
+    { "Look down",                 "lookdown",  UWI_HOLD, 0x150, 0x151, SH_ANY },    /* PageDown */
+    { "Tilt the view up",          "tiltup",    UWI_HOLD, 0x02,  0x02,  SH_ANY },    /* 1 */
+    { "Tilt the view down",        "tiltdown",  UWI_HOLD, 0x04,  0x04,  SH_ANY },    /* 3 */
+    { "Look straight ahead",       "centre",    UWI_HOLD, 0x4C,  0x4C,  SH_ANY },    /* keypad 5 */
+    { "#Acting", "", 0, 0, 0, 0 },
+    { "Use (talk, open, take)",    "use",       UWI_HOLD, 0x12,  0x12,  SH_ANY },    /* E */
+    { "Look",                      "look",      UWI_HOLD, 0x10,  0x26,  SH_ANY },    /* L: look (the port's Q) */
+    { "Fight mode",                "fight",     UWI_OURS, UWI_A_FIGHT, 0x2E, SH_ANY },   /* C: the original's F5 (the fight icon) */
+    { "Cast the spell",            "cast",      UWI_HOLD, 0x42,  0x10,  SH_ANY },    /* Q: cast (F8, PLAYER.C's try_cast) */
+    { "Track",                     "track",     UWI_HOLD, 0x43,  0x25,  SH_ANY },    /* K: track (F9, player_use_skill 2) */
+    { "Sleep",                     "sleep",     UWI_HOLD, 0x44,  0x2C,  SH_ANY },    /* Z: sleep (F10, player_key_sleep) */
+    { "Map",                       "map",       UWI_HOLD, 0x2C,  0x32,  SH_ANY },    /* M: the map (the port's Z) */
+    { "#Panels", "", 0, 0, 0, 0 },
+    { "Inventory",                 "inventory", UWI_OURS, UWI_A_PANEL, 0x17, SH_ANY },       /* I: our inventory panel */
+    { "Rune bag",                  "runes",     UWI_OURS, UWI_A_RUNES, 0x13, SH_ANY },       /* R: our panel on our rune page */
+    { "Character page",            "character", UWI_OURS, UWI_A_CHARACTER, 0x33, SH_ANY },   /* ,: our panel, its character sheet */
+    { "Statistics page",           "stats",     UWI_HOLD, 0x21,  0x21,  SH_ANY },    /* F */
+    { "Inventory: scroll down",    "invdown",   UWI_HOLD, 0x2F,  0x2F,  SH_ANY },    /* V */
+    { "Inventory: scroll up",      "invup",     UWI_HOLD, 0x30,  0x30,  SH_ANY },    /* B */
+    { "Read the compass",          "compass",   UWI_HOLD, 0x22,  0x22,  SH_ANY },    /* G */
+    { "Check the flasks",          "flasks",    UWI_HOLD, 0x23,  0x23,  SH_ANY },    /* H */
+    { "#Saving and loading", "", 0, 0, 0, 0 },
+    { "Save page",                 "save",      UWI_OURS, UWI_A_SAVE_PAGE, 0x3F, SH_ANY },   /* F5 */
+    { "Load page",                 "load",      UWI_OURS, UWI_A_LOAD_PAGE, 0x43, SH_ANY },   /* F9 */
+    { "#Picture and extras", "", 0, 0, 0, 0 },
+    { "Screenshot",                "shot",      UWI_OURS, UWI_A_SHOT, 0x19, SH_ANY },        /* P: to the clipboard */
+    { "Record 15 s of video",      "record",    UWI_OURS, UWI_A_RECORD, 0x19, SH_SHIFT },    /* Shift+P */
+    { "Ray tracing on / off",      "rt",        UWI_OURS, UWI_A_RT, 0x27, SH_ANY },          /* ; */
+    { "DLSS 5 on / off",           "dlss5",     UWI_OURS, UWI_A_DLSS5, 0x28, SH_ANY },       /* ' */
+    { "DLSS 5 style",              "style",     UWI_OURS, UWI_A_STYLE, 0x1B, SH_ANY },       /* ] */
+    { "Normal maps on / off",      "normals",   UWI_OURS, UWI_A_NORMALS, 0x40, SH_ANY },     /* F6 */
+    { "Object shadows on / off",   "shadows",   UWI_OURS, UWI_A_SHADOWS, 0x34, SH_ANY },     /* . */
+    { "Object shadows (second key)", "shadows2", UWI_OURS, UWI_A_SHADOWS, 0x18, SH_SHIFT },  /* Shift+O (O alone the game's) */
+    { "Full bright on / off",      "fullbright", UWI_OURS, UWI_A_FULLBRIGHT, 0x26, SH_SHIFT },   /* Shift+L */
+    { "AI log on / off",           "ailog",     UWI_OURS, UWI_A_AI_LOG, 0x26, SH_CTRL },     /* Ctrl+L */
 };
+#define NCMD ((int)(sizeof CMD / sizeof CMD[0]))
+static struct { int key, shift; } bind[sizeof CMD / sizeof CMD[0]];
+static int bind_made;
+static void bind_make(void)
+{
+    if (bind_made) return;
+    bind_made = 1;
+    for (int i = 0; i < NCMD; i++) bind[i].key = CMD[i].key, bind[i].shift = CMD[i].shift;
+}
+int uwi_cmd_count(void) { return NCMD; }
+const char *uwi_cmd_label(int i) { return i >= 0 && i < NCMD ? CMD[i].label : ""; }
+const char *uwi_cmd_id(int i) { return i >= 0 && i < NCMD ? CMD[i].id : ""; }
+void uwi_cmd_get(int i, int which, int *key, int *shift)   /* which 0: the key now; 1: the shipped one */
+{
+    bind_make();
+    if (i < 0 || i >= NCMD) { *key = 0, *shift = 0; return; }
+    *key = which ? CMD[i].key : bind[i].key, *shift = which ? CMD[i].shift : bind[i].shift;
+}
+/* command i's key (0: none); taken from any other command that had it (returned: that command, -1 none). how 1: as
+   loaded from the settings, nothing taken */
+int uwi_cmd_set(int i, int key, int shift, int how)
+{
+    int lost = -1;
+    bind_make();
+    if (i < 0 || i >= NCMD || CMD[i].label[0] == '#' || key < 0 || key >= 0x200) return -1;
+    if (key && !how)
+        for (int k = 0; k < NCMD; k++)
+            if (k != i && bind[k].key == key && bind[k].shift == shift) bind[k].key = 0, bind[k].shift = SH_ANY, lost = k;
+    bind[i].key = key, bind[i].shift = key ? shift : SH_ANY;
+    return lost;
+}
+void uwi_cmd_defaults(void) { bind_made = 0; bind_make(); }
 
 static UwiOut O;
 static struct { unsigned char owner, action; unsigned short code; } kp[NKEYS];   /* per physical key */
 static unsigned char bown[3];                                                    /* per button: its owner */
 static int last_x, last_y;
-static int w_held, run_held, walk_sent;   /* w_held: bit 0 W, bit 1 Up; run_held: bit 0 left, bit 1 right Shift */
+static int w_held, run_held, walk_sent;   /* w_held: bit 0 the walk's key, bit 1 its second; run_held: the run's two */
+static int shift_phys;                    /* the keyboard's Shift keys held (bit 0 left, bit 1 right): a command's Shift+ */
 
 static void gkey(int code, int down) { if (O.game_key) O.game_key(code, down); }
 static void gptr(int type, int x, int y, unsigned b) { if (O.game_pointer) O.game_pointer(type, (float)x, (float)y, b); }
@@ -83,7 +139,13 @@ static int world_on(const UwiState *s) { return s->display_ours && s->screen == 
 static int centred_on(const UwiState *s) { return s->screen == UWI_PS_MAP || s->screen == UWI_PS_CONV || s->screen == UWI_PS_TEXT; }
 static int in_key_table(int c)
 {
-    for (unsigned i = 0; i < sizeof keys / sizeof keys[0]; i++) if (keys[i].key == c) return 1;
+    bind_make();
+    for (int i = 0; i < NCMD; i++) if (bind[i].key == c) return 1;
+    return 0;
+}
+static int shipped_key(int c)   /* some command's key as shipped, with no modifier */
+{
+    for (int i = 0; i < NCMD; i++) if (CMD[i].key == c && CMD[i].shift == SH_ANY) return 1;
     return 0;
 }
 /* a held press its owner may keep in this state (only WORLD and GAME presses are taken back); c the key (-1 a button).
@@ -95,8 +157,6 @@ static int keeps(int owner, const UwiState *s, int c)
     if (owner == UWI_GAME) return !s->menu && !s->settings && !(c >= 0 && world_on(s) && in_key_table(c));
     return 1;
 }
-
-static int bit_of(int code) { return code == 0x11 ? 1 : code == 0x148 ? 2 : code == 0x2A ? 1 : code == 0x36 ? 2 : 0; }
 
 /* a held key let go through its owner; afterwards it has none (its physical release then sends nothing) */
 static void release_key(int c)
@@ -110,8 +170,8 @@ static void release_key(int c)
         switch (kp[c].action) {
         case UWI_HOLD: gkey(kp[c].code, 0); break;
         case UWI_OURS: if (O.our_action) O.our_action(kp[c].code, 0); break;
-        case UWI_WALK: w_held &= ~bit_of(c); walk_update(); break;
-        case UWI_RUN: run_held &= ~bit_of(c); walk_update(); break;
+        case UWI_WALK: w_held &= ~kp[c].code; walk_update(); break;
+        case UWI_RUN: run_held &= ~kp[c].code; walk_update(); break;
         default: break;   /* UWI_TAP: its up went with its down */
         }
         break;
@@ -136,6 +196,8 @@ void uwi_init(const UwiOut *out)
     memset(bown, 0, sizeof bown);
     last_x = last_y = 0;
     w_held = run_held = walk_sent = 0;
+    shift_phys = 0;
+    bind_make();
 }
 
 void uwi_state(const UwiState *s)
@@ -151,6 +213,7 @@ void uwi_release_all(void)
     for (int c = 0; c < NKEYS; c++) release_key(c);
     for (int i = 0; i < 3; i++) release_button(i);
     w_held = run_held = walk_sent = 0;
+    shift_phys = 0;
 }
 
 int uwi_look_wanted(const UwiState *s)
@@ -163,13 +226,14 @@ int uwi_owner_of_key(int code) { return code >= 0 && code < NKEYS ? kp[code].own
 
 static int find_key(const UwiState *s, int c)
 {
-    int shift = run_held != 0, ctrl = s->ctrl_down != 0;   /* Shift: ours only (the old shift_held); Ctrl: the live keyboard's */
-    for (unsigned i = 0; i < sizeof keys / sizeof keys[0]; i++) {
-        if (keys[i].key != c) continue;
-        if (keys[i].shift == SH_CTRL && !ctrl) continue;
-        if (keys[i].shift == SH_SHIFT && !shift) continue;
-        return (int)i;
-    }
+    int shift = shift_phys != 0, ctrl = s->ctrl_down != 0;   /* Shift: the keys as we saw them; Ctrl: the live keyboard's */
+    bind_make();
+    for (int pass = 0; pass < 2; pass++)   /* a command with a modifier before the key's plain one */
+        for (int i = 0; i < NCMD; i++) {
+            if (bind[i].key != c || CMD[i].label[0] == '#') continue;
+            if (pass == 0 ? !((bind[i].shift == SH_CTRL && ctrl) || (bind[i].shift == SH_SHIFT && shift)) : bind[i].shift != SH_ANY) continue;
+            return i;
+        }
     return -1;
 }
 
@@ -177,6 +241,7 @@ void uwi_key(const UwiState *s, int c, int down, int repeat)
 {
     if (c < 0 || c >= NKEYS) return;
     uwi_state(s);
+    if ((c == 0x2A || c == 0x36) && !repeat) shift_phys = down ? shift_phys | (c == 0x2A ? 1 : 2) : shift_phys & ~(c == 0x2A ? 1 : 2);
     if (!down) { release_key(c); return; }   /* to its press's owner; none: nothing */
     if (repeat) {   /* to a handler that owns the press, as down=2; a GAME or WORLD press's repeats (the walk's too,
                        as the old our_keys swallowed them) go nowhere: the game's keyqueue repeats a held code itself */
@@ -218,16 +283,19 @@ void uwi_key(const UwiState *s, int c, int down, int repeat)
     }
     int e;
     if (world_on(s) && (e = find_key(s, c)) >= 0) {
-        kp[c].owner = UWI_WORLD, kp[c].action = (unsigned char)keys[e].action, kp[c].code = (unsigned short)keys[e].code;
-        switch (keys[e].action) {
-        case UWI_HOLD: gkey(keys[e].code, 1); break;
-        case UWI_TAP: gkey(keys[e].code, 1), gkey(keys[e].code, 0); break;
-        case UWI_OURS: if (O.our_action) O.our_action(keys[e].code, 1); break;
-        case UWI_WALK: w_held |= bit_of(c); walk_update(); break;
-        case UWI_RUN: run_held |= bit_of(c); walk_update(); break;
+        kp[c].owner = UWI_WORLD, kp[c].action = (unsigned char)CMD[e].action, kp[c].code = (unsigned short)CMD[e].code;
+        switch (CMD[e].action) {
+        case UWI_HOLD: gkey(CMD[e].code, 1); break;
+        case UWI_TAP: gkey(CMD[e].code, 1), gkey(CMD[e].code, 0); break;
+        case UWI_OURS: if (O.our_action) O.our_action(CMD[e].code, 1); break;
+        case UWI_WALK: w_held |= CMD[e].code; walk_update(); break;
+        case UWI_RUN: run_held |= CMD[e].code; walk_update(); break;
         }
         return;
     }
+    /* a key that was some command's as shipped and has none now (the player gave that command another key, or this
+       key's command went to another): nothing, never the game's own meaning of it. No owner: its release is nothing */
+    if (world_on(s) && shipped_key(c) && !in_key_table(c)) return;
     if (centred_on(s) && handler(UWI_CENTRED, UWI_KEY, c, 1, 0, 0)) { kp[c].owner = UWI_CENTRED; return; }
     kp[c].owner = UWI_GAME;
     gkey(c, 1);

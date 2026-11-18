@@ -20,7 +20,7 @@ fx.WORK = os.path.join(fx.ROOT, 'work', 'menucheck')
 os.makedirs(fx.WORK, exist_ok=True)
 LONG = 'A-Very-Long-Language-Model-Name-For-The-Menu-Check-7B-Instruct-Q4_K_M'   # 69 characters
 MODEL = 'X:\\none\\' + LONG + '.gguf'
-HEADS = ['Game', 'Display', 'Graphics', 'Effects', 'Sound', 'Sound tuning', 'Controls', 'AI']
+HEADS = ['Game', 'Display', 'Graphics', 'Sprites', 'Effects', 'Sound', 'Sound tuning', 'Controls', 'AI']
 ESC, UP, DOWN, RIGHT = 0x01, 0x148, 0x150, 0x14D
 LEFT = 0x14B
 

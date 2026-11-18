@@ -54,7 +54,7 @@ for d in ('dlss', 'bin', 'roms', 'fonts', 'freefonts') + (('llm',) if '--llm' in
     if os.path.isdir(os.path.join(OLD, d)): tree(os.path.join(OLD, d), os.path.join(OUT, d))
 # our own files: uwr\ (dist\UW1\data's own, not the extracted copies), and the user's home
 OURS = os.path.join(OUT, 'uwr')
-for d in ('laigter', 'upscaled', 'sfx', 'lights'):
+for d in ('laigter', 'upscaled', 'sfx', 'lights', 'newsprites'):
     if os.path.isdir(os.path.join(OLD, 'data', d)): tree(os.path.join(OLD, 'data', d), os.path.join(OURS, d))
 # the player's own (settings, keys, the home with its saves): given once and never written over, the flat folder's are
 # the player's from then on. The home is taken only when the flat folder has none yet. Its uw1port.cfg goes without

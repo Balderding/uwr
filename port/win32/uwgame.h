@@ -55,6 +55,20 @@ typedef struct {
     int effect;                  /* 0 none, 1 a flash, 2 a fade since the last frame drawn */
 } UwgView;
 int uwg_gameview(UwgView *out);  /* 0 before the first frame drawn */
+/* the gate (2026-11-17): the game's thread waits at the first frame it draws of a level until our display has had
+   that level's scene built. uwg_scene: the display's word (level: the level it has done, -1 no change; building 1
+   while it builds); uwg_scene_beat: the display is alive (each of its frames); without a beat for a second the
+   gate lets the game through */
+void uwg_scene(int level, int building);
+void uwg_scene_beat(void);
+int uwg_scene_level(void);
+/* the gate (2026-11-17): the game's thread waits at the first frame it draws of a level until our display has had
+   that level's scene built. uwg_scene: the display's word (level: the level it has done, -1 no change; building 1
+   while it builds); uwg_scene_beat: the display is alive (each of its frames); without a beat for a second the
+   gate lets the game through */
+void uwg_scene(int level, int building);
+void uwg_scene_beat(void);
+int uwg_scene_level(void);
 void uwg_gameview_replace(int on); /* the game's rasterization left out (1) or drawn (0) */
 #endif
 

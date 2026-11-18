@@ -15,4 +15,6 @@ dist/
 external/llama.cpp/
 release/
 exhumed-original/
+tools/sprite3d/out/
+tools/sprite3d/gui/*.res
 HANDOFF*.md

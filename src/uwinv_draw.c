@@ -40,9 +40,10 @@ static void capital(char *d, const char *s, size_t n)
 static void thing_in(const UwiThing *t, int x, int y, int w, int h)
 {
     const Pic *pic;
+    int div = 1;
     if (t->item < 0) return;
-    pic = ui_pic("sprites\\objects", t->item);
-    if (pic) ui_draw(pic, x + (w - pic->w) / 2, y + (h - pic->h) / 2, 1);
+    pic = ui_item_pic(t->item, &div);   /* (ours when the Sprites tab says so: twice the detail in the same place) */
+    if (pic) ui_draw_fine(pic, x + (w - pic->w / div) / 2, y + (h - pic->h / div) / 2, div);
     if (t->qty > 1) {
         char q[12];
         snprintf(q, sizeof q, "%d", t->qty);

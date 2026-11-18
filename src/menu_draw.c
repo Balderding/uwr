@@ -38,6 +38,60 @@ int md_click(int ui_ok, int mx, int my, int down)
     return 1;
 }
 
+/* a row's slider (the Fog and smoke page, 2026-11-17, the user: "esc menu sliders and inputs"): a track between the
+ * row's label and its number, the part up to the value filled, a knob at the value. md_sliders gives each row's place
+ * along its track before md_rows (0..1; below 0, or a row past n: no slider; n 0: none, as every other page). The
+ * tracks as last drawn (overlay pixels) are kept for the pointer (md_slider). */
+static float md_frac[160];
+static int md_nfrac, md_sx0[160], md_sx1[160], md_sy[160];   /* (sx1 <= sx0: the row's slider is not on the screen) */
+void md_sliders(const float *frac, int n)
+{
+    md_nfrac = frac && n > 0 ? (n > 160 ? 160 : n) : 0;
+    for (int i = 0; i < md_nfrac; i++) md_frac[i] = frac[i];
+}
+/* the pointer (window pixels) and the sliders. row < 0: the row whose track is under the pointer, or -1; row >= 0 (a
+ * drag under way): that row, or -1 when its slider is not shown. *frac: the place along the track at mx (0..1) */
+int md_slider(int mx, int my, int row, float *frac)
+{
+    const int s = 3;   /* (the menu is drawn at 3x) */
+    int px = mx / s, py = my / s;
+    if (row < 0)
+        for (int r = 0; r < md_nfrac && row < 0; r++)
+            if (md_sx1[r] > md_sx0[r] && px >= md_sx0[r] - 3 && px < md_sx1[r] + 3 && py >= md_sy[r] && py < md_sy[r] + 14) row = r;
+    if (row < 0 || row >= md_nfrac || md_sx1[row] <= md_sx0[row]) return -1;
+    if (frac) {
+        float f = (float)(mx - md_sx0[row] * s - 3 * s / 2) / (float)((md_sx1[row] - md_sx0[row] - 3) * s);
+        *frac = f < 0 ? 0 : f > 1 ? 1 : f;
+    }
+    return row;
+}
+
+/* the tabs (2026-11-17, the user: "a tab for each section of the esc menu to make it easier to get to the option"): a
+ * strip of names under the title, the open one marked in gold; the rows given to md_rows are the open tab's. md_tabs
+ * gives the names before md_rows (n 0: no strip, as the save and load pages); the names' boxes as last drawn (overlay
+ * pixels) are kept for the pointer (md_tab_at). Names that do not fit one line go on to a second. */
+#define MD_TABS 12
+static char md_tab_name[MD_TABS][32];
+static int md_tab_n, md_tab_open, md_tab_box[MD_TABS][4];   /* x, y, w, h (w 0: not drawn) */
+void md_tabs(const char *const *names, int n, int open)
+{
+    int was_n = md_tab_n, was = md_tab_open;
+    md_tab_n = names && n > 0 ? (n > MD_TABS ? MD_TABS : n) : 0;
+    for (int i = 0; i < md_tab_n; i++) snprintf(md_tab_name[i], sizeof md_tab_name[i], "%s", names[i] ? names[i] : "");
+    for (int i = md_tab_n; i < MD_TABS; i++) md_tab_box[i][2] = 0;
+    md_tab_open = open;
+    if (md_tab_n != was_n || open != was) menu_last_n = -1;   /* another tab: its list from the top */
+}
+/* the tab whose name is under the pointer (window pixels), or -1 */
+int md_tab_at(int mx, int my)
+{
+    int px = mx / 3, py = my / 3;   /* (the menu is drawn at 3x) */
+    for (int i = 0; i < md_tab_n; i++)
+        if (md_tab_box[i][2] > 0 && px >= md_tab_box[i][0] && px < md_tab_box[i][0] + md_tab_box[i][2] && py >= md_tab_box[i][1] &&
+            py < md_tab_box[i][1] + md_tab_box[i][3]) return i;
+    return -1;
+}
+
 /* a text fitted into room pixels (smooth text): drawn smaller first (to three quarters), then its middle left out
  * ("..."), the start and the end kept (a model's quantisation is at its end); out the text to draw, *em_out its size */
 static void menu_fit(const char *v, int face, int em, int room, char *out, int n, int *em_out)
@@ -123,8 +177,32 @@ int md_rows(unsigned char *ui_buf, int ui_w, int ui_h, bool smooth, const char *
     const int s = o->scale;
     /* 300 wide (216 until 2026-11-14; never wider than the window); as many rows as fit (the rest scrolled: the
      * wheel, the scrollbar on the right, and the chosen row always in view) */
-    int vis = (o->h - 40 - 30 - FOOT) / ROW;
+    /* the tabs' strip: each name's box as wide as its text, a second line begun when a line is full */
+    int tab_w[MD_TABS], tab_line[MD_TABS], tab_lines = 0, tabh = 0;
+    const int em_tab = 14 * s * 6 / 10 * 17 / 20;
+    if (md_tab_n) {
+        int room = (o->w - 8 < 300 ? o->w - 8 : 300) - 10, used = 0, all = 0, widest = 0;
+        for (int i = 0; i < md_tab_n; i++) {
+            char l[224];
+            if (smooth) tab_w[i] = (st_width(ST_SEMIBOLD, em_tab, md_tab_name[i]) + s - 1) / s + 8;
+            else menu_fit_orig(md_tab_name[i], 4096, l, sizeof l), tab_w[i] = ui_text_width(FONT_SMALL, l) + 8;
+            all += tab_w[i] + 1, widest = tab_w[i] > widest ? tab_w[i] : widest;
+        }
+        if (all > room) {   /* more than a line: the lines made about as long as each other, not one full and one short */
+            int even = all / ((all + room - 1) / room) + widest / 2;
+            if (even < room) room = even;
+        }
+        tab_lines = 1;
+        for (int i = 0; i < md_tab_n; i++) {
+            if (used && used + tab_w[i] > room) tab_lines++, used = 0;
+            tab_line[i] = tab_lines - 1, used += tab_w[i] + 1;
+        }
+        tabh = tab_lines * 13 + 3;
+    }
+    const int TOP = 22 + tabh;   /* the rows begin this far under the panel's top: the title, then the tabs */
+    int vis = (o->h - 40 - 30 - FOOT - tabh) / ROW;
     if (vis < 3) vis = 3;
+    const int panel_rows = md_tab_n || vis <= n ? vis : n;   /* (with tabs the panel keeps its full height: the strip stays where it is from tab to tab) */
     if (vis > n) vis = n;
     bool bar = n > vis;
     if (n != menu_last_n) menu_top = 0, menu_last_sel = -1, menu_last_n = n;   /* another page */
@@ -136,11 +214,11 @@ int md_rows(unsigned char *ui_buf, int ui_w, int ui_h, bool smooth, const char *
     }
     int w = 300;
     if (w > o->w - 8) w = o->w - 8;
-    int h = 22 + vis * ROW + 4 + FOOT, x = (o->w - w) / 2, y = (o->h - h) / 2, hit = -1;
+    int h = TOP + panel_rows * ROW + 4 + FOOT, x = (o->w - w) / 2, y = (o->h - h) / 2, hit = -1;
     if (y < 0) y = 0;
     int px = mx / o->scale, py = my / o->scale;
     /* the scrollbar: its track right of the rows, the thumb its share of the list */
-    int tx = x + w - 10, ty = y + 22, th = vis * ROW - 1, tw = 5;
+    int tx = x + w - 10, ty = y + TOP, th = vis * ROW - 1, tw = 5;
     if (bar && menu_drag) {            /* the thumb dragged: the list follows the pointer */
         int span = th - menu_thumb_h;
         menu_top = span > 0 ? (int)((float)(py - menu_drag_dy - ty) / (float)span * (float)(n - vis) + 0.5f) : 0;
@@ -158,6 +236,21 @@ int md_rows(unsigned char *ui_buf, int ui_w, int ui_h, bool smooth, const char *
         ui_fill(x, y, w, 1, 120, 96, 40, 255), ui_fill(x, y + h - 1, w, 1, 120, 96, 40, 255);
         ui_fill(x, y, 1, h, 120, 96, 40, 255), ui_fill(x + w - 1, y, 1, h, 120, 96, 40, 255);
     } else ui_leather(x, y, w, h);
+    for (int i = 0; i < md_tab_n; i++) {   /* the tabs: the open one lighter with a gold bar under it, the one under the pointer lit */
+        int line_w = -1, cx = 0;
+        for (int k = 0; k < md_tab_n; k++) if (tab_line[k] == tab_line[i]) { if (k < i) cx += tab_w[k] + 1; line_w += tab_w[k] + 1; }
+        int bx = x + (w - line_w) / 2 + cx, by = y + 21 + tab_line[i] * 13, bw = tab_w[i], bh = 12;
+        bool open = i == md_tab_open, hot = px >= bx && px < bx + bw && py >= by && py < by + bh;
+        ui_fill(bx, by, bw, bh, open ? 96 : hot ? 72 : 44, open ? 74 : hot ? 54 : 30, open ? 26 : hot ? 28 : 18, 255);
+        if (open) ui_fill(bx, by + bh - 2, bw, 2, 255, 220, 60, 255);
+        if (!smooth) {
+            char l[224];
+            menu_fit_orig(md_tab_name[i], 4096, l, sizeof l);
+            ui_text(FONT_SMALL, l, bx + 4, by + 3, open ? 255 : 207, open ? 220 : 207, open ? 60 : 223);
+        }
+        md_tab_box[i][0] = bx, md_tab_box[i][1] = by, md_tab_box[i][2] = bw, md_tab_box[i][3] = bh;
+    }
+    if (md_tab_n) ui_fill(x + 6, y + 21 + tab_lines * 13, w - 12, 1, 120, 96, 40, 160);   /* a rule under them */
     if (bar) {
         ui_fill(tx, ty, tw, th, 40, 28, 16, 200);                                           /* the track */
         bool on = menu_drag || (px >= tx - 2 && px < tx + tw + 2 && py >= thumb_y && py < thumb_y + thumb_h);
@@ -194,8 +287,9 @@ int md_rows(unsigned char *ui_buf, int ui_w, int ui_h, bool smooth, const char *
                                M[r].vw = ui_text_width(FONT_SMALL, M[r].drawn) * s;
         }
     }
+    for (int r = 0; r < 160; r++) md_sx0[r] = md_sx1[r] = 0;
     for (int r = menu_top; r < menu_top + vis && r < n && r < 160; r++) {
-        int ry = y + 22 + (r - menu_top) * ROW;
+        int ry = y + TOP + (r - menu_top) * ROW;
         bool head = labels[r][0] == '#';
         if (head) {
             ui_fill(x + 6, ry + 13, rw - 4, 1, 120, 96, 40, 160);   /* a rule under the heading */
@@ -214,9 +308,25 @@ int md_rows(unsigned char *ui_buf, int ui_w, int ui_h, bool smooth, const char *
             ui_text(FONT_SMALL, l, x + 9, ry + 5, 207, 207, 223);
             if (M[r].drawn[0]) ui_text(FONT_SMALL, M[r].drawn, x + 4 + rw - 6 - M[r].vw / s, ry + 5, 255, 220, 60);
         }
+        if (r < md_nfrac && md_frac[r] >= 0) {   /* its slider: the same columns on every row, less where the label or the number is wider */
+            int x0 = x + 4 + rw * 48 / 100, x1 = x + 4 + rw - 6 - 40;
+            int l1 = x + 9 + (M[r].lw + s - 1) / s + 5, v0 = x + 4 + rw - 6 - (M[r].vw + s - 1) / s - 5;
+            if (x0 < l1) x0 = l1;
+            if (x1 > v0) x1 = v0;
+            if (x1 - x0 >= 24) {
+                float f = md_frac[r] > 1 ? 1 : md_frac[r];
+                int kx = x0 + (int)(f * (float)(x1 - x0 - 3) + 0.5f);
+                bool on = r == sel || r == hit;
+                ui_fill(x0, ry + 5, x1 - x0, 4, 120, 96, 40, 255);                 /* the track: dark, a gold line round it */
+                ui_fill(x0 + 1, ry + 6, x1 - x0 - 2, 2, 26, 16, 10, 255);
+                ui_fill(x0 + 1, ry + 6, kx - x0, 2, 210, 170, 40, 255);            /* the part up to the value, gold */
+                ui_fill(kx, ry + 2, 3, 10, on ? 255 : 232, on ? 220 : 190, on ? 60 : 40, 255);   /* the knob */
+                md_sx0[r] = x0, md_sx1[r] = x1, md_sy[r] = ry;
+            }
+        }
     }
     /* the foot: the row chosen or under the pointer: its value in full, and what it does */
-    int fr = hit >= 0 ? hit : sel, fy = y + 22 + vis * ROW + 3;
+    int fr = hit >= 0 ? hit : sel, fy = y + TOP + panel_rows * ROW + 3;
     char foot1[224] = "", foot2[FOOT_LINES][224];
     int fe1 = em_foot, fe2 = em_foot * 10 / 11, nf2 = 0;
     ui_fill(x + 6, fy - 1, w - 12, 1, 120, 96, 40, 160);
@@ -258,8 +368,12 @@ int md_rows(unsigned char *ui_buf, int ui_w, int ui_h, bool smooth, const char *
 #define SMT(X, Y, FACE, EM, T, RGB) (st_draw(d, ui_w, ui_h, (X) + 2, (Y) + 2, FACE, EM, T, 0x000000), st_draw(d, ui_w, ui_h, X, Y, FACE, EM, T, RGB))
         int et = em * 5 / 4, hh = st_height(ST_REGULAR, em);
         SMT(x * s + w * s / 2 - st_width(ST_SEMIBOLD, et, ttl) / 2, y * s + (22 * s - st_height(ST_SEMIBOLD, et)) / 2, ST_SEMIBOLD, et, ttl, 0xE8BE28);
+        for (int i = 0; i < md_tab_n; i++)   /* the tabs' names, each in the middle of its box */
+            SMT(md_tab_box[i][0] * s + (md_tab_box[i][2] * s - st_width(ST_SEMIBOLD, em_tab, md_tab_name[i])) / 2,
+                md_tab_box[i][1] * s + (10 * s - st_height(ST_SEMIBOLD, em_tab)) / 2, ST_SEMIBOLD, em_tab, md_tab_name[i],
+                i == md_tab_open ? 0xFFDC3C : 0xD8D8E4);
         for (int r = menu_top; r < menu_top + vis && r < n && r < 160; r++) {
-            int ry = (y + 22 + (r - menu_top) * ROW) * s, ty2 = ry + (14 * s - hh) / 2;
+            int ry = (y + TOP + (r - menu_top) * ROW) * s, ty2 = ry + (14 * s - hh) / 2;
             if (labels[r][0] == '#') { SMT((x + 7) * s, ty2 - s, ST_SEMIBOLD, em, labels[r] + 1, 0xE8BE28); continue; }
             SMT((x + 9) * s, ty2, ST_SEMIBOLD, em, labels[r], 0xE4E4F0);
             if (M[r].drawn[0])
@@ -279,6 +393,7 @@ int md_rows(unsigned char *ui_buf, int ui_w, int ui_h, bool smooth, const char *
         static unsigned last;
         if (dump && *dump) {
             unsigned hsh = 2166136261u ^ (unsigned)sel ^ (unsigned)menu_top << 8 ^ (unsigned)n << 16 ^ (unsigned)smooth << 30;
+            hsh ^= (unsigned)md_tab_open << 24 ^ (unsigned)md_tab_n << 4;
             for (int r = 0; r < n && r < 160; r++) {
                 for (const char *c = labels[r]; *c; c++) hsh = (hsh ^ (unsigned char)*c) * 16777619u;
                 for (const char *c = values && values[r] ? values[r] : ""; *c; c++) hsh = (hsh ^ (unsigned char)*c) * 16777619u;
@@ -286,12 +401,16 @@ int md_rows(unsigned char *ui_buf, int ui_w, int ui_h, bool smooth, const char *
             if (hsh != last) {
                 FILE *f = fopen(dump, "w");
                 last = hsh;
+                if (md_tab_n && md_tab_open >= 0 && md_tab_open < md_tab_n) fprintf(stderr, "menu: tab %d of %d %s\n", md_tab_open, md_tab_n, md_tab_name[md_tab_open]);
                 if (sel >= 0 && sel < n)
                     fprintf(stderr, "menu: sel %d head %d shown %d %s = %s\n", sel, labels[sel][0] == '#', sel >= menu_top && sel < menu_top + vis,
                             labels[sel], values && values[sel] ? values[sel] : "");
                 if (f) {
                     fprintf(f, "panel\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%s\t%s\n", x * s, y * s, w * s, h * s, ui_w, ui_h,
                             smooth ? "smooth" : "original", smooth ? st_font_name() : "FONT_SMALL", title);
+                    for (int i = 0; i < md_tab_n; i++)   /* a line a tab: its number, 1 the open one, its name, its box (window pixels) */
+                        fprintf(f, "tab\t%d\t%d\t%s\t%d\t%d\t%d\t%d\n", i, i == md_tab_open, md_tab_name[i], md_tab_box[i][0] * s,
+                                md_tab_box[i][1] * s, md_tab_box[i][2] * s, md_tab_box[i][3] * s);
                     for (int r = 0; r < n && r < 160; r++)
                         fprintf(f, "row\t%d\t%d\t%d\t%s\t%s\t%s\t%d\t%d\t%d\n", r, labels[r][0] == '#', r >= menu_top && r < menu_top + vis,
                                 labels[r] + (labels[r][0] == '#'), values && values[r] ? values[r] : "", M[r].drawn, M[r].vw, M[r].room, M[r].lw);
