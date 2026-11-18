@@ -38,8 +38,10 @@ ray tracing, upscaled textures, relief maps and the effects on. Click a picture 
 
 ## Trying it
 
-- **There is no download yet.** This repository is the source only; a ready-to-run package for Windows and Linux
-  is being prepared (`tools/makepublic.py`). It will hold our programs only: nothing from the game.
+- **The download** is on the [releases page](https://github.com/Balderding/uwr/releases): one zip for Windows and
+  Linux with our programs only, nothing from the game. Unpack it, copy your game into its `game` folder and start
+  `play.cmd` (Windows) or `sh uwr.sh` (Linux); `readme.txt` in the zip has the steps. The first one is a preview
+  of 2026-11-17.
 - **You need your own copy of Ultima Underworld: The Stygian Abyss.** The game reads its data files from it. The
   Roland MT-32 sound also needs your own ROM files.
 - **Building it yourself** needs LLVM clang, the Underworld Exhumed source and its Exhume tools. The build scripts
@@ -56,12 +58,20 @@ ray tracing, upscaled textures, relief maps and the effects on. Click a picture 
 - **Walls and floors.** The game's own textures, or upscaled to 256 / 512 pixels in the same colours; normal maps,
   joint shadows (AO) and relief shadows, with maps made at each texture size.
 - **Effects.** Particles, decals, water, firelight with the eye's adaptation.
+- **Fog and smoke.** Simulated, not painted: the air round you is a grid of cells stepped many times a second
+  (MacCormack advection, vorticity confinement, buoyancy from the air's temperature). Cold damp air lies over
+  water and creeps across the floor, smoke climbs from campfires and torches and gathers under the ceiling, and
+  you, the creatures, doors and blasts push it aside. It is lit by every light through ray-traced shadows, with
+  its own shadowing and the droplets' scattering. Vulkan renderer; its own tab of sliders in the Esc menu.
+  (In the download now; its source comes with the next snapshot here.)
 - **Sound.** The Roland MT-32's own voices, placed in space (OpenAL Soft, headphone 3D); walls and doors muffle,
   rooms ring by their size, sound comes round corners; with Steam Audio: ray-traced echoes through the level's
   shape, occlusion and transmission by each surface's material, pathing (a hidden sound arrives along the ways
   through the level, from the doorway it comes through) and binaural rendering; footsteps by the floor.
 - **Interface.** A full-screen 3D view with our own HUD, character sheet, inventory, automap and conversation
-  screen, one smooth font, mouse-look and modern keys. The 1992 screen as it was is one menu row away.
+  screen, one smooth font, mouse-look and modern keys. The 1992 screen as it was is one menu row away. The Esc
+  menu has a tab for each group of options, each with presets, a Default settings row, and sliders that take a
+  typed number.
 - **Creatures.** Three AI levels. The game's numbers (hit points, damage, speed, every roll) are the same at all
   three; only what a creature chooses changes, and it acts only on what it saw, heard or was told by its kin.
   - **Original**: the game as shipped.

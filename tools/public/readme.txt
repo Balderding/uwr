@@ -1,7 +1,7 @@
 uwr: Ultima Underworld: The Stygian Abyss (1992) on Windows and Linux
 ======================================================================
 
-Preview of 2026-11-16.  Source, pictures and news: https://github.com/Balderding/uwr
+Preview of 2026-11-17.  Source, pictures and news: https://github.com/Balderding/uwr
 
 uwr plays the 1992 game by its own rules, with a new renderer, sound and interface. Every new part has a switch in
 the Esc menu, back to the 1992 screen as it was.
@@ -16,6 +16,7 @@ Copy these from your own Ultima Underworld (the folder that holds UW.EXE) into t
     UW.EXE    CRIT\    CUTS\    DATA\    SOUND\
 
 More in game\put-your-game-here.txt.
+No copy yet? The game is still sold as a download (for example on GOG, together with Ultima Underworld II).
 
 2. Start
 --------
@@ -26,11 +27,29 @@ The first start takes about ten seconds longer: the game makes its relief maps (
 sprites) from your copy's pictures, into data\laigter\. That happens once.
 
 Everything is switched on as it comes: the Vulkan renderer with ray tracing, DLSS and HDR, the effects (particles,
-decals, water), and the 3D sound with room acoustics. What your machine cannot do is left out by the game itself, and
+decals, water, simulated fog and smoke), and the 3D sound with room acoustics. What your machine cannot do is left out by the game itself, and
 each has its own row in the Esc menu to turn it off (data\settings.txt keeps your choices).
 There are no saved games in the package: the game starts at its menu.
 
 Saved games and settings go in home\. F11 opens the settings. Esc opens the menu. The keys are in keybindings.txt.
+
+The Esc menu
+------------
+The menu has a tab for each group of options: Game, Display, Graphics, Effects, Fog and smoke, Sound, Sound tuning,
+Controls and AI (Tab or Page Down: the next tab; Shift+Tab or Page Up: the one before). Each tab has a Preset row
+and a Default settings row; change any row and the preset reads Custom. The line at the foot of the menu says
+what the row under the pointer does. Every row is explained in esc-menu.md.
+The Display row is the one switch between everything of ours and the 1992 game as it was.
+
+If something goes wrong
+-----------------------
+- Everything the game prints goes to home\logs\uwr.log (start it with play.cmd for that). Send that file with a
+  report: https://github.com/Balderding/uwr/issues
+- Too slow? Esc, the Graphics tab: its Preset row has faster settings; the Fog and smoke tab has a Faster preset
+  and a main switch.
+- Known in this preview: going from one level to another takes a few seconds, and creatures may already move and
+  be heard before the new level shows; a crash at a level change has been seen with the 3D sound on. Save before
+  you take a stair. Both are being put right for the next download.
 
 3. Roland MT-32 music (optional)
 --------------------------------
@@ -55,6 +74,7 @@ What this preview leaves out
 In the folder
 -------------
   uwr.exe, play.cmd       the game, and its starter
+  readme.txt, readme-linux.txt, esc-menu.md, keybindings.txt    the directions
   uwview_vk.dll           the Vulkan renderer (the default); uwview.dll the Direct3D 12 one (Esc, Renderer)
   mt32emu.dll             Munt, the Roland emulator (LGPL)
   bin\                    OpenAL Soft and Steam Audio, for the 3D sound, with their licences
