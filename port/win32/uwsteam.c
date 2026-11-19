@@ -1,4 +1,5 @@
-/* uwsteam.c: Steam Audio's reflections for our acoustics (uwsteam.h; the acoustics plan's Task 7, "Acoustics: High").
+/* uwsteam.c: Steam Audio for our acoustics, "Acoustics: High" (uwsteam.h): each sound's echoes from the level's real
+   shape, and on headphones the sound itself (binaural, occlusion and transmission, pathing round corners).
    phonon.dll (Steam Audio 4.8.1, Valve, Apache 2.0) is never linked: loaded from the folder given, its functions
    taken by GetProcAddress; phonon.h (port\win32, the SDK's own) gives the types only.
 
@@ -9,6 +10,14 @@
    - uwst_mix (the audio's side): a block of each voice's samples through its convolution with the response last
      simulated for it, all into one mixer, the mixer's first-order ambisonics decoded for the listener's facing.
    - the rest (uwst_level, uwst_listener, uwst_begin, uwst_end) leave word under one lock.
+   - the bake of the level's sound paths (bake_worker): a thread of its own, started and reaped by uwst_simulate.
+
+   The locks: S.lock guards the word left for the simulation and every voice's fields the audio's side shares;
+   S.scene_lock keeps a change of the scene or of the probes away from a direct run (the audio's side only tries it,
+   and skips the run when it is taken). The log takes neither (UWPORT_DIRECT_LOG's lines are written under S.lock).
+
+   The log: lines through rlog with the tag "steam"; the "fx: acoustics high ..." lines tools\fxcheck.py and
+   tests\uwsteam_test.c look for stay plain stderr lines, word for word.
 
    Frames: ours is the renderer's (tiles; x east, y up, z north); Steam Audio's is metres, right-handed, y up, -z
    ahead: (x, y, -z) * tile_m. */
@@ -18,26 +27,29 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#ifndef _WIN32
+#include <unistd.h>   /* (sysconf: st_threads) */
+#endif
 #include "phonon.h"
 #include "uwsteam.h"
+#include "rlog.h"
 
 #define N 64
 #define STEP 0.25f
 #define CEIL 4.0f
-/* the dials (2026-11-16, the user: every fixed number of the sound a setting; uwsteam.h's uwst_length / _scatter /
-   _ear, from settings.txt through uwaudio.c). length: the longest ring, seconds (the response's size: taken when
+/* the dials (every number of the sound a setting; uwsteam.h's uwst_length / _scatter / _ear, from settings.txt
+   through uwaudio.c). length: the longest ring, seconds (the response's size: taken when
    Steam Audio starts). scatter: our surfaces are rough-hewn, a quarter of a bounce goes every way (a guess, to be
    heard). ear: a response for the listener's own place kept ready, for a new sound's first blocks (below). */
 static struct { float length, scatter; volatile LONG ear; } T = {2.0f, 0.25f, 1};
-/* The sound itself through Steam Audio (2026-11-16, the user: "all of this needs to be in the game ... HRTF binaural
-   rendering ... physics-based occlusion, transmission"; uwst_direct_mode): each voice's own samples go through
+/* The sound itself through Steam Audio (uwst_direct_mode): each voice's own samples go through
    Steam Audio's direct effect (what the level's surfaces between the sound and the listener let through, by band:
    its occlusion rays from a source of some size, its transmission by the materials) and its binaural effect (its
    HRTF, from the direction of the sound), into the same stream as the echoes. on: 0 the sound stays OpenAL's;
    occl: 1 Steam Audio's occlusion and transmission, 0 the gains uwaudio.c gives (ours); radius: the source's size
    in metres for the occlusion's rays; samples / rays: the occlusion's and the transmission's counts. */
 static struct { volatile LONG on, occl, samples, rays; float radius; } D = {0, 1, 16, 8, 0.5f};
-/* Steam Audio's pathing (2026-11-16, the user: "we want pathing from the steam audio"; uwst_pathing). A probe stands
+/* Steam Audio's pathing (uwst_pathing). A probe stands
    in every open tile of the level; iplPathBakerBake works out, once a level and in a thread of its own, which probes
    see each other and the shortest way between every two of them (the doors open: only their frames stand in the
    baked scene). While a sound plays, iplSimulatorRunPathing finds the ways from it to the listener through those
@@ -68,6 +80,34 @@ static struct { volatile LONG on; float level, range, see; } P = {1, 1.0f, 24.0f
 #define X(n) static __typeof__(n) *p_##n;
 FUNCS(X)
 #undef X
+/* the echoes' rays by Intel's Embree, which phonon carries (iplEmbreeDeviceCreate): Steam Audio's own ray tracer
+   takes 70-115 ms of a core for each of the 10 runs a second. Asked for by name apart from
+   FUNCS: a phonon without them keeps its own ray tracer, as before. */
+static __typeof__(iplEmbreeDeviceCreate) *p_iplEmbreeDeviceCreate;
+static __typeof__(iplEmbreeDeviceRelease) *p_iplEmbreeDeviceRelease;
+static IPLEmbreeDevice st_embree;
+static IPLSceneType st_scene_type = IPL_SCENETYPE_DEFAULT;
+static int st_env_int(const char *name, int dflt) { const char *e = getenv(name); return e && *e ? atoi(e) : dflt; }
+static volatile LONG st_fast = 1;   /* settings.txt acoustics_embree (uwaudio.c, before uwst_init): the Fast echo rays row */
+void uwst_fast_rays(int on) { InterlockedExchange(&st_fast, on != 0); }
+/* the echoes' threads: a quarter of the processors' (2 to 8: 8 on 36), or 2 with the row Off;
+   UWPORT_FX_SIMTHREADS=N (the checks) any from 1 to 16 */
+static int st_threads(void)
+{
+    int n = 2;
+    if (st_fast) {
+#ifdef _WIN32
+        SYSTEM_INFO si;
+        GetSystemInfo(&si);
+        n = (int)si.dwNumberOfProcessors / 4;
+#else
+        n = (int)sysconf(_SC_NPROCESSORS_ONLN) / 4;
+#endif
+        n = n < 2 ? 2 : n > 8 ? 8 : n;
+    }
+    n = st_env_int("UWPORT_FX_SIMTHREADS", n);
+    return n < 1 ? 1 : n > 16 ? 16 : n;
+}
 
 typedef struct {
     IPLSource src;
@@ -109,9 +149,9 @@ static struct {
     IPLAudioBuffer in, amb, out;
     int on, rate, tris, irsize;
     float ir_s;              /* the response's length this start was made with (T.length then) */
-    /* The listener's own place as a source (2026-11-16, "this twinge at the end"): a sound's echoes were silent until
-       the rays had run once for it, and a run takes 50 to 500 ms by the detail and the voices live, so the echoes
-       came in late and without their head (measured: work\acoustics\twinge). The response of the listener's place
+    /* The listener's own place as a source: a sound's echoes would be silent until the rays had run once for it,
+       and a run takes 50 to 500 ms by the detail and the voices live, so the echoes would come in late and without
+       their head (measured: work\acoustics\twinge). The response of the listener's place
        is kept ready instead (made again when the listener has moved a quarter tile, the level changed, or a sound
        is live), and a new sound rings with it from its first block until its own is made. */
     IPLSimulator dsim;       /* the direct simulator (occlusion, transmission): run by the audio's side every block */
@@ -137,9 +177,11 @@ static struct {
     int fifo_at, fifo_n;
 } S;
 
+/* Steam Audio running; the scene's triangles (the checks) */
 int uwst_on(void) { return S.on; }
 int uwst_triangles(void) { return S.tris; }
 
+/* a point of ours (tiles) in Steam Audio's frame (metres, -z north); a place and facing as its coordinate space */
 static IPLVector3 vec(float x, float y, float z) { IPLVector3 v = {x * S.tile_m, y * S.tile_m, -z * S.tile_m}; return v; }
 static IPLCoordinateSpace3 space_at(const float p[3], float yaw)
 {
@@ -154,6 +196,7 @@ static IPLCoordinateSpace3 space_at(const float p[3], float yaw)
 /* --- the level's triangles (src\level.c's shapes: a tile's corners 0 SW, 1 SE, 2 NE, 3 NW) --- */
 typedef struct { IPLVector3 *v; IPLTriangle *t; IPLint32 *m; int nv, nt, cap; } Mesh;
 static const float CX[4] = {0, 1, 1, 0}, CZ[4] = {0, 0, 1, 1};
+/* a tile's floor height at corner c (a slope's raised side one step up) */
 static float corner_h(const UwaTile *t, int c)
 {
     float h = t->height;
@@ -176,6 +219,7 @@ static int open_on_edge(const UwaTile *t, int e)   /* edges 0 S, 1 E, 2 N, 3 W *
     default: return 1;
     }
 }
+/* one triangle of material mat into the mesh (none past its room) */
 static void tri(Mesh *m, IPLVector3 a, IPLVector3 b, IPLVector3 c, int mat)
 {
     if (m->nt >= m->cap) return;
@@ -194,6 +238,8 @@ static int door_frames = 1;   /* (uwst_frames) */
 /* the things standing in the level (uwst_things; uwacoustic.c has why): a box of twelve triangles each */
 static UwaBox things[256];
 static int nthings, things_on = 1;
+/* the level as triangles: every open tile's floor and ceiling, its walls and risers, the diagonal walls, the doors
+   (their frames, a shut one's leaf) and the things standing in it */
 static void level_mesh(Mesh *m, const UwaTile *tiles, int ceil_mat, const UwaDoor *doors, int nd)
 {
     static const int POLY[6][4] = {{0, 1, 2, 3}, {0, 1, 2, 3}, {0, 1, 2, -1}, {0, 1, 3, -1}, {1, 2, 3, -1}, {0, 2, 3, -1}};
@@ -230,7 +276,7 @@ static void level_mesh(Mesh *m, const UwaTile *tiles, int ceil_mat, const UwaDoo
             }
         }
     for (int i = 0; i < nd; i++) {
-        /* a door: across the middle of its tile. With frames (2026-11-16; uwacoustic.c has why): the slab round the
+        /* a door: across the middle of its tile. With frames (uwacoustic.c has why): the slab round the
            opening always, of the tile's wall, the opening half a tile wide and 13/16 high; the leaf in it when shut.
            Without: a shut door from wall to wall, floor to ceiling, an open one nothing. */
         const UwaDoor *d = &doors[i];
@@ -269,11 +315,16 @@ static IPLStaticMesh mesh_make(IPLScene scene, const UwaTile *tiles, int ceil_ma
     IPLStaticMeshSettings ms;
     IPLStaticMesh fresh = NULL;
     int nm = uwacmat_count();
-    if (nm < 1) return NULL;
+    IPLerror err = IPL_STATUS_SUCCESS;
+    if (nm < 1) { RLOG_W("steam", "no materials: the level not made for Steam Audio"); return NULL; }
     if (nm > 32) nm = 32;
     m.cap = N * N * 16;
     m.v = malloc(sizeof *m.v * (size_t)m.cap * 3), m.t = malloc(sizeof *m.t * (size_t)m.cap), m.m = malloc(sizeof *m.m * (size_t)m.cap);
-    if (!m.v || !m.t || !m.m) { free(m.v), free(m.t), free(m.m); return NULL; }
+    if (!m.v || !m.t || !m.m) {
+        RLOG_E("steam", "out of memory (%zu bytes) for the level's triangles", (sizeof *m.v * 3 + sizeof *m.t + sizeof *m.m) * (size_t)m.cap);
+        free(m.v), free(m.t), free(m.m);
+        return NULL;
+    }
     level_mesh(&m, tiles, ceil_mat, doors, nd);
     for (int i = 0; i < nm; i++) {
         const UwaMaterial *u = uwacmat_get(i);
@@ -284,7 +335,8 @@ static IPLStaticMesh mesh_make(IPLScene scene, const UwaTile *tiles, int ceil_ma
     memset(&ms, 0, sizeof ms);
     ms.numVertices = m.nv, ms.numTriangles = m.nt, ms.numMaterials = nm;
     ms.vertices = m.v, ms.triangles = m.t, ms.materialIndices = m.m, ms.materials = mats;
-    if (m.nt <= 0 || p_iplStaticMeshCreate(scene, &ms, &fresh) != IPL_STATUS_SUCCESS) fresh = NULL;
+    if (m.nt <= 0 || (err = p_iplStaticMeshCreate(scene, &ms, &fresh)) != IPL_STATUS_SUCCESS) fresh = NULL;
+    if (m.nt > 0 && err != IPL_STATUS_SUCCESS) RLOG_E("steam", "iplStaticMeshCreate failed (%d): the level's sound not made", (int)err);
     if (tris) *tris = m.nt;
     free(m.v), free(m.t), free(m.m);
     return fresh;
@@ -358,6 +410,8 @@ static int probes_place(IPLProbeBatch batch, const UwaTile *tiles)
 }
 /* (iplPathBakerBake calls its progress callback without asking whether there is one: 4.8.1 crashed on NULL) */
 static void IPLCALL bake_progress(IPLfloat32 done, void *user) { (void)done, (void)user; }
+/* the bake's thread: a scene of its own with every door open, a probe in every open tile, the ways between them
+   baked into B.batch (NULL when it failed or was given up); B.busy 0 at the end */
 static DWORD WINAPI bake_worker(LPVOID arg)
 {
     IPLSceneSettings ss;
@@ -371,10 +425,15 @@ static DWORD WINAPI bake_worker(LPVOID arg)
         memset(&ss, 0, sizeof ss);
         ss.type = IPL_SCENETYPE_DEFAULT;
         for (int i = 0; i < B.nd; i++) B.doors[i].shut = 0;      /* the ways are baked with every door open */
-        if (p_iplSceneCreate(S.ctx, &ss, &scene) == IPL_STATUS_SUCCESS && (mesh = mesh_make(scene, B.tiles, B.ceil_mat, B.doors, B.nd, NULL)) != NULL) {
+        IPLerror err = p_iplSceneCreate(S.ctx, &ss, &scene);
+        if (err != IPL_STATUS_SUCCESS) RLOG_E("steam", "iplSceneCreate failed (%d): no sound paths baked", (int)err);
+        if (err == IPL_STATUS_SUCCESS && (mesh = mesh_make(scene, B.tiles, B.ceil_mat, B.doors, B.nd, NULL)) != NULL) {
             p_iplStaticMeshAdd(mesh, scene);
             p_iplSceneCommit(scene);
-            if (p_iplProbeBatchCreate(S.ctx, &B.batch) != IPL_STATUS_SUCCESS) B.batch = NULL;
+            if ((err = p_iplProbeBatchCreate(S.ctx, &B.batch)) != IPL_STATUS_SUCCESS) {
+                RLOG_E("steam", "iplProbeBatchCreate failed (%d): no sound paths baked", (int)err);
+                B.batch = NULL;
+            }
             if (B.batch) {
                 IPLPathBakeParams bp;
                 B.n = probes_place(B.batch, B.tiles);
@@ -400,25 +459,24 @@ static void bake_stop(void)   /* a bake under way given up and waited out; its r
 {
     if (!B.thread) return;
     InterlockedExchange(&B.cancel, 1);
-    /* (2026-11-17: the bake is waited out, not cancelled. iplPathBakerCancelBake is not safe in 4.8.1's Linux library:
-       called while the bake's jobs run, its pool's threads spun for ever and iplPathBakerBake never came back
+    /* (the bake is waited out, not cancelled. iplPathBakerCancelBake is not safe in 4.8.1's Linux library:
+       called while the bake's jobs run, its pool's threads spin for ever and iplPathBakerBake never comes back
        (work\soundfix\bakequit_linux.c with a simulation thread: the second round hung, the stacks in the library), and
        in the game a quit during the bake ended in a fault in one of those threads. B.cancel still keeps a bake that
-       has not reached the library from starting. UWPORT_FX_BAKE_CANCEL=1: the cancel as before, for a comparison.) */
+       has not reached the library from starting. UWPORT_FX_BAKE_CANCEL=1: the cancel all the same, for a comparison.) */
     {
         const char *e = getenv("UWPORT_FX_BAKE_CANCEL");
         while (B.busy) { if (e && *e == '1') p_iplPathBakerCancelBake(S.ctx); Sleep(5); }
     }
-    WaitForSingleObject(B.thread, 60000), CloseHandle(B.thread), B.thread = NULL;
+    if (WaitForSingleObject(B.thread, 60000) != WAIT_OBJECT_0) RLOG_W("steam", "the sound paths' bake did not end in a minute");
+    CloseHandle(B.thread), B.thread = NULL;
     if (B.batch) p_iplProbeBatchRelease(&B.batch);
     B.batch = NULL, B.key = 0, B.cancel = 0;
 }
-/* the simulation's thread, each run: a level whose ways are not the ones in use is given to the bake; a bake that
-   has ended has its probes put in the direct simulator in place of the old ones */
 /* a level change under way (the front end, when it sees one): no pathing until the new level's tiles have come
-   (path_service), 8 s at most. 2026-11-17: the game faulted inside phonon.dll (a null read) going from level 1
-   back to level 2, the paths still run with the old level's probes and the listener already in the new one; Steam
-   Audio's own release notes list faults in iplSimulatorRunPathing across a scene's and a probe batch's change */
+   (path_service), 8 s at most. The paths run with the old level's probes and the listener already in the new one
+   fault inside phonon.dll (a null read, seen going from level 1 back to level 2); Steam Audio's own release notes
+   list faults in iplSimulatorRunPathing across a scene's and a probe batch's change */
 static volatile LONG path_hold;
 static unsigned long long path_hold_t;
 void uwst_level_change(void)
@@ -426,13 +484,14 @@ void uwst_level_change(void)
     path_hold_t = GetTickCount64();
     InterlockedExchange(&path_hold, 1);
 }
+/* 1 while a level change holds the paths back (the hold given up after 8 s) */
 static int path_held(void)
 {
     if (path_hold && GetTickCount64() - path_hold_t > 8000) InterlockedExchange(&path_hold, 0);
     return path_hold != 0;
 }
 /* every source's paths off, where a batch of probes leaves the simulator: a source still naming a batch that has left
-   faults iplSimulatorRunPathing (2026-11-17: work\steamproof, the same calls without the game; direct_run has the
+   faults iplSimulatorRunPathing (work\steamproof, the same calls without the game; direct_run has the
    other half). The sounding voices are given theirs again by the next direct_run. */
 static void paths_forget(void)
 {
@@ -442,6 +501,8 @@ static void paths_forget(void)
         p_iplSourceSetInputs(S.v[i].dsrc, IPL_SIMULATIONFLAGS_PATHING, &in);
     }
 }
+/* the simulation's thread, each run: a level whose ways are not the ones in use is given to the bake; a bake that
+   has ended has its probes put in the direct simulator in place of the old ones */
 static void path_service(const UwaTile *tiles, const UwaDoor *doors, int nd, int ceil_mat, int dirty)
 {
     if (dirty && P.on) {
@@ -463,8 +524,11 @@ static void path_service(const UwaTile *tiles, const UwaDoor *doors, int nd, int
             memcpy(B.tiles, tiles, sizeof B.tiles), memcpy(B.doors, doors, sizeof(UwaDoor) * (size_t)nd);
             B.nd = nd, B.ceil_mat = ceil_mat, B.key = key;
             InterlockedExchange(&B.busy, 1);
-            fprintf(stderr, "fx: working out this level's sound paths (Steam Audio's pathing, in the background)\n");
-            if (!(B.thread = CreateThread(NULL, 0, bake_worker, NULL, 0, NULL))) B.busy = 0, B.key = 0;
+            RLOG_I("steam", "working out this level's sound paths (Steam Audio's pathing, in the background)");
+            if (!(B.thread = CreateThread(NULL, 0, bake_worker, NULL, 0, NULL))) {
+                B.busy = 0, B.key = 0;
+                RLOG_E("steam", "no thread for the sound paths' bake: none this time");
+            }
         }
     }
     if (B.thread && !B.busy) {
@@ -477,13 +541,14 @@ static void path_service(const UwaTile *tiles, const UwaDoor *doors, int nd, int
             p_iplSimulatorAddProbeBatch(S.dsim, S.probes);
             p_iplSimulatorCommit(S.dsim);
             LeaveCriticalSection(&S.scene_lock);
-            fprintf(stderr, "fx: sound paths ready (Steam Audio's pathing: %d probes, baked in %.1f s)\n", B.n, B.seconds);
-        } else fprintf(stderr, "fx: sound paths: none made for this level\n");
+            RLOG_I("steam", "sound paths ready (Steam Audio's pathing: %d probes, baked in %.1f s)", B.n, B.seconds);
+        } else RLOG_W("steam", "sound paths: none made for this level (the sounds go on without Steam Audio's pathing)");
         B.batch = NULL, B.key = 0;
     }
 }
 
 /* --- start and stop --- */
+/* everything of Steam Audio's released (the bake stopped first), the module off; the level's tiles kept */
 static void release_all(void)
 {
     if (S.ctx) bake_stop();
@@ -523,11 +588,16 @@ static void release_all(void)
     if (S.sim) p_iplSimulatorRelease(&S.sim);
     if (S.mesh) p_iplStaticMeshRelease(&S.mesh);
     if (S.scene) p_iplSceneRelease(&S.scene);
+    if (st_embree) p_iplEmbreeDeviceRelease(&st_embree);
+    st_embree = NULL;
     if (S.ctx) p_iplContextRelease(&S.ctx);
     /* (the tiles last given are kept: a start again for a new response length builds the same level) */
     S.on = 0, S.tris = 0, S.fifo_n = S.fifo_at = 0, S.level_dirty = 0;
 }
 
+/* phonon.dll loaded and Steam Audio started: the context, the scene (Embree's when it can), the reflections'
+   simulator, the HRTF, the mixer and decoder, the voices, and the direct simulator with its effects. 0 and one
+   "fx: acoustics high off (...)" line when any of it fails */
 int uwst_init(const char *bindir, int rate)
 {
     char p[MAX_PATH];
@@ -566,11 +636,24 @@ int uwst_init(const char *bindir, int rate)
     sim.flags = IPL_SIMULATIONFLAGS_REFLECTIONS, sim.sceneType = IPL_SCENETYPE_DEFAULT, sim.reflectionType = IPL_REFLECTIONEFFECTTYPE_CONVOLUTION;
     sim.maxNumOcclusionSamples = 16, sim.maxNumRays = 8192, sim.numDiffuseSamples = 32, sim.maxDuration = S.ir_s, sim.maxOrder = 1;
     sim.maxNumSources = UWST_VOICES + 1, sim.numThreads = 2, sim.rayBatchSize = 1, sim.numVisSamples = 1;
+    sim.numThreads = st_threads();
     sim.samplingRate = rate, sim.frameSize = UWST_FRAME;
     memset(&hs, 0, sizeof hs);
     hs.type = IPL_HRTFTYPE_DEFAULT, hs.volume = 1.0f, hs.normType = IPL_HRTFNORMTYPE_NONE;
     rs.type = IPL_REFLECTIONEFFECTTYPE_CONVOLUTION, rs.irSize = S.irsize, rs.numChannels = 4;
     if (p_iplContextCreate(&cs, &S.ctx) != IPL_STATUS_SUCCESS) why = "iplContextCreate failed";
+    if (!why && st_fast) {
+        if (!p_iplEmbreeDeviceCreate) *(FARPROC *)&p_iplEmbreeDeviceCreate = GetProcAddress(S.dll, "iplEmbreeDeviceCreate");
+        if (!p_iplEmbreeDeviceRelease) *(FARPROC *)&p_iplEmbreeDeviceRelease = GetProcAddress(S.dll, "iplEmbreeDeviceRelease");
+        st_embree = NULL;
+        if (p_iplEmbreeDeviceCreate && p_iplEmbreeDeviceRelease && p_iplEmbreeDeviceCreate(S.ctx, NULL, &st_embree) == IPL_STATUS_SUCCESS && st_embree)
+            st_scene_type = IPL_SCENETYPE_EMBREE;
+        else
+            st_embree = NULL, st_scene_type = IPL_SCENETYPE_DEFAULT, RLOG_W("steam", "acoustics: no Embree (Steam Audio's own ray tracer)");
+    } else
+        st_scene_type = IPL_SCENETYPE_DEFAULT;
+    ss.type = sim.sceneType = st_scene_type, ss.embreeDevice = st_embree;
+    if (why) ;
     else if (p_iplSceneCreate(S.ctx, &ss, &S.scene) != IPL_STATUS_SUCCESS) why = "no scene";
     else if (p_iplSimulatorCreate(S.ctx, &sim, &S.sim) != IPL_STATUS_SUCCESS) why = "no simulator";
     else if (p_iplHRTFCreate(S.ctx, &au, &hs, &S.hrtf) != IPL_STATUS_SUCCESS) why = "no HRTF";
@@ -601,7 +684,7 @@ int uwst_init(const char *bindir, int rate)
         memset(&pe, 0, sizeof pe);
         pe.maxOrder = 1, pe.spatialize = IPL_TRUE, pe.speakerLayout.type = IPL_SPEAKERLAYOUTTYPE_STEREO, pe.hrtf = S.hrtf;
         memset(&ds2, 0, sizeof ds2);
-        ds2.flags = IPL_SIMULATIONFLAGS_DIRECT | IPL_SIMULATIONFLAGS_PATHING, ds2.sceneType = IPL_SCENETYPE_DEFAULT, ds2.reflectionType = IPL_REFLECTIONEFFECTTYPE_CONVOLUTION;
+        ds2.flags = IPL_SIMULATIONFLAGS_DIRECT | IPL_SIMULATIONFLAGS_PATHING, ds2.sceneType = st_scene_type, ds2.reflectionType = IPL_REFLECTIONEFFECTTYPE_CONVOLUTION;
         ds2.maxNumOcclusionSamples = 64, ds2.maxNumRays = 256, ds2.numDiffuseSamples = 8, ds2.maxDuration = 0.5f, ds2.maxOrder = 1;
         ds2.maxNumSources = UWST_VOICES, ds2.numThreads = 1, ds2.rayBatchSize = 1, ds2.numVisSamples = 1;
         ds2.samplingRate = rate, ds2.frameSize = UWST_FRAME;
@@ -629,21 +712,23 @@ int uwst_init(const char *bindir, int rate)
     p_iplSimulatorCommit(S.dsim);
     S.level_dirty = S.have_tiles;
     S.on = 1;
-    fprintf(stderr, "fx: acoustics high on (Steam Audio %d.%d.%d)\n", STEAMAUDIO_VERSION_MAJOR, STEAMAUDIO_VERSION_MINOR, STEAMAUDIO_VERSION_PATCH);
+    fprintf(stderr, "fx: acoustics high on (Steam Audio %d.%d.%d, %s's rays, %d threads)\n", STEAMAUDIO_VERSION_MAJOR, STEAMAUDIO_VERSION_MINOR, STEAMAUDIO_VERSION_PATCH,
+            st_scene_type == IPL_SCENETYPE_EMBREE ? "Embree" : "Steam Audio", sim.numThreads);
     return 1;
 }
 
+/* Steam Audio stopped and released */
 void uwst_shutdown(void)
 {
-    /* (2026-11-16, the review: the bake's thread takes S.lock for the things' boxes (level_mesh); waited for under
-       that lock it could never end, and the game hung on the way out. Stopped first, the lock not held.) */
+    /* (the bake's thread takes S.lock for the things' boxes (level_mesh); waited for under that lock it could never
+       end, and the game would hang on the way out. Stopped first, the lock not held.) */
     if (S.dll && S.ctx) bake_stop();
     if (S.dll && S.lock_made) EnterCriticalSection(&S.lock);
     if (S.dll) release_all();
     if (S.dll && S.lock_made) LeaveCriticalSection(&S.lock);
 }
 
-/* --- word left by the game's side --- */
+/* --- word left by the game's side (uwsteam.h has each; under S.lock where the simulation reads it) --- */
 void uwst_level(const UwaTile t[N * N], int ceil_mat, const UwaDoor *d, int nd, float tile_m)
 {
     if (!S.on) return;
@@ -768,13 +853,21 @@ void uwst_listener(float x, float y, float z, float yaw)
     S.lis[0] = x, S.lis[1] = y, S.lis[2] = z, S.yaw = yaw;
     LeaveCriticalSection(&S.lock);
 }
+/* a sound starts at (x, y, z): its samples to the module's rate with its gain in them, on a free voice (else the
+   one rung out longest); the voice, or -1 */
 int uwst_begin(float x, float y, float z, const short *mono, int frames, int rate, float gain)
 {
     int k = -1, n;
     float *pcm;
     if (!S.on || !mono || frames <= 0 || rate <= 0) return -1;
     n = (int)((double)frames * S.rate / rate);
-    if (n < 1 || !(pcm = malloc(sizeof *pcm * (size_t)n))) return -1;
+    if (n < 1 || !(pcm = malloc(sizeof *pcm * (size_t)n))) {
+        if (n >= 1) {
+            static int said;
+            if (!said++) RLOG_E("steam", "out of memory (%zu bytes): a sound gets no echoes", sizeof *pcm * (size_t)n);
+        }
+        return -1;
+    }
     for (int i = 0; i < n; i++) {   /* to the module's rate, linear; the sound's gain in it */
         double at = (double)i * rate / S.rate;
         int a = (int)at, b = a + 1 < frames ? a + 1 : a;
@@ -783,8 +876,8 @@ int uwst_begin(float x, float y, float z, const short *mono, int frames, int rat
     }
     EnterCriticalSection(&S.lock);
     for (int i = 0; i < UWST_VOICES && k < 0; i++) if (!S.v[i].state) k = i;
-    /* none free (the review, 2026-11-14: a walk's footsteps, each ringing some 3 s, held six of the eight, and the
-       sounds after them had no echoes): the one whose echoes have rung out longest gives way */
+    /* none free (a walk's footsteps, each ringing some 3 s, can hold six of the eight, and the sounds after them
+       would have no echoes): the one whose echoes have rung out longest gives way */
     for (int i = 0; i < UWST_VOICES && k < 0; i++) if (S.v[i].state == 2) k = i;
     for (int i = 0; i < UWST_VOICES && k >= 0 && S.v[k].state == 2; i++) if (S.v[i].state == 2 && S.v[i].ring > S.v[k].ring) k = i;
     if (k >= 0) {
@@ -797,9 +890,14 @@ int uwst_begin(float x, float y, float z, const short *mono, int frames, int rat
         v->occ = 1, v->trans[0] = v->trans[1] = v->trans[2] = 1, v->echo = 1, v->rel = 0, v->path_ok = 0;
     }
     LeaveCriticalSection(&S.lock);
-    if (k < 0) free(pcm);
+    if (k < 0) {
+        static int said;
+        free(pcm);
+        if (!said++) RLOG_W("steam", "every voice sounding: a new sound gets no echoes (%d voices)", UWST_VOICES);
+    }
     return k;
 }
+/* the voice's sound cut: its echoes ring out */
 void uwst_end(int voice)
 {
     if (!S.on || voice < 0 || voice >= UWST_VOICES) return;
@@ -809,6 +907,9 @@ void uwst_end(int voice)
 }
 
 /* --- the rays --- */
+/* one simulation run (the simulation's thread, or the checks): the word left taken under the lock, the scene made
+   again when the level changed, the paths' bake looked after, the live voices' and the listener's places given,
+   the reflection rays run, and the voices that got a response marked */
 void uwst_simulate(void)
 {
     static UwaTile tiles[N * N];
@@ -822,8 +923,8 @@ void uwst_simulate(void)
     dirty = S.level_dirty, S.level_dirty = 0, nd = S.ndoors, ceil_mat = S.ceil_mat;
     if (dirty) memcpy(tiles, S.tiles, sizeof tiles), memcpy(doors, S.doors, sizeof doors);
     memcpy(lis, S.lis, sizeof lis), yaw = S.yaw;
-    /* (2026-11-16: a voice ringing out leaves the simulation, its tail needs no new response; a walk kept six
-       voices live, each adding to every run's time, and now keeps the two or three still sounding) */
+    /* (a voice ringing out leaves the simulation, its tail needs no new response: a walk keeps the two or three
+       voices still sounding live, not the six that ring, each adding to every run's time) */
     for (int i = 0; i < UWST_VOICES; i++) live[i] = S.v[i].state == 1, any |= live[i], gen[i] = S.v[i].gen, memcpy(place[i], S.v[i].p, sizeof place[i]);
     stale = !S.ear_ok || (lis[0] - S.ear_at[0]) * (lis[0] - S.ear_at[0]) + (lis[1] - S.ear_at[1]) * (lis[1] - S.ear_at[1]) +
             (lis[2] - S.ear_at[2]) * (lis[2] - S.ear_at[2]) > 0.0625f;
@@ -907,7 +1008,7 @@ static void direct_run(const float lis[3], float yaw)
             state = S.v[i].state, memcpy(p, S.v[i].p, sizeof p), gen[i] = S.v[i].gen;
             LeaveCriticalSection(&S.lock);
             if (state != 1) {
-                /* 2026-11-17, the crash on a level's load: a voice not sounding kept the inputs of its last sound,
+                /* the crash on a level's load: a voice not sounding keeps the inputs of its last sound,
                    the paths on and the probes of the level it sounded on. Those probes are taken out of the
                    simulator when the level changes, and iplSimulatorRunPathing goes through EVERY source: for a
                    batch no longer in the simulator it has no path simulator and reads through a null one
@@ -949,8 +1050,8 @@ static void direct_run(const float lis[3], float yaw)
             if (paths) p_iplSimulatorRunPathing(S.dsim);
             for (int i = 0; i < UWST_VOICES; i++) {
                 IPLSimulationOutputs out;
-                /* (2026-11-16, the review: a sound begun on this voice while the run was under way took the numbers
-                   of the sound before it, or of no run at all, for a few blocks) */
+                /* (a sound begun on this voice while the run was under way would take the numbers of the sound
+                   before it, or of no run at all, for a few blocks) */
                 if (!asked[i]) continue;
                 memset(&out, 0, sizeof out);
                 p_iplSourceGetOutputs(S.v[i].dsrc, fl, &out);
@@ -982,6 +1083,20 @@ static int block(int hrtf)
     LeaveCriticalSection(&S.lock);
     memset(S.dry, 0, sizeof S.dry);
     if (direct && D.occl) direct_run(lis, yaw);
+    {   /* UWPORT_DIRECT_LOG=1 (the checks, for a sound that cuts out): every
+           24 blocks (about a quarter second) the listener and each sounding voice's direct numbers */
+        static int dl = -1, tick;
+        if (dl < 0) { const char *e = getenv("UWPORT_DIRECT_LOG"); dl = e && *e == '1'; }
+        if (dl && tick++ % 24 == 0) {
+            EnterCriticalSection(&S.lock);
+            for (int i = 0; i < UWST_VOICES; i++)
+                if (S.v[i].state == 1)
+                    RLOG_I("steam", "listener (%.2f, %.2f, %.2f) voice %d at (%.2f, %.2f, %.2f) occlusion %.3f transmission %.3f %.3f %.3f gain %.3f %.3f %.3f",
+                            lis[0], lis[1], lis[2], i, S.v[i].p[0], S.v[i].p[1], S.v[i].p[2], S.v[i].occ, S.v[i].trans[0], S.v[i].trans[1], S.v[i].trans[2],
+                            S.v[i].gain[0], S.v[i].gain[1], S.v[i].gain[2]);
+            LeaveCriticalSection(&S.lock);
+        }
+    }
     for (int i = 0; i < UWST_VOICES; i++) {
         Voice *v = &S.v[i];
         IPLSimulationOutputs out;
@@ -1027,9 +1142,9 @@ static int block(int hrtf)
             for (int k = 0; k < 3; k++) {
                 float g = D.occl ? v->occ + (1.0f - v->occ) * v->trans[k] : gain[k];
                 if (D.occl && floor && gain[k] > g) g = gain[k];   /* (the way round a corner, ours: never quieter than that) */
-                /* (2026-11-16, "the footsteps sound twitchy": a sound fixed to the head is the player's own, placed a
-                   third of a tile ahead; facing a wall nearer than that the place is in the rock and the step came
-                   39 dB down (work\steptwitch\steptest.c). Nothing stands between the player and their own sound:
+                /* (a sound fixed to the head is the player's own, placed a third of a tile ahead; facing a wall
+                   nearer than that the place is in the rock and the step would come 39 dB down
+                   (work\steptwitch\steptest.c). Nothing stands between the player and their own sound:
                    uwaudio.c's own filters never muffle it either, AC.here.) */
                 if (v->rel) g = 1.0f;
                 de.transmission[k] = g < 0 ? 0 : g > 1 ? 1 : g;
@@ -1090,11 +1205,13 @@ static int block(int hrtf)
     return busy;
 }
 
-/* (2026-11-16, found by the uwr session's review, work\review\agents\tail: the echoes went out as 16-bit samples
-   after the level's 0.12, where a footstep's echoes peak at 12 to 93 of 32767: a tail of a few steps' height, fizz
-   and ticks as it died, and an end at exact zero well before its time. The mix is float now, whole.) */
-static float dry_level = 1.0f;
+/* (the mix is float, whole: as 16-bit samples after the echo level a footstep's echoes peak at 12 to 93 of 32767,
+   a tail of a few steps' height, fizz and ticks as it dies, and an end at exact zero well before its time:
+   work\review\agents\tail) */
+static float dry_level = 1.0f;   /* the sound itself against the stream (uwst_direct_level) */
 void uwst_direct_level(float g) { dry_level = g < 0 ? 0 : g; }
+/* frames of the stream (stereo float): blocks made as needed, the echoes at `wet` and the sound itself at dry_level;
+   the voices still sounding or ringing */
 int uwst_mix_float(float *stereo, int frames, float wet, int hrtf)
 {
     int busy = 0, done = 0;

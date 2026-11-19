@@ -748,6 +748,7 @@ typedef struct {
     char *path;
     int w, h;
     u8 *rgba, *idx;   /* (rgba NULL: handed over already) */
+    int viewed;       /* (2026-11-18) handed over by png_view: its pixels lent, freed with the rest at png_hand_drop */
 } PngHanded;
 static PngHanded *png_hand;
 static u32 *png_hand_slot;   /* a hash table of indices + 1 into png_hand */
@@ -762,7 +763,7 @@ static bool png_hand_take(const char *path, Image *img) {
     for (u32 at = png_path_hash(path) & (u32)(png_hand_slots - 1); png_hand_slot[at]; at = (at + 1) & (u32)(png_hand_slots - 1)) {
         PngHanded *p = &png_hand[png_hand_slot[at] - 1];
         if (strcmp(p->path, path)) continue;
-        if (!p->rgba) return false;
+        if (!p->rgba || p->viewed) return false;
         size_t n = (size_t)p->w * (size_t)p->h;
         memset(img, 0, sizeof *img);
         img->w = p->w, img->h = p->h;
@@ -774,6 +775,33 @@ static bool png_hand_take(const char *path, Image *img) {
         return true;
     }
     return false;
+}
+/* (2026-11-18) png_read's answer with the pixels lent rather than copied into the arena, for work on other threads
+ * (level.c's cells): a kept picture's own (for the run) or a read-ahead one's (handed over as png_read would hand it,
+ * freed at the build's next png_prefetch). *copied: the answer is png_read's own, its pixels in the arena (a picture
+ * not read ahead). Never to be written to. */
+bool png_view(const char *path, Image *img, bool *copied) {
+    *copied = false;
+    PngKept *k = png_keeps(path) ? png_entry(path) : NULL;
+    if (k) {
+        memset(img, 0, sizeof *img);
+        if (!k->there) return false;
+        if (k->rgba) {
+            img->w = k->w, img->h = k->h, img->rgba = k->rgba, img->idx = k->idx;
+            return true;
+        }
+    } else if (png_nhand)
+        for (u32 at = png_path_hash(path) & (u32)(png_hand_slots - 1); png_hand_slot[at]; at = (at + 1) & (u32)(png_hand_slots - 1)) {
+            PngHanded *p = &png_hand[png_hand_slot[at] - 1];
+            if (strcmp(p->path, path)) continue;
+            if (!p->rgba || p->viewed) break;   /* (handed over already: png_read reads it from the disk) */
+            memset(img, 0, sizeof *img);
+            p->viewed = 1;
+            img->w = p->w, img->h = p->h, img->rgba = p->rgba, img->idx = p->idx;
+            return true;
+        }
+    *copied = true;
+    return png_read(path, img);
 }
 bool png_read(const char *path, Image *img) {
     PngKept *k = png_keeps(path) ? png_entry(path) : NULL;

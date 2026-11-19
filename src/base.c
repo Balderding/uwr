@@ -5,6 +5,19 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* the shared logger, for fatal_at's line in uwr.log: port\win32\rlog.h, found by -I port\win32 (the renderer DLLs,
+   build.cmd's uw.exe, the Linux renderer) or one folder up (the SDL3 menu build's menu\ copy of this file). A build
+   without it (build.cmd's check.exe and models_test.exe, the Laigter tool) links no rlog.c: fatal then only prints, as before */
+#if __has_include("rlog.h")
+#include "rlog.h"
+#define BASE_HAS_RLOG 1
+#elif __has_include("../rlog.h")
+#include "../rlog.h"
+#define BASE_HAS_RLOG 1
+#else
+#define BASE_HAS_RLOG 0
+#endif
+
 /* the path as the system takes it: Windows as given; elsewhere (the Linux build's menu) its backslashes as '/' */
 #ifdef _WIN32
 #define OS_PATH(p, buf) ((void)(buf), (p))
@@ -173,8 +186,19 @@ void logf_(const char *fmt, ...) {
     fflush(stdout);
 }
 
-void fatal(const char *fmt, ...) {
+/* fatal(...) in base.h: the message on stdout as always ("fatal: <message>", which scripts may read), and, where
+   the build has the logger, one error line in uwr.log naming the caller's file and line; then exit code 1 */
+void fatal_at(const char *file, int line, const char *fmt, ...) {
     va_list ap;
+#if BASE_HAS_RLOG
+    char msg[768];
+    va_start(ap, fmt);
+    vsnprintf(msg, sizeof msg, fmt, ap);
+    va_end(ap);
+    RLOG_E("base", "fatal at %s:%d: %s", file, line, msg);
+#else
+    (void)file, (void)line;
+#endif
     va_start(ap, fmt);
     fputs("fatal: ", stdout);
     vprintf(fmt, ap);

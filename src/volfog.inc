@@ -530,6 +530,39 @@ static void vol_frame(float dt)
     render_volume(v);
 }
 
+/* the hot air near the eye, for the sound's heat shimmer (2026-11-18, the user: "how would mist and fog and smoke
+   affect sound?"; port\win32\uwaudio.c uwaudio_heat): a sound whose way crosses the rising hot air over a flame or
+   lava is bent about by its uneven warmth and flickers in loudness, the high notes most. Fog's damp air and smoke's
+   particles change nothing a player could hear over a dungeon's few dozen metres, so they are not given. Five
+   floats a spot: x, y, z (the hot air's foot), its radius in tiles, and how much hotter than the room it is (K),
+   the same flames, lava and blasts the fog and smoke heat the air with (the rows' own temperatures), whether or not
+   the fog and smoke are shown. The count given; within 12 tiles of the eye. */
+UWV_API int uwv_heat_spots(float *out, int max)
+{
+    int n = 0;
+    vol_init();
+    if (!out || max <= 0 || !lv_number) return 0;
+#define HEAT_PUT(X, Y, Z, R, K) do { if (n < max) { float *o_ = out + 5 * n++; o_[0] = (X), o_[1] = (Y), o_[2] = (Z), o_[3] = (R), o_[4] = (K); } } while (0)
+    for (int k = 0; k < nlights && k < MAX_LIGHTS; k++) {   /* the flames (as vol_frame's smoke: campfires and small flames) */
+        const Light *L = &lights[k];
+        if (L->kind != LIGHT_WALL_TORCH || L->kelvin <= 0 || L->flame < 0.011f) continue;
+        if (fabsf(L->pos[0] - cam.pos[0]) > 12 || fabsf(L->pos[2] - cam.pos[2]) > 12) continue;
+        bool camp = L->flame >= 0.4f;
+        HEAT_PUT(L->pos[0], L->pos[1] + (camp ? 0.3f : 0.12f), L->pos[2], camp ? 0.28f : 0.1f, camp ? vol_val[S_TEMP_CAMP] : vol_val[S_TEMP_TORCH]);
+    }
+    {   /* lava (the floor's terrain 2), the squares near the eye */
+        int cx = (int)cam.pos[0], cz = (int)cam.pos[2];
+        for (int z = cz - 8; z <= cz + 8; z++)
+            for (int x = cx - 8; x <= cx + 8; x++)
+                if (x >= 0 && x < 64 && z >= 0 && z < 64 && m.grid[(z * 64 + x) * 4 + 2] == 2)
+                    HEAT_PUT(x + 0.5f, level_floor_y(&lv, x + 0.5f, z + 0.5f), z + 0.5f, 0.5f, vol_val[F_LAVA_T]);
+    }
+    for (int k = 0; k < 16; k++)   /* the blasts under way */
+        if (vol_puff[k].t > 0) HEAT_PUT(vol_puff[k].pos[0], vol_puff[k].pos[1], vol_puff[k].pos[2], vol_puff[k].r, vol_puff[k].heat);
+#undef HEAT_PUT
+    return n;
+}
+
 /* UWVIEW_VOL_SHOT=FILE.png with UWVIEW_VOL_SHOT_AT=SECONDS (a check's): the renderer's own picture written that long
    after the level came up, the fog and smoke as they then are (called each frame from fx_frame, after vol_frame) */
 static void vol_shot(float dt)

@@ -1,11 +1,18 @@
-/* uwconv_draw.c: a conversation in our display, drawn (the backend's port\win32\uwconv.c lays it out). The interface
- * layer (uw by uh, RGBA) dims our 3D view's last frame everywhere and shows the pieces of the original's screen (src,
- * sw by sh, 0x00RRGGBB) given as n rows of six ints: the screen rectangle x, y, w, h and the layer point dx, dy, each
- * drawn scale times, opaque, with a dark edge round it. The screen's own black (0x000004: palette 0, what is round
- * its panels) is left dimmed, so that the panels keep their own outlines. dim: the dimming's alpha, 0-255. */
+/* uwconv_draw.c: the renderer's drawing of the screens that show the original's 320 x 200 screen in our display:
+ * a conversation (the backend's port\win32\uwconv.c lays it out), a cutscene in the 3D window, the conversation's
+ * text (smooth font or the original's) and our sharper automap. All draw into one layer buffer the renderer lays over
+ * the view.
+ *
+ * uwv_conv: the interface layer (uw by uh, RGBA) dims our 3D view's last frame everywhere and shows the pieces of the
+ * original's screen (src, sw by sh, 0x00RRGGBB) given as n rows of six ints: the screen rectangle x, y, w, h and the
+ * layer point dx, dy, each drawn scale times, opaque, with a dark edge round it. The screen's own black (0x000004:
+ * palette 0, what is round its panels) is left dimmed, so that the panels keep their own outlines. dim: the dimming's
+ * alpha, 0-255. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "rlog.h"
+#define LOG_TAG "convdraw"
 
 #ifdef _WIN32
 #define UWV_API __declspec(dllexport)
@@ -16,16 +23,28 @@
 static unsigned *buf;
 static int bw, bh;
 
-UWV_API const unsigned char *uwv_conv(const unsigned *src, int sw, int sh, int uw, int uh, const int *pieces, int n,
-                                      int scale, int dim)
+/* (re)makes the layer buffer for uw x uh pixels; 0 when memory is short (logged once: it is called every frame) */
+static int layer_buf(int uw, int uh)
 {
-    if (!src || uw <= 0 || uh <= 0 || scale < 1) return NULL;
+    static int said;
     if (!buf || bw != uw || bh != uh) {
         free(buf);
         buf = malloc((size_t)uw * (size_t)uh * 4);
         bw = uw, bh = uh;
-        if (!buf) return NULL;
+        if (!buf) {
+            if (!said) said = 1, RLOG_E(LOG_TAG, "out of memory (%zu bytes)", (size_t)uw * (size_t)uh * 4);
+            return 0;
+        }
     }
+    return 1;
+}
+
+/* draws the conversation screen's pieces over the dimmed view (see the top); returns the layer, NULL if it cannot */
+UWV_API const unsigned char *uwv_conv(const unsigned *src, int sw, int sh, int uw, int uh, const int *pieces, int n,
+                                      int scale, int dim)
+{
+    if (!src || uw <= 0 || uh <= 0 || scale < 1) return NULL;
+    if (!layer_buf(uw, uh)) return NULL;
     unsigned shade = (unsigned)(dim & 0xFF) << 24;
     for (size_t i = 0, all = (size_t)uw * (size_t)uh; i < all; i++) buf[i] = shade;
     int edge = scale > 1 ? scale / 2 + 1 : 1;
@@ -55,7 +74,7 @@ UWV_API const unsigned char *uwv_conv(const unsigned *src, int sw, int sh, int u
     return (const unsigned char *)buf;
 }
 
-/* a cutscene in the 3D window (the death ...), alone: the screen's rectangle x, y, w, h drawn scale times at dx, dy over
+/* a cutscene in the 3D window (the death scene ...), alone: the screen's rectangle x, y, w, h drawn scale times at dx, dy over
  * our view's last frame dimmed (dim), only where the cutscene painted: not where the screen is the original's own art
  * there (data\ui\screens\MAIN.png: the window's frame and ornaments), nor its black (colour 0); no edge round it */
 #include "ui.h"
@@ -64,12 +83,7 @@ UWV_API const unsigned char *uwv_cutscene(const unsigned *src, int sw, int sh, i
 {
     const Pic *art = ui_pic_file("ui\\screens\\MAIN.png");
     if (!src || uw <= 0 || uh <= 0 || scale < 1) return NULL;
-    if (!buf || bw != uw || bh != uh) {
-        free(buf);
-        buf = malloc((size_t)uw * (size_t)uh * 4);
-        bw = uw, bh = uh;
-        if (!buf) return NULL;
-    }
+    if (!layer_buf(uw, uh)) return NULL;
     unsigned shade = (unsigned)(dim & 0xFF) << 24;
     for (size_t i = 0, all = (size_t)uw * (size_t)uh; i < all; i++) buf[i] = shade;
     for (int y = 0; y < h * scale; y++) {
@@ -91,7 +105,7 @@ UWV_API const unsigned char *uwv_cutscene(const unsigned *src, int sw, int sh, i
     return (const unsigned char *)buf;
 }
 
-/* ---- our conversation text (the plan's step A2) ------------------------------------------------------------------
+/* ---- our conversation text ----------------------------------------------------------------------------------------
  * The backend (port\win32\uwconv.c) hands each text area of the conversation screen: its rectangle on the original's
  * screen (x, y, w, h), where that point is in the layer (dx, dy), the scale, the colours the original's text is drawn
  * in there (erase: 0x00RRGGBB), and the text to draw, from the conversation's record (uwconvrec.c): the original's
@@ -116,11 +130,16 @@ typedef struct { unsigned char cov[64 * 64]; int adv; } SGlyph;   /* coverage 0-
 static SGlyph *sg;              /* 256 characters at the size sg_em */
 static int sg_em, sg_cw, sg_ch, sg_pad, sg_base;
 
+/* makes the 256 glyph cells for the smooth font at size em (Tahoma through GDI; a stand-in face on Linux) */
 static void smooth_build(int em)
 {
+    static int said;
     if (sg && sg_em == em) return;
     if (!sg) sg = calloc(256, sizeof *sg);
-    if (!sg) return;
+    if (!sg) {
+        if (!said) said = 1, RLOG_E(LOG_TAG, "out of memory (%zu bytes)", (size_t)256 * sizeof *sg);
+        return;
+    }
     sg_em = em, sg_pad = em / 4 + 1;
     sg_cw = em + 2 * sg_pad, sg_ch = em * 3 / 2 + 2;
     if (sg_cw > 64) sg_cw = 64;
@@ -166,12 +185,14 @@ static void smooth_build(int em)
 /* the font in use: a character's advance, a line's height, and drawing one at (x, y) (its line's top) */
 static int tf_original, tf_k, tf_line;
 int uwv_ui_ready(void);         /* uwview.c: the game's fonts loaded */
+/* picks the font for this scale and line height (the original's, or the smooth one made at that size) */
 static void tf_set(int scale, int line_rows)
 {
     tf_original = uwv_conv_font_original && uwv_ui_ready(), tf_k = scale;
     tf_line = line_rows * scale;
     if (!tf_original) smooth_build(tf_line * 4 / 5);
 }
+/* the pen's advance after character c */
 static int tf_adv(int c)
 {
     /* the original's pen moves by the glyph's own width (its string_width / string_to_screen: the width byte holds the
@@ -180,6 +201,7 @@ static int tf_adv(int c)
     return sg ? sg[(unsigned char)c].adv : tf_k * 6;
 }
 static int clip_y0, clip_y1;
+/* blends ink into one layer pixel at coverage a (0-255), inside the text's clip rows */
 static void put(int x, int y, unsigned ink, int a)
 {
     if (x < 0 || y < clip_y0 || x >= bw || y >= clip_y1 || y >= bh || a <= 0) return;
@@ -189,6 +211,7 @@ static void put(int x, int y, unsigned ink, int a)
     or_ += (r - or_) * a / 255, og += (g - og) * a / 255, ob += (b - ob) * a / 255;
     *d = 0xFF000000u | (unsigned)or_ | (unsigned)og << 8 | (unsigned)ob << 16;
 }
+/* draws character c at (x, y), its line's top */
 static void tf_draw(int c, int x, int y, unsigned ink)
 {
     if (tf_original) {
@@ -214,6 +237,7 @@ static void tf_draw(int c, int x, int y, unsigned ink)
 enum { TL_MAX = 4096 };
 static struct { int a, b, col; } tl[TL_MAX];     /* the wrapped lines: text [a, b), the colour at a */
 
+/* breaks s into lines of at most width pixels (at spaces, and at new lines) into tl; returns how many */
 static int wrap(const char *s, int width)
 {
     int n = 0, col = 1, i = 0;
@@ -239,6 +263,7 @@ static int wrap(const char *s, int width)
     return n;
 }
 
+/* one screen pixel c drawn scale x scale into the layer */
 static void block(const unsigned *src, int sw, int x, int y, int rx, int ry, int dx, int dy, int scale, unsigned c)
 {
     unsigned px = 0xFF000000u | (c >> 16 & 0xFF) | (c & 0xFF00) | (c & 0xFF) << 16;
@@ -322,7 +347,7 @@ UWV_API int uwv_conv_text(const unsigned *src, int sw, int sh, int x, int y, int
     return n;
 }
 
-/* ---- our map (the plan's Part B: the original's look, sharper; the user 2026-11-13) --------------------------------
+/* ---- our map: the original's look, sharper -----------------------------------------------------------------------
  * The original (AUTOMAP.C) still draws its map into its screen (its rand() calls are the game's; nothing here calls
  * rand()). Over the map's part of the screen we draw it again at the window's resolution from the same data, by the
  * same rules, in palette indices as the original works: the parchment (DATA\BLNKMAP.BYT), each seen tile of PlayersMap
@@ -340,6 +365,7 @@ static unsigned short *mapidx;          /* our map's palette indices (16 bits: t
 static int map_w, map_h;
 enum { MR_X0 = 8, MR_X1 = 200, MR_Y0 = 5, MR_Y1 = 197 };   /* the region we draw (x, and y up), the map's and its edges */
 
+/* a fixed hash of a place, for the map's "hand-drawn" grain */
 static unsigned mhash(unsigned x, unsigned y, unsigned salt)
 {
     unsigned h = x * 0x9E3779B1u ^ (y + 0x7F4A7C15u) * 0x85EBCA77u ^ salt * 0xC2B2AE3Du;
@@ -431,7 +457,7 @@ static int map_side(const unsigned char *pm, int side, int x, int y)
     return 1;
 }
 
-/* a picture's shape (its PNG's alpha; y up top) with the colours the original's screen has there: the original drew it
+/* draws a picture's shape (its PNG's alpha; y up top) with the colours the original's screen has there: the original drew it
    in the palette now (the map's), which the PNG (made with the game's) does not have */
 static void put_pic(const Pic *p, const unsigned *src, int x, int ytop, int dx, int dy, int k)
 {
@@ -454,6 +480,7 @@ static void put_pic(const Pic *p, const unsigned *src, int x, int ytop, int dx, 
         }
 }
 
+/* a text in the small game font at screen (x, ytop), scaled up */
 static void map_text(const char *s, int x, int ytop, unsigned ink, int dx, int dy, int k)   /* FONT4X5P, as string_to_screen */
 {
     unsigned px = 0xFF000000u | (ink >> 16 & 0xFF) | (ink & 0xFF00) | (ink & 0xFF) << 16;
@@ -476,7 +503,7 @@ static void map_text(const char *s, int x, int ytop, unsigned ink, int dx, int d
     }
 }
 
-/* pm: PlayersMap (64 x 64, [y][x]); pal: the palette now (256, 0x00RRGGBB); notes: n of them, each 50 bytes of text and
+/* draws our automap over the map's part of the screen. pm: PlayersMap (64 x 64, [y][x]); pal: the palette now (256, 0x00RRGGBB); notes: n of them, each 50 bytes of text and
  * nx/ny (x, y up; x < 0 erased); typing: the note being typed (NULL none) at tx, ty; marker mx, my (mx < 0 none);
  * cursor: on (its rectangle cx, cytop, its picture cpic) or not. dx, dy, k: where the screen's (0, 0) is in the layer
  * and its scale. 1: drawn. */
@@ -488,7 +515,11 @@ UWV_API int uwv_map(const unsigned *src, int sw, int sh, int dx, int dy, int k, 
     if (!map_bg_tried) {
         map_bg_tried = 1;
         map_bg = malloc(64000);
-        if (map_bg && uwv_game_file("DATA\\BLNKMAP.BYT", map_bg, 64000) != 64000) free(map_bg), map_bg = NULL;
+        if (!map_bg) RLOG_E(LOG_TAG, "out of memory (%zu bytes)", (size_t)64000);
+        else if (uwv_game_file("DATA\\BLNKMAP.BYT", map_bg, 64000) != 64000) {
+            RLOG_W(LOG_TAG, "DATA\\BLNKMAP.BYT not found or short: the map keeps the original's drawing");
+            free(map_bg), map_bg = NULL;
+        }
     }
     if (!map_bg || !uwv_ui_ready()) return 0;
     mk = k, mgrain = k >= 4 ? k / 2 : 1;
@@ -497,7 +528,11 @@ UWV_API int uwv_map(const unsigned *src, int sw, int sh, int dx, int dy, int k, 
         free(mapidx);
         mapidx = malloc((size_t)w * h * sizeof *mapidx);
         map_w = w, map_h = h;
-        if (!mapidx) return 0;
+        if (!mapidx) {
+            static int said;   /* (retried every frame: say it once) */
+            if (!said) said = 1, RLOG_E(LOG_TAG, "out of memory (%zu bytes)", (size_t)w * h * sizeof *mapidx);
+            return 0;
+        }
     }
     for (int Y = 0; Y < h; Y++) {   /* the parchment */
         int row = 199 - MR_Y1 + Y / k;

@@ -1,11 +1,19 @@
-/* uwview.c: our D3D12 renderer (render.c: DLSS, DLSS 5, ray tracing) as a DLL for the port of the original game
- * (underworld-exhumed's UW1 port, on our Win32 backend port/win32/plat_win32.c, which loads this DLL when it is
- * beside the program and draws with GDI when it is not). A small C face, so the port's build needs nothing of
- * ours: the window, the size, and each frame's picture of the game's screen as the interface layer.
+/* uwview.c: the renderer DLL's C face. It is compiled into uwview.dll (with render.c: Direct3D 12), uwview_vk.dll
+ * (with render_vk.c: Vulkan, the default), the Linux libuwview.so (tools\buildview_linux.py; os_posix.h stands in for
+ * Windows' names) and tests\uwtour.c's uwtour.exe. The program's backend (port\win32\uwfront.c) finds the uwv_*
+ * entry points by name, so the port's build needs nothing of ours.
  *
- * Step 1 (this): the original's 320x200 screen, scaled by the backend into the interface layer, over an empty
- * scene: the picture as GDI showed it, through D3D12. Later steps give the scene the game's level and camera.
- * On Linux (libuwview.so, the Vulkan renderer: tools\buildview_linux.py) os_posix.h stands in for Windows' names. */
+ * What it does: reads our settings (data\settings.txt), starts the renderer on the program's window, builds each
+ * level's scene from the game's own level block (walls, floors, textures, lights, objects, creatures, doors), moves
+ * the camera and the player's torch with the game, and draws our interface over the scene: the Esc menu's rows
+ * (uwv_option), the HUD pieces, the message box, the inventory panel, the effects (particles, decals, water, fog).
+ * It only shows the game: no rule of the game is decided here.
+ *
+ * Log: lines go through rlog (port\win32\rlog.h) with the tag "view". A few stay raw "uwview: ..." lines on stderr,
+ * because check scripts read them from the start of the line or as the whole line: "level N: cannot read our level
+ * data" and "level N: T triangles" (tools\inputcheck.py, ^uwview: level; also deathcheck.py), "particles: ..." and
+ * "decals: level N: cleared" (fxcheck.py: startswith and whole-line compares), "decal test at screen" and "fx event
+ * sound" (fxcheck.py: startswith). The acoustic dump (UWVIEW_ACOUSTIC_DUMP) is data in its own file. */
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -17,6 +25,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <errno.h>
+#include "rlog.h"
 #include "render.h"
 #include "base.h"
 #include "extract.h"
@@ -53,18 +63,18 @@ static int out_w, out_h;               /* the output's size */
 static struct {
     int vsync, dlss, dlss_quality, dlss5, dlss5_style, raytracing, rt_high, normal_maps, hand, moving_light, port_quality, bounces, invert_mouse;
     float dlss5_intensity, dlss5_structure, dlss5_tone, dlss5_saturation, exposure, gamma, normal_strength, bounce, sheen, ray_length, sprite_strength, mouse, fov, sprite_ao, sprite_height, texture_ao, texture_shadow;
-} S = {1, 1, DLSS_Q_QUALITY, 0, 1, 1, 0, 1, 1, 0, DLSS_Q_DLAA, 1, 0, 1, 1, 1, 1.15f, 2, 1, 1, 1, 0, 8, 0.5f, 1, 85, 0.5f, 0, 1, 3}; /* normal strength 1, no sheen: the user
-                                                                            * wants no shiny walls ("sheen" turns it on) */
-/* The glowing things (the user, 2026-11-17; each its own Esc row): glow_things, the glowing rocks, orbs and orb rocks
+} S = {1, 1, DLSS_Q_QUALITY, 0, 1, 1, 0, 1, 1, 0, DLSS_Q_DLAA, 1, 0, 1, 1, 1, 1.15f, 2, 1, 1, 1, 0, 8, 0.5f, 1, 85, 0.5f, 0, 1, 3}; /* normal strength 1, no sheen: no shiny
+                                                                            * walls unless asked ("sheen" turns it on) */
+/* The glowing things (each its own Esc row): glow_things, the glowing rocks, orbs and orb rocks
  * glow a foot round them (light_glowing_things); moonstone, the moonstone's deep blue light flooding its room, as a
  * share of a candle (light_moonstone, 0.10); elemental, a fire elemental's smouldering light, the same way
  * (light_fire_elemental, 0.30); camp_smoke, smoke rising from the campfires and thinning out (fx_campfire_smoke);
  * water_mist, fog lying over the water (fx_water_mist). The last two are particles: they need fx_particles. */
 static struct { int glow_things; float moonstone, elemental; int camp_smoke, water_mist; } GL = {1, 0.10f, 0.30f, 1, 1};
-/* Textures (the Esc menu, the user 2026-11-14): the walls' and floors' own (0) or upscaled, 256 or 512 (settings.txt
+/* Textures (the Esc menu): the walls' and floors' own (0) or upscaled, 256 or 512 (settings.txt
  * texture_res; data\upscaled, tools\make_upscaled_data.py); hires_apply makes the renderer's copy when it changes */
 static int tex_res;
-/* the relief maps, a row a kind (the user, 2026-11-15 and 11-16: "an option for each type of map", each with the
+/* the relief maps, a row a kind (each kind of map its own choice, with the
  * textures' choices): map_res[0] the normal maps, [1] the occlusion (the joints' shadows), [2] the height (the
  * relief's shadows); -1 as the textures (the default), 0 the original's 64 texel maps, 256 or 512 the maps made from
  * the upscaled texture of that size (tools\make_upscaled_maps.py). settings.txt normal_map_res, ao_map_res,
@@ -79,13 +89,13 @@ static void hires_apply(void);
 static struct { int audio, acoustics, fog, particles, decals, water; } FX;
 static int smooth_on = 1;               /* Smooth motion (uwv_camera's smooth_pose): settings.txt smooth_motion */
 int uwv_conv_font_original;             /* uwconv_draw.c's text: settings.txt conv_font (smooth 0, original 1) */
-/* the inventory's character sheet (uwinv_draw.c; the user, 2026-11-14): settings.txt char_sheet, full (1, the default:
+/* the inventory's character sheet (uwinv_draw.c): settings.txt char_sheet, full (1, the default:
  * our first engine's sheet, every number the rules use) or original (0: the game's statistics page) */
 int uwv_sheet_full = 1;
-/* our message box's text (uwv_log; the user, 2026-11-14: smaller and easier to read): settings.txt log_font, smooth (0,
+/* our message box's text (uwv_log; smaller and easier to read): settings.txt log_font, smooth (0,
  * the default: smoothtext.c) or original (1: the game's letters, as it was) */
 static int log_font_original;
-/* the Esc menu's text (the user, 2026-11-14: the game's small letters were hard to read): settings.txt menu_font,
+/* the Esc menu's text (the game's small letters are hard to read): settings.txt menu_font,
  * smooth (0, the default: smoothtext.c) or original (1: FONT_SMALL in capitals, as it was) */
 static int menu_font_original;
 static int menu_leather;                /* Menu background (settings.txt menu_background leather): 0 the solid colour */
@@ -102,10 +112,14 @@ static int fx_range_set = 6, fx_feet_set = 100, ac_quality_set = 1;   /* fx_hear
 static int fx_stepvol_set = 80, fx_stepecho_set = 50;   /* fx_step_volume, fx_step_echo (%): uwaudio.c */
 static int fx_footsteps_set = 1;   /* fx_footsteps: the footsteps by their floor's material (uwaudio.c) */
 static char ui_face_name[64];   /* settings.txt ui_font_name: the interface's face by name (st_face_find) */
+/* the fires' swells as settings.txt has them (render.c's defaults: 0.35 and 0.15), for their Esc rows */
+static float camp_swell = 0.35f, flame_swell = 0.15f;
+/* settings.txt (or a check's UWVIEW_SETTINGS file): each "key value" line into the settings above; unknown keys skipped */
 static void read_settings(const char *path)
 {
     FILE *f = fopen(path, "r");
     char line[512];
+    if (!f && errno != ENOENT) RLOG_W("view", "cannot read %s: %s (its settings not taken)", path, rlog_errno());   /* (none yet: the defaults, no failure) */
     if (!f) return;
     while (fgets(line, sizeof line, f)) {
         char key[64], val[64];
@@ -169,8 +183,8 @@ static void read_settings(const char *path)
         else if (!strcmp(key, "object_shadows")) render_set_object_shadows(v != 0);
         else if (!strcmp(key, "light_fade")) render_set_light_fade(v != 0);   /* the lights' fade by distance (1) */
         else if (!strcmp(key, "flame_breath")) render_set_breath_depth(v);   /* the fires' slow breath, 0-0.4 (0.20) */
-        else if (!strcmp(key, "campfire_swell")) render_set_campfire_depth(v);   /* the campfires' own swell, 0-0.6 (0.35) */
-        else if (!strcmp(key, "flame_swell")) render_set_puff_depth(v);   /* the fires' coherent swell, 0-0.5 */   /* objects, creatures, doors */                 /* uw.exe's: the vertical field of view, degrees */   /* uw.exe's: how fast the mouse turns the view */
+        else if (!strcmp(key, "campfire_swell")) render_set_campfire_depth(camp_swell = v);   /* the campfires' own swell, 0-0.6 (0.35) */
+        else if (!strcmp(key, "flame_swell")) render_set_puff_depth(flame_swell = v);   /* the fires' coherent swell, 0-0.5 */   /* objects, creatures, doors */                 /* uw.exe's: the vertical field of view, degrees */   /* uw.exe's: how fast the mouse turns the view */
         else if (!strcmp(key, "invert_mouse")) S.invert_mouse = (int)v;   /* tiles a bounce ray goes (8) */
         else if (!strcmp(key, "rt_bounces")) S.bounces = (int)v;     /* 1 one bounce; 2+ the probes' feedback */
         else if (!strcmp(key, "sheen")) S.sheen = v;   /* the port: the stone's sheen, 0 none */
@@ -291,7 +305,7 @@ static void find_dirs(void)
             /* (a path with letters the program's locale cannot widen: no DLSS, said once; the rest goes on) */
             if (swprintf(dlss_dir, MAX_PATH, L"%s/dlss", p) < 0 || swprintf(log_dir, MAX_PATH, L"%s/logs", p) < 0) {
                 dlss_dir[0] = log_dir[0] = 0;
-                fprintf(stderr, "uwview: DLSS off: NGX cannot be given this folder's path (%s): use a folder with plain letters\n", p);
+                RLOG_W("view", "DLSS off: NGX cannot be given this folder's path (%s): use a folder with plain letters", p);
                 return;
             }
             snprintf(probe, sizeof probe, "%s/logs", p);
@@ -339,7 +353,7 @@ UWV_API int uwv_init(void *hwnd, int w, int h)
         data_dirs(data, game);
         snprintf(p, sizeof p, "%s\\settings.txt", data);
         {   /* the user's own fonts: every .ttf / .otf in the fonts folder beside the game, loaded for this program only
-               and offered in the Esc menu's Font row (the user, 2026-11-14: "could we include other fonts?") */
+               and offered in the Esc menu's Font row */
             char fd[MAX_PATH];
             snprintf(fd, sizeof fd, "%s\\fonts", root);
             CreateDirectoryA(fd, NULL);
@@ -356,17 +370,17 @@ UWV_API int uwv_init(void *hwnd, int w, int h)
             if (k >= 0) ui_set_font(k + 1);
         }
         settings_env();
-        fprintf(stderr, "uwview: settings read from %s\n", p);
+        RLOG_I("view", "settings read from %s", p);
         /* the first run of a package without our relief maps (mapsmake.h): made here, before the title
-           (2026-11-16; level_build asks again, for a renderer that had no game folder yet) */
+           (level_build asks again, for a renderer that had no game folder yet) */
         if (game[0]) maps_make_if_missing(root, data, game);
     }
     RenderConfig rc = {hwnd, w, h, S.vsync != 0};
-    fprintf(stderr, "uwview: starting the graphics card's renderer (%dx%d)\n", w, h);
+    RLOG_I("view", "starting the graphics card's renderer (%dx%d)", w, h);
     /* DLSS, DLSS 5, ray tracing and ray tracing High (DLSS Ray Reconstruction) as our settings have them; each
      * falls back by itself where the card or its driver lacks it (render.c: without DLSS the scene is drawn at the
      * window's size, without DXR the shadows go through the tile grid) */
-    /* DLSS at the window's own resolution (DLAA: no upscaling, the user's), unless port_dlss_quality says otherwise;
+    /* DLSS at the window's own resolution (DLAA: no upscaling), unless port_dlss_quality says otherwise;
      * Ray Reconstruction and DLSS 5 work on it as on an upscaled picture */
     rc.dlss = dlss_dir[0] != 0 && S.dlss, rc.dlss_quality = S.port_quality;
     rc.dlss5 = S.dlss5 != 0, rc.nr_style = S.dlss5_style;
@@ -420,7 +434,7 @@ UWV_API void uwv_game_dir(const char *dir) { snprintf(game_dir, sizeof game_dir,
 static void data_dirs(char *data, char *game)
 {
     const char *e = getenv("UWVIEW_DATA");
-    /* a flat folder (the user, 2026-11-16: the program beside the game's own UW.EXE, no game\ folder): our own files
+    /* a flat folder (the program beside the game's own UW.EXE, no game\ folder): our own files
        are in uwr\, so that nothing of ours lands in the game's DATA\ (uwfront.c's uwf_our_data makes the same choice) */
     static int is_flat = -1;
     if (is_flat < 0 && root[0]) {
@@ -455,6 +469,8 @@ static void vol_frame(float dt);
 static void vol_shot(float dt);
 static void fx_decal(float x, float z, int kind, float size, const float rgb[3], int who);
 static void fx_decal_screen(float x, float y, float z);
+/* level n's scene: our level data, its lights and mesh, to the graphics card (the game's files read first, once);
+   false: none */
 static bool level_build(int n)
 {
     const unsigned char *block = lv_block;
@@ -462,7 +478,7 @@ static bool level_build(int n)
     data_dirs(data, game);
     if (!arena_ready) {
         arena_init((size_t)1024 << 20);
-        /* the game's own files are not extracted onto the disk (the user, 2026-11-16): what extract_missing makes is
+        /* the game's own files are not extracted onto the disk: what extract_missing makes is
            kept in memory, this run's; a file on the disk under data\ is someone's own and is read first.
            UWVIEW_EXTRACT_TO_DISK=1: written out as before (the tools that work on the loose files) */
         {
@@ -478,25 +494,25 @@ static bool level_build(int n)
                     snprintf(p, sizeof p, "%s\\%s", data, ours[k]);
                     snprintf(has + strlen(has), sizeof has - strlen(has), " %s %s,", ours[k], file_exists(p) ? "there" : "MISSING");
                 }
-                fprintf(stderr, "uwview: the game's own files in %s; ours in %s:%s\n", game, data, has);
+                RLOG_I("view", "the game's own files in %s; ours in %s:%s", game, data, has);
             }
-            fprintf(stderr, "uwview: reading the game's own files (textures, sprites, levels, texts)\n");
+            RLOG_I("view", "reading the game's own files (textures, sprites, levels, texts)");
             if (!(e && *e && *e != '0')) file_memory_root(data);
-            /* (measured 2026-11-16: 0.4 s at a start; one cache file saved 0.2 s of it and was dropped) */
+            /* (about 0.4 s at a start; a cache file would save only half of it) */
             made = extract_missing(data, game);
-            fprintf(stderr, "uwview: the game's files read: %d made, %d kept in memory (%zu KB), %ld ms\n", made, file_memory_count(&bytes), bytes >> 10,
+            RLOG_I("view", "the game's files read: %d made, %d kept in memory (%zu KB), %ld ms", made, file_memory_count(&bytes), bytes >> 10,
                     (long)((clock() - t0) * 1000 / CLOCKS_PER_SEC));
         }
         maps_make_if_missing(root, data, game);   /* the first run of a package without our relief maps (mapsmake.h) */
-        fprintf(stderr, "uwview: reading the game's 3D models\n");
+        RLOG_I("view", "reading the game's 3D models");
         models_load(game);   /* the original's 3D models (game\UW.EXE), for world_model_quads */
         lv_mark = arena_mark();
         arena_ready = true;
     }
     arena_reset(lv_mark);
     lv_number = 0;
-    fprintf(stderr, "uwview: building level %d (its walls, floors, textures and lights)\n", n);
-    clock_t bt[5];   /* (2026-11-17: the parts of the build timed, a level's change took 2.8 s) */
+    RLOG_I("view", "building level %d (its walls, floors, textures and lights)", n);
+    clock_t bt[5];   /* (the parts of the build timed: a level's change is slow) */
     extern long png_stat_n, png_stat_ticks;
     png_stat_n = png_stat_ticks = 0;
     bt[0] = clock();
@@ -509,12 +525,12 @@ static bool level_build(int n)
     if (nl < 0) nl = 0;
     lights_tiles(&lv, lights, nl, tiles);
     nlights = nbase = nl, mv_index = -1, mv_tried = false, burn_sig = 0;
-    level_relief = false; /* the original's flat walls and floors, the user's normal maps on them */
+    level_relief = false; /* the original's flat walls and floors, our normal maps on them */
     bt[1] = clock();
     bool mesh_ok = level_mesh(&lv, data, NULL, 0, &m);
     bt[2] = clock();
     if (!mesh_ok || !render_upload(&m)) {
-        fprintf(stderr, "uwview: level %d: no mesh\n", n);
+        RLOG_E("view", "level %d: no mesh (the level's mesh not made or not taken by the graphics card)", n);
         return false;
     }
     render_set_lights(lights, nl, tiles);
@@ -529,7 +545,7 @@ static bool level_build(int n)
     hires_apply();     /* the upscaled textures (once: the renderer keeps them across levels) */
     bt[4] = clock();
     fprintf(stderr, "uwview: level %d: %d triangles, %d lights\n", n, m.indices / 3, nl);
-    fprintf(stderr, "uwview: level %d's build: the level read %ld ms, its mesh and textures %ld ms, to the graphics card %ld ms, the larger textures %ld ms; %ld pictures unpacked in %ld ms\n", n,
+    RLOG_I("view", "level %d's build: the level read %ld ms, its mesh and textures %ld ms, to the graphics card %ld ms, the larger textures %ld ms; %ld pictures unpacked in %ld ms", n,
             (long)((bt[1] - bt[0]) * 1000 / CLOCKS_PER_SEC), (long)((bt[2] - bt[1]) * 1000 / CLOCKS_PER_SEC),
             (long)((bt[3] - bt[2]) * 1000 / CLOCKS_PER_SEC), (long)((bt[4] - bt[3]) * 1000 / CLOCKS_PER_SEC), png_stat_n, png_stat_ticks * 1000 / CLOCKS_PER_SEC);
     return true;
@@ -545,12 +561,12 @@ UWV_API int uwv_level(const unsigned char *block, int n)
     if (n == lv_number && shape_hash(block) == lv_shape) return 1;
     clock_t t0 = clock();
     bool ok = level_build(n);
-    fprintf(stderr, "uwview: level %d's scene took %ld ms to build\n", n, (long)((clock() - t0) * 1000 / CLOCKS_PER_SEC));
+    RLOG_I("view", "level %d's scene took %ld ms to build", n, (long)((clock() - t0) * 1000 / CLOCKS_PER_SEC));
     return ok;
 }
 
 /* 1: level n's scene is there (uwv_level would build nothing). The front end holds the game still while a scene
-   is built (the user, 2026-11-17: attacked on the way down to level 2 with no picture yet) */
+   is built (otherwise the player could be attacked on a level not yet shown) */
 /* (0: the scene is level n's as the block has it; 1: another level, to be built; 2: the same level number but the
    block's shape changed: the game reading a new level in, its number not yet the new one, or a trap's change) */
 UWV_API int uwv_level_state(const unsigned char *block, int n)
@@ -583,7 +599,7 @@ static int cmp_at(int k)
 /* the camera: where the player's eye is (tiles; y up from the floor's zero), the facing (radians, 0 north, east
  * positive) and the pitch (radians, up positive) */
 static int cam_frames_still;           /* (the checks: frames the eye has not moved) */
-/* Smooth motion (the user, 2026-11-13; the Esc menu's row, settings.txt smooth_motion, 1 the default): the game moves
+/* Smooth motion (the Esc menu's row, settings.txt smooth_motion, 1 the default): the game moves
  * the eye in steps, at its own pace of 8 ticks of its 256 Hz clock (31.25 ms: the original's, kept for its physics),
  * and the backend hands us the newest each frame we draw (about 100 a second). Each new pose is eased into from the
  * one on show over one game step, so the picture moves every frame we draw; at most one step (31 ms) behind the
@@ -600,6 +616,7 @@ static int steady_check(void)
     if (v < 0) { const char *e = getenv("UWVIEW_STEADY"); v = e && *e && *e != '0'; }
     return v;
 }
+/* a steady clock in milliseconds (the smooth motion's) */
 static double qpc_ms(void)
 {
 #ifndef _WIN32
@@ -621,6 +638,7 @@ static float ang_diff(float a, float b)   /* b - a, the short way round (radians
     if (d < -3.14159265f) d += 6.2831853f;
     return d;
 }
+/* the eye's pose eased from the game's last step to its newest (Smooth motion; at once when it is off) */
 static void smooth_pose(float *x, float *y, float *z, float *yaw, float *pitch)
 {
     static bool have;
@@ -643,6 +661,7 @@ static void smooth_pose(float *x, float *y, float *z, float *yaw, float *pitch)
     for (int k = 0; k < 5; k++) P[k] = from[k] + (k == 3 ? ang_diff(from[k], to[k]) : to[k] - from[k]) * a;
     *x = P[0], *y = P[1], *z = P[2], *yaw = P[3], *pitch = P[4];
 }
+/* the eye from the game, each frame: eased, a jump of over two tiles counted as a teleport (no motion, the marks gone) */
 UWV_API void uwv_camera(float x, float y, float z, float yaw, float pitch)
 {
     if (cmp_phase) return;             /* held still for the comparison */
@@ -652,7 +671,7 @@ UWV_API void uwv_camera(float x, float y, float z, float yaw, float pitch)
     if (d > 4.0f) cam_reset = true; /* a teleport: no motion from the last frame */
     if (d > 4.0f && render_decals_count()) {   /* (the effects: a jump of the eye, a load among them: the marks gone, as never saved) */
         render_decals_clear();
-        if (getenv("UWVIEW_FX_LOG")) fprintf(stderr, "uwview: decals: the eye jumped: cleared\n");
+        if (getenv("UWVIEW_FX_LOG")) RLOG_I("view", "decals: the eye jumped: cleared");
     }
     cam.pos[0] = x, cam.pos[1] = y, cam.pos[2] = z, cam.yaw = yaw, cam.pitch = pitch;
 }
@@ -664,7 +683,7 @@ static int light_level;
 UWV_API void uwv_light(int level)
 {
     int l = level < 0 || level > 7 ? 0 : level;
-    if (l != light_level) fprintf(stderr, "uwview: light level %d\n", l);
+    if (l != light_level) RLOG_I("view", "light level %d", l);
     light_level = l;
 }
 
@@ -683,6 +702,7 @@ static u8 *cyc_idx;        /* its palette entry */
 static u8 last_cyc[3 * 32];
 static bool cycling(int i) { return (i >= 0x10 && i <= 0x17) || (i >= 0x30 && i <= 0x3F); }
 static u8 c8(u8 v) { return (u8)((v << 2) | (v >> 4)); }
+/* the atlas's texture pixels in palette 0's cycling colours (PALS.DAT read once), for uwv_palette */
 static void cycle_find(void)
 {
     free(cyc_at), free(cyc_idx), cyc_at = NULL, cyc_idx = NULL, cyc_n = 0;
@@ -692,12 +712,17 @@ static void cycle_find(void)
         base_read = true;
         snprintf(p, sizeof p, "%s\\DATA\\PALS.DAT", game_dir);
         FILE *f = fopen(p, "rb");
+        if (!f) RLOG_W("view", "cannot open %s: %s (no colour cycling, fades or flashes in the scene)", p, rlog_errno());
         if (f) base_ok = fread(base_pal, 1, 768, f) == 768, fclose(f);
+        if (f && !base_ok) RLOG_W("view", "%s: shorter than one palette (no colour cycling, fades or flashes in the scene)", p);
     }
     if (!base_ok || !m.atlas) return;
     int cap = 1 << 16;
     cyc_at = malloc(sizeof(int) * (size_t)cap), cyc_idx = malloc((size_t)cap);
-    if (!cyc_at || !cyc_idx) return;
+    if (!cyc_at || !cyc_idx) {
+        RLOG_E("view", "the cycling colours' lists: out of memory (water and lava not cycling)");
+        return;
+    }
     for (int y = 0; y < 960; y++)   /* the textures' rows (row 1023: the cycling colours' row, below) */
         for (int x = 0; x < ATLAS_SIZE && cyc_n < cap; x++) {
             const u8 *px = m.atlas + ((size_t)y * ATLAS_SIZE + x) * 4;
@@ -710,8 +735,9 @@ static void cycle_find(void)
                 }
             }
         }
-    fprintf(stderr, "uwview: %d texture pixels in the cycling colours\n", cyc_n);
+    RLOG_I("view", "%d texture pixels in the cycling colours", cyc_n);
 }
+/* the game's palette this frame: its fades and flashes as the scene's tint, its cycling colours into the atlas */
 UWV_API void uwv_palette(const unsigned char *pal)
 {
     if (!started || !pal) return;
@@ -754,7 +780,7 @@ UWV_API void uwv_palette(const unsigned char *pal)
  * its atlas place times 4 (256) or 8 (512), nearest texel when a file's size differs; a missing one: the original
  * texture, enlarged. A texel in one of palette 0's cycling colours (as cycle_find matches them) keeps the entry in
  * its alpha (common.hlsli). Off (texture_res 0): none. */
-/* The relief maps with them (the user, 2026-11-15, 11-16; map_res, the Esc menu's three "... map detail" rows): the
+/* The relief maps with them (map_res, the Esc menu's three "... map detail" rows): the
  * picture is made twice as wide and its right half holds, at each texture's place, r, g the normal's x, y; b the
  * occlusion; a the height (common.hlsli hmaps_at). Each of the three comes from where its row says (eff[]: 0 the
  * original's maps, enlarged; 256 or 512 data\laigter\upscaled\walls|floors\256|512\NNN_m.png, nearest texel when
@@ -767,9 +793,10 @@ static bool hires_build(int f, const int *eff, bool colours)
     int size = 1024 * f, wide = maps ? size * 2 : size;
     u8 *px = calloc((size_t)wide * size, 4);
     u8 *lut = base_ok && colours ? calloc((size_t)1 << 24, 1) : NULL;   /* colour -> cycling entry (0: none) */
+    if (base_ok && colours && !lut) RLOG_W("view", "textures %d: the cycling colours' table: out of memory (water and lava not cycling in them)", tex_res);
     if (!px) {
         free(lut);
-        fprintf(stderr, "uwview: textures %d%s: out of memory\n", tex_res, maps ? " with relief maps" : "");
+        RLOG_E("view", "textures %d%s: out of memory", tex_res, maps ? " with relief maps" : "");
         return false;
     }
     if (maps)   /* flat, no occlusion, no height where no texture is */
@@ -841,11 +868,12 @@ static bool hires_build(int f, const int *eff, bool colours)
     }
     bool done = render_set_hires(px, size, f, maps, colours);
     free(px), free(lut);
-    if (colours) fprintf(stderr, "uwview: textures %d: %d of 262 upscaled files read%s\n", tex_res, found, done ? "" : ", NOT made (GPU memory)");
-    if (maps) fprintf(stderr, "uwview: relief maps (normal %d, occlusion %d, height %d): %d of %d map files read%s\n", eff[0], eff[1], eff[2], mfound, mwant, done ? "" : ", NOT made (GPU memory)");
+    if (colours) rlog(done ? RLOG_INFO : RLOG_WARN, "view", "textures %d: %d of 262 upscaled files read%s", tex_res, found, done ? "" : ", NOT made (GPU memory)");
+    if (maps) rlog(done ? RLOG_INFO : RLOG_WARN, "view", "relief maps (normal %d, occlusion %d, height %d): %d of %d map files read%s", eff[0], eff[1], eff[2], mfound, mwant, done ? "" : ", NOT made (GPU memory)");
     return done;
 }
 
+/* the upscaled textures and relief maps as the Esc rows have them, made again only when a choice changed */
 static void hires_apply(void)
 {
     int tf = tex_res == 512 ? 8 : tex_res == 256 ? 4 : 0, f = tf, eff[3];
@@ -920,7 +948,7 @@ static void moving_light_place(void)
     L->kind = LIGHT_ORB;
     mv_index = 0; /* placed by lights_rebuild, last */
     lights_rebuild();
-    fprintf(stderr, "uwview: the moving light: along %.1f,%.1f to %.1f,%.1f (%.1f tiles)\n", mv_a[0], mv_a[1], mv_b[0], mv_b[1], len);
+    RLOG_I("view", "the moving light: along %.1f,%.1f to %.1f,%.1f (%.1f tiles)", mv_a[0], mv_a[1], mv_b[0], mv_b[1], len);
 }
 
 /* --- the things in the level: the objects lying about (world.c's picture cards) and the creatures, from the
@@ -931,6 +959,7 @@ static Vertex cards[RENDER_MAX_SPRITE_VERTS];
  * it now (a moving door, 0x1CF, by the way it goes), about a third of a second to swing */
 static Door doors[128];
 static int ndoors;
+/* the level's doors from the game's block (up to 128), each as it stands now */
 static void doors_find(void)
 {
     ndoors = 0;
@@ -943,6 +972,7 @@ static void doors_find(void)
             d->open = o->item >= 0x148 ? 1.0f : 0.0f;
         }
 }
+/* the doors' leaves, each swung toward the way the game has it now: their quads into out, the count */
 static int door_quads(Vertex *out, int cap)
 {
     static unsigned long long last;
@@ -1020,7 +1050,7 @@ UWV_API int uwv_acoustic_doors(UwvAcDoor *out, int cap)
 /* changes whenever level_build made a level (a new level, or this one's shape changed): the grid is to be read again */
 UWV_API unsigned uwv_acoustic_epoch(void) { return ac_epoch; }
 /* the level's 3D model objects (benches, tables, barrels, chests, pillars, boulders, the shrine...) as boxes, for the
- * sound: what stands in a room changes how it rings (the user, 2026-11-16). As they stand when asked. */
+ * sound: what stands in a room changes how it rings. As they stand when asked. */
 typedef struct { int item; float lo[3], hi[3]; } UwvAcBox;
 UWV_API int uwv_acoustic_things(UwvAcBox *out, int cap)
 {
@@ -1041,7 +1071,11 @@ static void acoustic_built(void)
     int ceil = -1, nd;
     FILE *f;
     ac_epoch++;
-    if (!path || !*path || !uwv_acoustic_grid(t, &ceil) || !(f = fopen(path, "a"))) return;
+    if (!path || !*path || !uwv_acoustic_grid(t, &ceil)) return;
+    if (!(f = fopen(path, "a"))) {
+        RLOG_E("view", "cannot open %s: %s (the acoustic grid not written)", path, rlog_errno());
+        return;
+    }
     nd = uwv_acoustic_doors(d, 128);
     fprintf(f, "acoustic epoch %u level %d ceil %d doors %d\n", uwv_acoustic_epoch(), lv_number, ceil, nd);
     for (int i = 0; i < 64 * 64; i++)
@@ -1049,7 +1083,11 @@ static void acoustic_built(void)
     for (int i = 0; i < nd; i++)
         fprintf(f, "door %d %d %d %d %d %d %d\n", d[i].id, d[i].tx, d[i].tz, d[i].heading, d[i].item, d[i].picture, d[i].shut);
     fprintf(f, "end\n");
-    fclose(f);
+    {
+        bool bad = ferror(f) != 0;
+        if (fclose(f) != 0) bad = true;
+        if (bad) RLOG_E("view", "cannot write %s: %s", path, rlog_errno());
+    }
 }
 
 /* the level's shape (each square's type, heights, textures; not its objects): a change (a trigger that opens a
@@ -1082,6 +1120,7 @@ static const u8 DIRTAB[32] = {0, 0, 0, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 4, 4, 4,
  * what burns where changes. */
 static u8 light_bright[16] = {0, 0, 0, 0, 4, 2, 1, 3};
 static bool light_table_read;
+/* our light table (which things burn, and how bright) from our data, once a level has been built */
 static void read_light_table(void)
 {
     char data[MAX_PATH], game[MAX_PATH], p[MAX_PATH], line[256];
@@ -1106,6 +1145,7 @@ static void read_light_table(void)
 }
 static Light burning[256];
 static int nburning;
+/* the burning and glowing things in the level now, as lights (burning[]); the signature of what burns where */
 static unsigned burning_find(void)
 {
     static const float REACH[8] = {3, 3, 4, 4, 5, 6, 7, 7};
@@ -1121,7 +1161,7 @@ static unsigned burning_find(void)
             if (o->item >= 0x94 && o->item <= 0x97) b = light_bright[o->item - 0x90];
             else if (o->item == 0x12A) b = 4;
             else if (o->item == 0xAD || o->item == 0x157) {   /* an ankh (the pendant, a shrine's standing ankh): a soft, steady,
-                                                               golden holy light round it (the user's) */
+                                                               golden holy light round it (ours) */
                 Light *L = &burning[nburning++];
                 memset(L, 0, sizeof *L);
                 world_object_pos(&lv, t % 64, t / 64, o, L->pos);
@@ -1151,7 +1191,7 @@ static unsigned burning_find(void)
                 continue;
             }
             else if ((o->item == 0x129 || o->item == 0x117 || o->item == 0x112) && GL.glow_things) {
-                /* a glowing rock, an orb, an orb rock (the user, 2026-11-17: "should glow a foot away"): a steady glow
+                /* a glowing rock, an orb, an orb rock: a steady glow
                    in the picture's own colour reaching a foot (a quarter of a tile: 1.2 m a tile) */
                 static const float GC[3][3] = {{0.45f, 0.65f, 1.0f}, {0.3f, 0.8f, 0.95f}, {0.75f, 0.75f, 0.95f}};
                 Light *L = &burning[nburning++];
@@ -1165,7 +1205,7 @@ static unsigned burning_find(void)
                 continue;
             }
             else if (o->item == 0x126 && GL.moonstone > 0) {
-                /* the moonstone (the user: "a deep blue light that floods the room ... like a liquid", a tenth of a
+                /* the moonstone (a deep blue light that floods its room like a liquid, a tenth of a
                    candle): LIGHT_FLOOD, every open tile near it lit alike, round corners too (lights.c). A candle is
                    0.5 + 0.4 x 1 = 0.9 */
                 Light *L = &burning[nburning++];
@@ -1179,7 +1219,7 @@ static unsigned burning_find(void)
                 continue;
             }
             else if (o->item == 0x78 && GL.elemental > 0) {
-                /* a fire elemental (the user: "a smoldering orange/yellow 30% of a candle"): a low flame's light going
+                /* a fire elemental (a smouldering orange-yellow, 30% of a candle): a low flame's light going
                    about with it, a candle's reach (3 tiles), 1500 K (a smouldering orange-yellow), flickering */
                 Light *L = &burning[nburning++];
                 memset(L, 0, sizeof *L);
@@ -1199,8 +1239,8 @@ static unsigned burning_find(void)
             world_object_pos(&lv, t % 64, t / 64, o, L->pos);
             L->pos[1] += o->item == 0x12A ? 0.3f : 0.15f;
             memcpy(L->color, C[o->item == 0x12A ? 1 : (o->item - 0x94) & 3], 12);
-            /* as far as the player's own torch reaches (the user: they light like ours), 3 tiles; a campfire, which
-               the game's light table does not have (ours, the user's: "decent light"), about twice a torch's
+            /* as far as the player's own torch reaches (they light like ours), 3 tiles; a campfire, which
+               the game's light table does not have (ours: a good light), about twice a torch's
                brightness out to 5 tiles */
             if (o->item == 0x12A) L->intensity = 4.0f, L->range = 5.0f, L->flame = 0.5f;   /* a campfire: a big slow flame */
             else L->intensity = 0.5f + 0.4f * (float)b, L->range = REACH[b & 7];   /* the original's reach for its level (a torch 4) */
@@ -1239,10 +1279,10 @@ static void lights_rebuild(void)
  * silver tree, damage; render type 0 in COMOBJ.DAT, the moving door 0x1CF is a model and drawn as its door): as
  * DRAWOBJ.C's do_obj draws them, ANIMO.GR's frame given by the owner field (EFFECT.C's do_animobj moves it on),
  * or the object's own class when that is 0; not when invisible */
-/* the effects that glow and flash (ours, the user's): a blow's spark on a wall (ITEM_DAMAGE 0x1CB), the explosions
+/* the effects that glow and flash (ours): a blow's spark on a wall (ITEM_DAMAGE 0x1CB), the explosions
  * (0x1C2-0x1C4), a spell's effect (0x1C7); blood, mist, splashes, smoke do not */
 static bool animo_glows(int item) { return item == 0x1CB || (item >= 0x1C2 && item <= 0x1C4) || item == 0x1C7; }
-/* ---- the particles (the user's sparks): spawned when one of the original's effect objects first appears (a blow's
+/* ---- the particles (our sparks): spawned when one of the original's effect objects first appears (a blow's
  * spark on a wall 0x1CB, blood 0x1C0, the explosions 0x1C2-0x1C4, the splashes 0x1C5-0x1C6, smoke 0x1C8, mist 0x1C1),
  * each kind its own burst; moved by their velocity and gravity, stopped by the floor (a spark bounces, a drop dies)
  * and by the solid tiles; drawn as small cards of the soft dot (level.c: ANIMO_CELL + 63) through the sprite path,
@@ -1254,6 +1294,7 @@ static int nparts;
 static unsigned long long part_t;
 static float frand(void) { return (float)rand() / (float)RAND_MAX; }
 static void gpu_part(const float p[3], const float v[3], float life, float size, const float c[3], int kind, float grav, float drag);
+/* one particle of a burst: on the GPU when the effects' particles are on, else in our own list */
 static void part_add(const float p[3], const float v[3], float life, float size, const float c0[3], const float c1[3], int glow, int bounce)
 {
     if (FX.particles) {   /* the effects' particles (render_particles.c): the same burst on the GPU, twice as thick */
@@ -1271,7 +1312,7 @@ static void part_add(const float p[3], const float v[3], float life, float size,
     memcpy(q->p, p, 12), memcpy(q->v, v, 12), memcpy(q->col0, c0, 12), memcpy(q->col1, c1, 12);
     q->age = 0, q->life = life, q->size = size, q->glow = glow, q->bounce = bounce;
 }
-/* the effects (Tasks 3, 4): the blood's colour by who bleeds (the creature's item, OBJECTS.DAT's names): green for the
+/* the effects: the blood's colour by who bleeds (the creature's item, OBJECTS.DAT's names): green for the
  * slugs, the lizardmen and the spiders, grey dust for the undead, the golems and the wisp, else red */
 static void blood_of(int item, float rgb[3])
 {
@@ -1359,6 +1400,7 @@ static void part_burst(const Object *o, const float p[3])
         }
     }
 }
+/* our own particles moved one frame: velocity, gravity, the floor; dead ones dropped */
 static void part_update(void)
 {
     unsigned long long now = GetTickCount64();
@@ -1405,7 +1447,7 @@ static int halo_card(Vertex *out, const float p[3], float s, const float c[3])
     }
     return 6;
 }
-/* the ankhs' halos (the user's holy glow): the pendant lying about, the shrine's standing ankh; breathing slowly */
+/* the ankhs' halos (our holy glow): the pendant lying about, the shrine's standing ankh; breathing slowly */
 static int halo_cards(Vertex *out, int cap)
 {
     int n = 0;
@@ -1418,11 +1460,12 @@ static int halo_cards(Vertex *out, int cap)
             world_object_pos(&lv, tt % 64, tt / 64, o, p);
             float b = 0.85f + 0.15f * sinf(t * 1.3f + (float)i);
             float c[3] = {0.95f * b, 0.78f * b, 0.32f * b};
-            if (o->item == 0x157) { p[1] += 0.69f; n += halo_card(out + n, p, 0.16f, c); }   /* in the loop's hole, out to the arms (the user) */   /* the standing ankh (model 11, drawn): a glint at its head */
+            if (o->item == 0x157) { p[1] += 0.69f; n += halo_card(out + n, p, 0.16f, c); }   /* in the loop's hole, out to the arms */   /* the standing ankh (model 11, drawn): a glint at its head */
             else { p[1] += 0.14f; n += halo_card(out + n, p, 0.16f, c); }               /* the pendant: a glint above it; the floor's glow is its light's */
         }
     return n;
 }
+/* our own particles as picture cards into out: the count of vertices */
 static int part_cards(Vertex *out, int cap)
 {
     int n = 0;
@@ -1451,6 +1494,7 @@ static int part_cards(Vertex *out, int cap)
     return n;
 }
 
+/* the original's effect objects (0x1C0-0x1CE) seen this frame: a burst when one first appears, the glowing ones drawn */
 static int animo_cards(Vertex *out, int cap)
 {
     int n = 0;
@@ -1467,7 +1511,7 @@ static int animo_cards(Vertex *out, int cap)
             float p[3];
             world_object_pos(&lv, t % 64, t / 64, o, p);
             /* a blow's spark: the original makes it 8 above where the blade met the wall (COMBAT.C find_wall_coll,
-               SET_Z(curP->z + 8)); drawn where the blade struck (the user: "one inch above"), the object untouched */
+               SET_Z(curP->z + 8)); drawn where the blade struck (an inch above), the object untouched */
             if (o->item == 0x1CB) p[1] -= 8.0f / 32.0f;
             if (i < 1024) {   /* the effect as it first appears (or appears again in a reused object): its burst */
                 seen_frame[i] = frame;
@@ -1475,7 +1519,7 @@ static int animo_cards(Vertex *out, int cap)
                     part_burst(o, p);
                     if (FX.decals && o->item >= 0x1C2 && o->item <= 0x1C4) fx_decal(p[0], p[2], RD_SCORCH, 0.45f, NULL, 0);   /* (the effects) */
                     if (FX.water && (o->item == 0x1C5 || o->item == 0x1C6)) render_water_ripple(p[0], p[2], 1.5f);   /* a splash's ring */
-                    if (dbg) fprintf(stderr, "uwview: effect 0x%03x frame %d (object %d) at %llu: %d particles\n", o->item, f, i, (unsigned long long)GetTickCount64(), nparts);
+                    if (dbg) RLOG_I("view", "effect 0x%03x frame %d (object %d) at %llu: %d particles", o->item, f, i, (unsigned long long)GetTickCount64(), nparts);
                 }
                 seen[i] = (unsigned)(o->item << 8 | f);
             }
@@ -1496,7 +1540,7 @@ static int animo_cards(Vertex *out, int cap)
             {
                 const int cell = DOT_CELL;
                 const u8 *px = m.atlas + ((size_t)(1024 + cell / 32 * 32 + 8) * ATLAS_SIZE + (size_t)(cell % 32 * 32 + 8)) * 4;
-                fprintf(stderr, "uwview: parttest: burst at %.2f %.2f %.2f (eye %.2f %.2f %.2f yaw %.2f): %d particles; dot texel %d %d %d %d\n",
+                RLOG_I("view", "parttest: burst at %.2f %.2f %.2f (eye %.2f %.2f %.2f yaw %.2f): %d particles; dot texel %d %d %d %d",
                         p[0], p[1], p[2], cam.pos[0], cam.pos[1], cam.pos[2], cam.yaw, nparts, px[0], px[1], px[2], px[3]);
             }
         }
@@ -1506,11 +1550,12 @@ static int animo_cards(Vertex *out, int cap)
         int n0 = n;
         n += part_cards(out + n, cap - n);
         n += halo_cards(out + n, cap - n);
-        if (getenv("UWVIEW_PARTTEST") && n > n0) { static unsigned long long lt; if (GetTickCount64() - lt > 500) fprintf(stderr, "uwview: %d particle/halo cards\n", (n - n0) / 6), lt = GetTickCount64(); }
+        if (getenv("UWVIEW_PARTTEST") && n > n0) { static unsigned long long lt; if (GetTickCount64() - lt > 500) RLOG_I("view", "%d particle/halo cards", (n - n0) / 6), lt = GetTickCount64(); }
     }
     return n;
 }
 
+/* the picture (frame) for creature kind k in animation seq, frame fr, seen from view; -1 when it has none */
 static int creature_frame(int k, int seq, int fr, int view)
 {
     if (!m.crit[k].loaded) return -1;
@@ -1570,7 +1615,7 @@ static int creature_cards(const u8 *b, Vertex *out, int cap)
                         int state = seq << 16 | fr << 12 | view << 8 | (f & 0xff);
                         if (dx * dx + dz * dz < 64 && state != last[i]) {
                             last[i] = state;
-                            fprintf(stderr, "uwview: crit %d item %03x t %d seq %02x fr %d view %d -> f %d at %.2f,%.2f z %d (home %d,%d) ms %llu cam %.2f,%.2f,%.2f yaw %.0f\n", i, item, t, seq, fr, view, f,
+                            RLOG_I("view", "crit %d item %03x t %d seq %02x fr %d view %d -> f %d at %.2f,%.2f z %d (home %d,%d) ms %llu cam %.2f,%.2f,%.2f yaw %.0f", i, item, t, seq, fr, view, f,
                                     cx, cz, (int)(pw & 127), home >> 10, (home >> 4) & 63, (unsigned long long)GetTickCount64(),
                                     cam.pos[0], cam.pos[1], cam.pos[2], cam.yaw * 57.2958f);
                         }
@@ -1597,14 +1642,15 @@ static int creature_cards(const u8 *b, Vertex *out, int cap)
         }
     return n;
 }
+/* each frame: the objects, creatures, doors and burning lights from the game's block to the renderer */
 static void things_update(void)
 {
     if (!lv_number || !lv_block || lv_wait) return;
     crit_in_view = 0;
     unsigned shape = shape_hash(lv_block);
     /* the level's shape changed: nothing read from the block this frame; the front end's next uwv_level_state sees
-       it, waits for the game's next frame and has the level built once, the game held (2026-11-17: built here at
-       once, it was built from a block the game was still reading a new level into) */
+       it, waits for the game's next frame and has the level built once, the game held (built here at
+       once, it would be built from a block the game is still reading a new level into) */
     if (shape != lv_shape) return;
     level_from_block(&lv, lv_block);      /* the objects where the game has them now */
     unsigned sig = burning_find();
@@ -1612,7 +1658,7 @@ static void things_update(void)
         burn_sig = sig;
         lights_rebuild();
         static int last_n = -1;
-        if (nburning != last_n) fprintf(stderr, "uwview: %d burning things give light\n", nburning), last_n = nburning;
+        if (nburning != last_n) RLOG_I("view", "%d burning things give light", nburning), last_n = nburning;
     }
     int n = world_sprites(&lv, &m, lights, nlights, cards, RENDER_MAX_SPRITE_VERTS - 84 * 128);
     n += door_quads(cards + n, RENDER_MAX_SPRITE_VERTS - n);
@@ -1621,7 +1667,7 @@ static void things_update(void)
     int nc = creature_cards(lv_block, cards + n, RENDER_MAX_SPRITE_VERTS - n);
     render_set_sprites(cards, n + nc);
     static int last_nc = -1;
-    if (nc / 6 != last_nc) fprintf(stderr, "uwview: %d object cards, %d creatures\n", n / 6, nc / 6), last_nc = nc / 6;
+    if (nc / 6 != last_nc) RLOG_I("view", "%d object cards, %d creatures", n / 6, nc / 6), last_nc = nc / 6;
     crit_frames = crit_in_view > 0 ? crit_frames + 1 : 0;
 }
 
@@ -1650,6 +1696,7 @@ static float pick_card(const float o[3], const float d[3], const float pos[3], f
     }
     return t;
 }
+/* what lies under the screen point fx, fy (0..1): up to max objects, the nearest first; the count */
 UWV_API int uwv_pick(float fx, float fy, int *out, int max)
 {
     if (!started || !lv_number || !lv_block || max <= 0) return 0;
@@ -1704,8 +1751,8 @@ UWV_API int uwv_pick(float fx, float fy, int *out, int max)
         }
     /* the doors as drawn (door_quads' frame and leaf: the empty opening is no part of them), marked with bit 31: the
      * window's uwl_pick takes one only when nothing else is there and the original's own pick finds no object (its
-     * pick frame has the leaf alone, the frame in the wall's colour: the user, 2026-11-16, "the doors are hard to
-     * target"). Not a secret door (it would give itself away). The use and its reach stay the original's. */
+     * pick frame has the leaf alone, the frame in the wall's colour: otherwise the doors are hard to
+     * target). Not a secret door (it would give itself away). The use and its reach stay the original's. */
     {
         static Vertex dv[1024];
         for (int k = 0; k < ndoors && nh < 64; k++) {
@@ -1767,12 +1814,20 @@ UWV_API const unsigned char *uwv_compose(const unsigned int *src, int sw, int sh
         free(ui_buf);
         ui_buf = malloc((size_t)uw * uh * 4);
         ui_w = uw, ui_h = uh;
-        if (!ui_buf) return NULL;
+        if (!ui_buf) {
+            static int said;
+            if (!said) said = 1, RLOG_E("view", "the %dx%d interface layer: out of memory", uw, uh);
+            return NULL;
+        }
     }
     static int *colx;
     static int ncol;
     if (ncol != uw) free(colx), colx = malloc(sizeof(int) * (size_t)uw), ncol = uw;
-    if (!colx) return NULL;
+    if (!colx) {
+        static int said;
+        if (!said) said = 1, RLOG_E("view", "the interface layer's columns: out of memory");
+        return NULL;
+    }
     for (int x = 0; x < uw; x++) colx[x] = x >= x0 && x < x1 && x1 > x0 ? (x - x0) * sw / (x1 - x0) : -1;
     for (int y = 0; y < uh; y++) {
         unsigned *row = (unsigned *)(ui_buf + (size_t)y * uw * 4);
@@ -1894,6 +1949,7 @@ int uwv_ui_ready(void)
     }
     return ui_ok;
 }
+/* our crosshair (or the object held on it) drawn into the layer d; false when the interface is not ready */
 static bool crosshair_ours(unsigned *d, int uw, int uh, int s)
 {
     if (!uwv_ui_ready()) return false;
@@ -1915,12 +1971,12 @@ static bool crosshair_ours(unsigned *d, int uw, int uh, int s)
     }
     if (hud_cursor < 0) return true;
     if (hud_cursor == 0) {
-        /* the plain cross, thinner (the user: to see more of what is under it): CURSORS.GR picture 0's size, gap and
+        /* the plain cross, thinner (to see more of what is under it): CURSORS.GR picture 0's size, gap and
          * colours along its arms (row 7 / column 7: the dark tips to the gold), but drawn at the window's pixels:
          * a gold core about a third of the picture's arm thickness with a one-pixel black edge */
         const Pic *c0 = ui_pic("ui\\cursors", 0);
         if (!c0 || c0->w < 15 || c0->h < 15) goto picture;
-        int cx = uw / 2, cy = uh / 2, core = 2, half = core / 2;   /* 4 pixels thick in all (the user): 2 gold + an edge each side */
+        int cx = uw / 2, cy = uh / 2, core = 2, half = core / 2;   /* 4 pixels thick in all: 2 gold + an edge each side */
         for (int axis = 0; axis < 2; axis++)
             for (int i = 0; i < 15; i++) {   /* along the arm: the picture's pixel i (centre 7) */
                 const u8 *p = axis == 0 ? c0->rgba + ((size_t)7 * c0->w + (size_t)i) * 4 : c0->rgba + ((size_t)i * c0->w + 7) * 4;
@@ -1984,15 +2040,16 @@ UWV_API void uwv_toggle(int what)
     else if (what == 5) {   /* the objects' shadows ('.') */
         render_set_object_shadows(!render_object_shadows());
         settings_save("object_shadows", render_object_shadows() ? "1" : "0");
-        fprintf(stderr, "uwview: object shadows %s\n", render_object_shadows() ? "on" : "off");
+        RLOG_I("view", "object shadows %s", render_object_shadows() ? "on" : "off");
     }
     else if (what == 4) {   /* full bright (Shift+L) */
         render_set_fullbright(!render_fullbright());
-        fprintf(stderr, "uwview: full bright %s\n", render_fullbright() ? "on" : "off");
+        RLOG_I("view", "full bright %s", render_fullbright() ? "on" : "off");
     }
-    fprintf(stderr, "uwview: %s\n", render_dlss_text());
+    RLOG_I("view", "%s", render_dlss_text());
 }
 
+/* a piece of the source picture (sx, sy, w x h) into dst at dx, dy, scale times; key: keycol left out */
 static void hud_put(unsigned *dst, int uw, int uh, const unsigned *src, int sw, int sh, int sx, int sy, int w, int h,
                     int dx, int dy, int scale, bool key, unsigned keycol)
 {
@@ -2044,7 +2101,7 @@ static void hud_readout_draw(unsigned *d, int uw, int uh, int s)
         }
     }
     ui_text_apply(d, uw, uh);   /* (the interface font's smooth text over the overlay: ui.c) */
-    /* the hint line (the user, 2026-11-14: "smaller and more detailed and easier to see"): the smooth font at the
+    /* the hint line (small, detailed and easy to see): the smooth font at the
        window's own pixels, not the game's small font blown up, light with a dark outline so it reads over any wall */
     if (hud_hint[0]) {
         int em = st_game_em(uh), tw = st_width(ST_REGULAR, em, hud_hint);   /* (the one size: smoothtext.h) */
@@ -2056,7 +2113,7 @@ static void hud_readout_draw(unsigned *d, int uw, int uh, int s)
     }
 }
 
-/* ---- our own HUD art (the user, 2026-11-14, from their pictures; tools\hud_art.py cuts them into the headers) ---- */
+/* ---- our own HUD art (tools\hud_art.py cuts them into the headers) ---- */
 #include "hud_gargoyle.h"
 static int hud_eyes, hud_pow = -1;   /* the game's eyes (PANELS.C setting[SCR_EYES]: 1..3 while they blink after a
                                          blow, 1 the creature healthy, 3 near death; 0 at rest) and the blow's charge
@@ -2094,8 +2151,8 @@ static void hud_over(unsigned *px, float r, float g, float b, float a)
     nr = nr > 255 ? 255 : nr, ng = ng > 255 ? 255 : ng, nb = nb > 255 ? 255 : nb;
     *px = (unsigned)(oa * 255 + 0.5f) << 24 | (unsigned)nr | (unsigned)ng << 8 | (unsigned)nb << 16;
 }
-/* the gargoyle bar (the user, 2026-11-14, their second gargoyle: "sit flush with the top of the screen centred and use
-   the eye holes for the enemy health"): 168 * s wide (its own pixels at 1080 rows), its top on the screen's top. A
+/* the gargoyle bar (flush with the top of the screen, centred, its eye holes showing the enemy's
+   health): 168 * s wide (its own pixels at 1080 rows), its top on the screen's top. A
    blow that lands lights its eye holes, a little spilling onto the brow, in the struck creature's health, as the
    original's eyes blink in it (COMBAT.C set_screen_frame(7, 3 - hp * 3 / avghit)): green healthy, amber hurt, red
    near death; held 2.5 s after the blink, then fading. */
@@ -2130,10 +2187,9 @@ __attribute__((unused)) static void hud_gargoyle(unsigned *d, int uw, int uh, in
         }
     }
 }
-/* the bottom panel (the user, 2026-11-14, their second picture: "use this for the graphic and build the swing
-   indicator into the top thing as a glowing light and then the side tanks are health and mana. left shelf is buffs and
-   right shelf is runes and the text box is the paper area .. we need to find a replacement for the compass and put it
-   in the middle"): stone and brass across the bottom's middle with a glass tank at each end, 232 * s wide (928 at
+/* the bottom panel (the swing indicator a glowing light on top, the side tanks health and mana, the left shelf the
+   active spells, the right shelf the runes, the paper area the text box, a heading strip in the compass's place in
+   the middle): stone and brass across the bottom's middle with a glass tank at each end, 232 * s wide (928 at
    1080 rows), flush with the bottom, the black above its ends cut away (tools\hud_art.py panel2). In it: the swing
    light in the housing on top (hud_swing_light), the liquid in the tanks (tank_liquid), the heading strip in the middle
    plaque (hud_heading), the active spells in the left plaque and the runes in the right (pnl_icons), our message lines
@@ -2160,6 +2216,7 @@ UWV_API void uwv_hud_vitals(const int *v)
     const char *t = getenv("UWVIEW_VIT_TEST");   /* (a check's: "HP,MAXHP,MANA,MAXMANA,POISON" in place of the game's) */
     if (t && *t) sscanf(t, "%d,%d,%d,%d,%d", &hud_vit[0], &hud_vit[1], &hud_vit[2], &hud_vit[3], &hud_vit[4]);
 }
+/* r, g, b (0..255, clamped) as a layer pixel */
 static unsigned px_rgb(float r, float g, float b)
 {
     r = r < 0 ? 0 : r > 255 ? 255 : r, g = g < 0 ? 0 : g > 255 ? 255 : g, b = b < 0 ? 0 : b > 255 ? 255 : b;
@@ -2196,6 +2253,7 @@ static int tank_liquid(int sx, int sy, float tm, float *rgb)
     }
     return 1;
 }
+/* the bottom panel drawn into d, its tanks' liquid in them (kept, not drawn now: pnl_w stays 0) */
 __attribute__((unused)) static void pnl_draw(unsigned *d, int uw, int uh)
 {
     float tm = steady_check() ? 0 : (float)(GetTickCount64() % 1000000) / 1000.0f, liq[3];
@@ -2258,8 +2316,8 @@ __attribute__((unused)) static void hud_swing_light(unsigned *d, int uw, int uh)
     }
 }
 
-/* the heading strip in the middle plaque (source x 432-596, rows 106-152), in place of the original's compass (the
-   user, 2026-11-14: "we need to find a replacement for the compass"): the view's heading (cam.yaw: 0 north, east
+/* the heading strip in the middle plaque (source x 432-596, rows 106-152), in place of the original's compass: the
+   view's heading (cam.yaw: 0 north, east
    positive) with the eight points and a mark every 15 degrees sliding past a fixed pointer, 150 degrees across, fading
    at its ends; north in red */
 __attribute__((unused)) static void hud_heading(unsigned *d, int uw, int uh, int s)
@@ -2268,7 +2326,7 @@ __attribute__((unused)) static void hud_heading(unsigned *d, int uw, int uh, int
     if (aw <= 4 || ah <= 4) return;
     static unsigned *buf;
     static int buf_n;
-    if (aw * ah > buf_n) { free(buf); buf_n = aw * ah; buf = malloc((size_t)buf_n * sizeof *buf); if (!buf) { buf_n = 0; return; } }
+    if (aw * ah > buf_n) { free(buf); buf_n = aw * ah; buf = malloc((size_t)buf_n * sizeof *buf); if (!buf) { static int said; if (!said) said = 1, RLOG_E("view", "the heading strip: out of memory"); buf_n = 0; return; } }
     for (int i = 0; i < aw * ah; i++) buf[i] = 0xFF000000u | 9 | 7u << 8 | 5u << 16;   /* the strip's dark ground */
     float hdg = cam.yaw * 57.29578f, span = 120, ppd = aw / span, mid = aw / 2.0f;
     static const char *const pts[8] = { "N", "NE", "E", "SE", "S", "SW", "W", "NW" };
@@ -2337,6 +2395,8 @@ static int log_ours;   /* our message box is drawn (uwv_log): the original's scr
 static int readout_on; /* the crosshair's name and hint were drawn this frame (uwv_log draws them again over its box) */
 static int hud_fight;  /* fight mode (uwv_fight): the first-person weapon shown */
 UWV_API void uwv_fight(int on) { hud_fight = on; }
+/* the interface layer for full-screen play: the original's panel pieces cut from its 320x200 screen, our crosshair
+   and readout; NULL when not started or the screen is not 320x200 */
 UWV_API const unsigned char *uwv_hud(const unsigned int *src, int sw, int sh)
 {
     int uw, uh, us;
@@ -2347,7 +2407,11 @@ UWV_API const unsigned char *uwv_hud(const unsigned int *src, int sw, int sh)
         free(ui_buf);
         ui_buf = malloc((size_t)uw * uh * 4);
         ui_w = uw, ui_h = uh;
-        if (!ui_buf) return NULL;
+        if (!ui_buf) {
+            static int said;
+            if (!said) said = 1, RLOG_E("view", "the %dx%d interface layer: out of memory", uw, uh);
+            return NULL;
+        }
     }
     unsigned *d = (unsigned *)ui_buf;
     memset(d, 0, (size_t)uw * uh * 4);                       /* clear: the 3D view */
@@ -2355,7 +2419,7 @@ UWV_API const unsigned char *uwv_hud(const unsigned int *src, int sw, int sh)
     int m = 4 * s;                                            /* the margin */
     unsigned keys[96];
     int nk;
-    /* (the user, 2026-11-14 evening: "go back to the way we had it before I started giving you graphics": the
+    /* (the
        original's gargoyle, flasks, compass, rune shelf, spells and power gem below, cut from its screen, and our
        message box above the compass. Our own art (the gargoyle bars, the bottom panels with their tanks, swing light
        and heading strip, the pedestal: hud_gargoyle, pnl_*, hud_swing_light, hud_heading, hud_charge) is kept but
@@ -2368,7 +2432,7 @@ UWV_API const unsigned char *uwv_hud(const unsigned int *src, int sw, int sh)
     hud_piece(d, uw, uh, src, sw, sh, 248, 125, 24, 36, m, uh - 36 * s - m, s, keys, nk, -1);
     nk = border_keys(src, sw, 284, 125, 24, 36, keys, 96);
     hud_piece(d, uw, uh, src, sw, sh, 284, 125, 24, 36, uw - 24 * s - m, uh - 36 * s - m, s, keys, nk, -1);
-    /* the gargoyle's face above the view (the user, 2026-11-13: its eyes show a struck creature's health): PANELS.C's
+    /* the gargoyle's face above the view (its eyes show a struck creature's health): PANELS.C's
        eyes sprite at 0x80, row 4 in the frame's gargoyle (x 125-150, rows 0-17); COMBAT.C set_screen_frame(7, 3 - fx)
        after a hit, fx = the creature's hp * 3 / its average, so adjust_eyes blinks set 1 (healthy) to 3 (near death).
        Cut from the original's screen at the top's middle, whole but for the screen's black (the face shares its
@@ -2377,7 +2441,7 @@ UWV_API const unsigned char *uwv_hud(const unsigned int *src, int sw, int sh)
         static const unsigned blacks[2] = { 0x000000, 0x000004 };
         hud_piece(d, uw, uh, src, sw, sh, 127, 0, 23, 18, uw / 2 - 12 * s, m, s, blacks, 2, -1);
     }
-    /* the rune shelf and the active spells (the user, 2026-11-13: missing from our display), as PANELS.C shows them
+    /* the rune shelf and the active spells, as PANELS.C shows them
        (uwv_hud_magic): set_runes' three (the rune stones, OBJECTS.GR 0xE8 + rune, at rune_x 0xB0 0xBF 0xCE: 15 apart)
        right of the compass, and active_spells' three (SPELLS.GR, spell_x 0x56 0x45 0x34: the first rightmost) left of
        it, as on the original's screen; the spells left of the power gem when it shows. The game's own pictures. */
@@ -2392,7 +2456,7 @@ UWV_API const unsigned char *uwv_hud(const unsigned int *src, int sw, int sh)
     }
     /* the power gem (PANELS.C adjust_power: POWER.GR's frames at 4, 60 counted from the bottom, i.e. rows 139-150 of
        the original's picture, 31 x 12: grey at rest, filling as a blow charges, pulsing at full), in fight mode only,
-       at the compass's left, its stone keyed out (the user, 2026-11-13: the charge could not be judged without it) */
+       at the compass's left, its stone keyed out (the charge cannot be judged without it) */
     if (hud_fight) {
         nk = border_keys(src, sw, 4, 139, 31, 12, keys, 96);
         hud_piece(d, uw, uh, src, sw, sh, 4, 139, 31, 12, uw / 2 - 28 * s - m - 31 * s, uh - 24 * s - m + 6 * s, s, keys, nk, -1);
@@ -2467,15 +2531,15 @@ UWV_API const unsigned char *uwv_hud(const unsigned int *src, int sw, int sh)
     return ui_buf;
 }
 
-/* Our message box (the user's: whole lines, an opaque parchment that fades away 10 s after the newest message, at
+/* Our message box (whole lines, an opaque parchment that fades away 10 s after the newest message, at
  * full while the Tab panel is open, the wheel scrolling back): lines (n of them, w bytes each, oldest first) in the
  * game's own font on its parchment, where the original's scroll text was shown (above the compass), at alpha (0..1);
  * more_up: older lines above. Drawn into the layer the last uwv_hud made. */
 static bool ui_ready(void);
-/* the message lines on the bottom panel's parchment (the user, 2026-11-14: "always have text on the screen and it will
-   just look like it is scrolling"): never faded; the newest at the bottom; a new line (or the wheel) slides them up a
+/* the message lines on the bottom panel's parchment (text always on the screen, seeming to scroll): never faded; the newest at the bottom; a new line (or the wheel) slides them up a
    line over LOG_SLIDE_MS. Smooth text by default, the game's letters with log_font original. */
 #define LOG_SLIDE_MS 220
+/* the message lines on the bottom panel's parchment (when the panel is drawn) */
 static void log_panel(const char *lines, int n, int w, int more_up)
 {
     int s = ui_h / 270 > 0 ? ui_h / 270 : 1, smooth = !log_font_original;
@@ -2500,7 +2564,7 @@ static void log_panel(const char *lines, int n, int w, int more_up)
     int pad = (ah - rows * lhp) / 2, y_new = ah - pad - lhp + off;   /* the newest line's top in the area */
     static unsigned *txt;
     static int txt_n;
-    if (aw * ah > txt_n) { free(txt); txt_n = aw * ah; txt = malloc((size_t)txt_n * sizeof *txt); if (!txt) { txt_n = 0; return; } }
+    if (aw * ah > txt_n) { free(txt); txt_n = aw * ah; txt = malloc((size_t)txt_n * sizeof *txt); if (!txt) { static int said; if (!said) said = 1, RLOG_E("view", "the message box's text layer: out of memory"); txt_n = 0; return; } }
     memset(txt, 0, (size_t)aw * ah * sizeof *txt);
     if (smooth) {
         for (int i = 0; i < shown; i++)
@@ -2542,6 +2606,7 @@ static void log_panel(const char *lines, int n, int w, int more_up)
         }
     }
 }
+/* our message box over the layer: n lines of w bytes, oldest first, at alpha; more_up: older lines above */
 UWV_API void uwv_log(const char *lines, int n, int w, float alpha, int more_up)
 {
     log_ours = 1;
@@ -2554,10 +2619,10 @@ UWV_API void uwv_log(const char *lines, int n, int w, float alpha, int more_up)
     ui_set_scale(s);
     Overlay *o = ui_overlay();
     ui_clear();
-    /* (2026-11-14, the user: the box, where Ctrl+L's AI lines show too, in a smaller font that is easier to read, with
+    /* (the box, where Ctrl+L's AI lines show too, in a smaller font that is easier to read, with
        more lines): UWV_LOG_ROWS lines; smooth text (smoothtext.c, at the window's resolution) by default, the game's
        letters as they were with settings.txt log_font original (the Esc menu's "Message text") */
-    /* (the user, 2026-11-14: less wasted room, margins of 1-5 pixels: the blank lines left out, the box as tall as the
+    /* (less wasted room, margins of 1-5 pixels: the blank lines left out, the box as tall as the
        lines it shows and as wide as the game's 49-letter lines, the text one overlay pixel inside the frame) */
     const int ROWS = UWV_LOG_ROWS, smooth = !log_font_original;
     const int em = st_game_em(ui_h), lhp = smooth ? st_height(ST_REGULAR, em) + s / 2 : 0;   /* the smooth line, window
@@ -2593,7 +2658,7 @@ UWV_API void uwv_log(const char *lines, int n, int w, float alpha, int more_up)
     static unsigned *txt;
     static int txt_n;
     int tw = bw * s, th = bh * s;
-    if (smooth && tw * th > txt_n) { free(txt); txt_n = tw * th; txt = malloc((size_t)txt_n * sizeof *txt); if (!txt) txt_n = 0; }
+    if (smooth && tw * th > txt_n) { free(txt); txt_n = tw * th; txt = malloc((size_t)txt_n * sizeof *txt); if (!txt) { static int said; if (!said) said = 1, RLOG_E("view", "the message box's smooth text layer: out of memory (that text not drawn)"); txt_n = 0; } }
     if (smooth && txt) {
         memset(txt, 0, (size_t)tw * th * sizeof *txt);
         for (int i = 0; i < shown; i++)
@@ -2700,6 +2765,7 @@ static void settings_save(const char *key, const char *value)
     size_t n = 0;
     bool done = false;
     FILE *f = fopen(p, "r");
+    if (!f && errno != ENOENT) RLOG_E("view", "cannot read %s: %s (it is written again with %s alone)", p, rlog_errno(), key);
     if (f) {
         while (fgets(line, sizeof line, f)) {
             size_t kl = strlen(key);
@@ -2708,17 +2774,23 @@ static void settings_save(const char *key, const char *value)
                 continue;
             }
             n += (size_t)snprintf(out + n, sizeof out - n, "%s", line);
-            if (n >= sizeof out - 600) break;
+            if (n >= sizeof out - 600) {
+                RLOG_E("view", "%s is over %zu bytes: the rest of it is dropped when it is written again", p, sizeof out - 600);
+                break;
+            }
         }
         fclose(f);
     }
     if (!done) n += (size_t)snprintf(out + n, sizeof out - n, "%s %s\n", key, value);
     f = fopen(p, "w");
-    if (f) fwrite(out, 1, n, f), fclose(f);
+    if (!f) RLOG_E("view", "cannot open %s to write: %s (%s not kept)", p, rlog_errno(), key);
+    if (f) {
+        bool bad = fwrite(out, 1, n, f) != n;
+        if (fclose(f) != 0) bad = true;
+        if (bad) RLOG_E("view", "cannot write %s: %s (%s not kept)", p, rlog_errno(), key);
+    }
 }
-/* The Sprites tab (the user, 2026-11-17: "add these to directory for usage in the game if we select something from
- * the esc menu", "make a new tab for sprites", "only have the options show up if there is an alternative sprite for
- * it"): an object picture of ours, data\newsprites\objects\NNN.png (NNN the object, 000-463; up to 32 x 32: twice
+/* The Sprites tab (its own Esc tab, a row only for an object that has a picture of ours): an object picture of ours, data\newsprites\objects\NNN.png (NNN the object, 000-463; up to 32 x 32: twice
  * the original's detail in the same place), each with a row of its own, there only when its file is. settings.txt
  * sprite_new_NNN 1; the original's picture unless set. Looked for once a run. Presentation only: the picture in the
  * world (level.c) and in our inventory and on the crosshair (ui_item_pic); the original's own panel keeps its own. */
@@ -2772,6 +2844,7 @@ static int spr_label(int k, char *value, int n)
     snprintf(value, (size_t)n, "%s", name[k]);
     return 1;
 }
+/* the Sprites tab's row for object k: its value (New / Original); step != 0 switches it and builds the scene again */
 static int spr_option(int k, int step, char *value, int n)
 {
     if (k < 0 || k >= 512 || !spr_there(k)) return 0;
@@ -2787,16 +2860,25 @@ static int spr_option(int k, int step, char *value, int n)
 }
 /* the field of view (radians, vertical), the one our full-screen view uses */
 UWV_API float uwv_fov(void) { return S.fov * 3.14159265f / 180.0f; }
-/* one of our renderer's options: its value as text; step != 0 changes it (and keeps it). 0 when not offered.
- * 0 DLSS, 1 DLSS 5, 2 DLSS 5's style, 3 ray tracing, 4 bounced light, 5 stone relief (the normal maps), 6 field of
- * view, 7 mouse sensitivity */
-UWV_API int uwv_option(int id, int step, char *value, int n)
+/* a number's row: one step up or down, kept to lo..hi on the step's grid, written to
+ * settings.txt as key; restart: it takes hold at the next start (run: its value this run, shown when they differ) */
+static int opt_num(float *v, int step, float lo, float hi, float st, const char *key, const char *unit, int restart, float run,
+                   char *value, int n)
+{
+    if (step) {
+        char t[32];
+        float x = lo + roundf((*v + (step > 0 ? st : -st) - lo) / st) * st;
+        *v = x < lo ? lo : x > hi ? hi : x;
+        snprintf(t, sizeof t, "%.2f", *v), settings_save(key, t);
+    }
+    snprintf(value, (size_t)n, "%.2f%s%s", *v, unit, restart && fabsf(*v - run) > 1e-4f ? " (from the next start)" : "");
+    return 1;
+}
+/* uwv_option's rows for DLSS, DLSS 5, ray tracing and Ray Reconstruction, the DLSS mode and the resolution (ids 0-3, 21-25): 1 or 0 as uwv_option returns, -1 when id is not one of them */
+static int opt_rendering(int id, int step, char *value, int n)
 {
     static const char *const STYLE[3] = {"A - Default", "B - Natural", "C - Cinematic"};
-    char t[72];   /* (a face's name: up to 63) */
-    if (!started) return 0;
-    if (id >= 1000 && id < 1512) return spr_option(id - 1000, step, value, n);   /* the Sprites tab: a picture's row */
-    if (id >= 3000 && id < 3512) return spr_label(id - 3000, value, n);          /* and the row's name */
+    char t[72];   /* a row's new value as text, for settings_save */
     switch (id) {
     case 0:
         if (!render_dlss_available()) { snprintf(value, (size_t)n, "Not on this card"); return 1; }
@@ -2814,7 +2896,7 @@ UWV_API int uwv_option(int id, int step, char *value, int n)
                   snprintf(t, sizeof t, "%d", S.dlss5_style), settings_save("dlss5_style", t);
         snprintf(value, (size_t)n, "%s", STYLE[S.dlss5_style % 3]);
         return 1;
-    case 3: {   /* Ray tracing: On / Off (2026-11-14: Ray Reconstruction, "High" until then, has its own row: 22) */
+    case 3: {   /* Ray tracing: On / Off (Ray Reconstruction has its own row: 22) */
         if (!render_raytracing_available()) { snprintf(value, (size_t)n, "Not on this card"); return 1; }
         if (step) render_set_raytracing(!render_raytracing()), settings_save("raytracing", render_raytracing() ? "1" : "0");
         snprintf(value, (size_t)n, "%s", render_raytracing() ? "On" : "Off");
@@ -2863,6 +2945,14 @@ UWV_API int uwv_option(int id, int step, char *value, int n)
         snprintf(value, (size_t)n, "%d%%", (int)(*v * 100.0f + 0.5f));
         return 1;
     }
+    }
+    return -1;
+}
+/* uwv_option's rows for bounced light, stone relief and its strength, field of view, mouse sensitivity (ids 4-8): 1 or 0 as uwv_option returns, -1 when id is not one of them */
+static int opt_light_view(int id, int step, char *value, int n)
+{
+    char t[72];   /* a row's new value as text, for settings_save */
+    switch (id) {
     case 4:
         if (step) S.bounce = S.bounce > 0 ? 0 : 1, settings_save("bounce", S.bounce > 0 ? "1.0" : "0");
         snprintf(value, (size_t)n, "%s", S.bounce > 0 ? "On" : "Off");
@@ -2898,13 +2988,21 @@ UWV_API int uwv_option(int id, int step, char *value, int n)
         }
         snprintf(value, (size_t)n, "%.2f", S.normal_strength);
         return 1;
+    }
+    return -1;
+}
+/* uwv_option's rows for the particles and decals, the glowing things, campfire smoke and water fog (ids 10, 11, 80-84): 1 or 0 as uwv_option returns, -1 when id is not one of them */
+static int opt_effects_glow(int id, int step, char *value, int n)
+{
+    char t[72];   /* a row's new value as text, for settings_save */
+    switch (id) {
     case 10:  /* the effects' particles (render_particles.c) */
         if (step) FX.particles = !FX.particles, settings_save("fx_particles", FX.particles ? "1" : "0"),
                   render_set_fx(FX.particles, FX.decals, FX.water, FX.fog);
         if (!FX.particles) render_particles_clear();
         snprintf(value, (size_t)n, "%s", FX.particles ? "On" : "Off");
         return 1;
-    case 80:  /* Glowing stones (the user, 2026-11-17): the glowing rocks, orbs and orb rocks glow a foot round them */
+    case 80:  /* Glowing stones: the glowing rocks, orbs and orb rocks glow a foot round them */
         if (step) GL.glow_things = !GL.glow_things, world_glow_things = GL.glow_things, settings_save("light_glowing_things", GL.glow_things ? "1" : "0");
         snprintf(value, (size_t)n, "%s", GL.glow_things ? "On" : "Off");
         return 1;
@@ -2936,7 +3034,15 @@ UWV_API int uwv_option(int id, int step, char *value, int n)
         if (!FX.decals) render_decals_clear();
         snprintf(value, (size_t)n, "%s", FX.decals ? "On" : "Off");
         return 1;
-    case 31:  /* Light colour (the user, 2026-11-15): the flames' adaptation transform, CAT16 (the default) or Bradford */
+    }
+    return -1;
+}
+/* uwv_option's rows for the light's colour and adaptation, HDR output, peak brightness and paper white (ids 31-35): 1 or 0 as uwv_option returns, -1 when id is not one of them */
+static int opt_colour_hdr(int id, int step, char *value, int n)
+{
+    char t[72];   /* a row's new value as text, for settings_save */
+    switch (id) {
+    case 31:  /* Light colour: the flames' adaptation transform, CAT16 (the default) or Bradford */
         if (step) render_set_light_cat(!render_light_cat()), settings_save("light_colour", render_light_cat() ? "bradford" : "cat16");
         snprintf(value, (size_t)n, "%s", render_light_cat() ? "Bradford" : "CAT16");
         return 1;
@@ -2952,7 +3058,7 @@ UWV_API int uwv_option(int id, int step, char *value, int n)
         else snprintf(value, (size_t)n, "%d%%", pc);
         return 1;
     }
-    case 33:  /* HDR output (the user, 2026-11-15): on an HDR monitor (Windows' HDR on), the highlights past white */
+    case 33:  /* HDR output: on an HDR monitor (Windows' HDR on), the highlights past white */
         if (step) render_set_hdr(!render_hdr_wanted()), settings_save("hdr", render_hdr_wanted() ? "1" : "0");
         if (!render_hdr_wanted()) snprintf(value, (size_t)n, "Off");
         else if (render_hdr_available()) snprintf(value, (size_t)n, "On");
@@ -2980,6 +3086,13 @@ UWV_API int uwv_option(int id, int step, char *value, int n)
         snprintf(value, (size_t)n, "%d nits", nits);
         return 1;
     }
+    }
+    return -1;
+}
+/* uwv_option's rows for water, positional sound, the conversation and menu text (ids 12, 14, 17, 18): 1 or 0 as uwv_option returns, -1 when id is not one of them */
+static int opt_water_sound_text(int id, int step, char *value, int n)
+{
+    switch (id) {
     case 12:  /* the effects' water (the scene's shader) */
         if (step) FX.water = !FX.water, settings_save("fx_water", FX.water ? "1" : "0"), render_set_fx(FX.particles, FX.decals, FX.water, FX.fog);
         snprintf(value, (size_t)n, "%s", FX.water ? "On" : "Off");
@@ -2988,15 +3101,23 @@ UWV_API int uwv_option(int id, int step, char *value, int n)
         if (step) FX.audio = !FX.audio, settings_save("fx_audio", FX.audio ? "1" : "0");
         snprintf(value, (size_t)n, "%s", FX.audio ? "On" : "Off");
         return 1;
-    case 17:  /* Conversation text (uwconv_draw.c, the user 2026-11-13): a smooth font, the default, or the original's */
+    case 17:  /* Conversation text (uwconv_draw.c): a smooth font, the default, or the original's */
         if (step) uwv_conv_font_original = !uwv_conv_font_original,
                   settings_save("conv_font", uwv_conv_font_original ? "original" : "smooth");
         snprintf(value, (size_t)n, "%s", uwv_conv_font_original ? "Original" : "Smooth");
         return 1;
-    case 18:  /* Menu text (the user, 2026-11-14): a smooth font, the default, or the game's small letters */
+    case 18:  /* Menu text: a smooth font, the default, or the game's small letters */
         if (step) menu_font_original = !menu_font_original, settings_save("menu_font", menu_font_original ? "original" : "smooth");
         snprintf(value, (size_t)n, "%s", menu_font_original ? "The original's" : "Smooth");
         return 1;
+    }
+    return -1;
+}
+/* uwv_option's rows for acoustics and the sound rows that go with it (ids 15, 19, 20, 26-30, 56-60): 1 or 0 as uwv_option returns, -1 when id is not one of them */
+static int opt_acoustics(int id, int step, char *value, int n)
+{
+    char t[72];   /* a row's new value as text, for settings_save */
+    switch (id) {
     case 15:  /* Acoustics (fx_acoustics: the backend's uwaudio.c reads it again after a change, the audio started again) */
         if (step) FX.acoustics = (FX.acoustics + (step > 0 ? 1 : 2)) % 3, snprintf(t, sizeof t, "%d", FX.acoustics), settings_save("fx_acoustics", t);
         snprintf(value, (size_t)n, "%s", FX.acoustics == 2 ? "High" : FX.acoustics ? "On" : "Off");   /* High: Steam Audio's echoes for each sound */
@@ -3031,7 +3152,7 @@ UWV_API int uwv_option(int id, int step, char *value, int n)
         if (step) fx_footsteps_set = !fx_footsteps_set, settings_save("fx_footsteps", fx_footsteps_set ? "1" : "0");
         snprintf(value, (size_t)n, "%s", fx_footsteps_set ? "On" : "Off");
         return 1;
-    case 56: {  /* Hearing range (fx_hear_range, the user 2026-11-16): the original's 6 tiles, or further */
+    case 56: {  /* Hearing range (fx_hear_range): the original's 6 tiles, or further */
         static const int R[5] = {6, 9, 12, 16, 24};
         int k = 0;
         if (!FX.audio) return 0;
@@ -3072,11 +3193,19 @@ UWV_API int uwv_option(int id, int step, char *value, int n)
         if (step) fx_panfix_set = !fx_panfix_set, settings_save("fx_pan_fix", fx_panfix_set ? "1" : "0");
         snprintf(value, (size_t)n, "%s", fx_panfix_set ? "Corrected" : "As the MT-32 plays them");
         return 1;
-    case 40:  /* Character sheet (uwinv_draw.c, the user 2026-11-14): the full sheet, the default, or the game's page */
+    }
+    return -1;
+}
+/* uwv_option's rows for the character sheet, the font, its size, the message text (ids 40-43): 1 or 0 as uwv_option returns, -1 when id is not one of them */
+static int opt_text(int id, int step, char *value, int n)
+{
+    char t[72];   /* (a face's name: up to 63) */
+    switch (id) {
+    case 40:  /* Character sheet (uwinv_draw.c): the full sheet, the default, or the game's page */
         if (step) uwv_sheet_full = !uwv_sheet_full, settings_save("char_sheet", uwv_sheet_full ? "full" : "original");
         snprintf(value, (size_t)n, "%s", uwv_sheet_full ? "Full" : "The game's page");
         return 1;
-    case 42: {  /* Font (ui.c, the user 2026-11-14: one easy-to-read font for everything): the game's letters or a face */
+    case 42: {  /* Font (ui.c: one easy-to-read font for everything): the game's letters or a face */
         int nf = st_face_count() + 1, f = ui_font();
         if (step) {
             f = (f + (step > 0 ? 1 : nf - 1)) % nf, ui_set_font(f), settings_save("ui_font", f ? "1" : "0");
@@ -3089,7 +3218,7 @@ UWV_API int uwv_option(int id, int step, char *value, int n)
         snprintf(value, (size_t)n, "%s", f ? st_face_label(f - 1) : "The game's own");
         return 1;
     }
-    case 43: {  /* Font size (the user, 2026-11-14: "able to go down as far as the font I select will let me"): in 5 %
+    case 43: {  /* Font size (down as far as the chosen face allows): in 5 %
                    steps of the size for the game's resolution (19 pixels at 1080 rows), from the face's smallest (6
                    pixels) to 60 */
         int h = ui_h > 0 ? ui_h : 1080, pct = st_size_pct();
@@ -3101,10 +3230,18 @@ UWV_API int uwv_option(int id, int step, char *value, int n)
         snprintf(value, (size_t)n, "%d px (%d%%)", st_game_em(h), st_size_pct());
         return 1;
     }
-    case 41:  /* Message text (uwv_log, the user 2026-11-14): a smooth smaller font, the default, or the game's letters */
+    case 41:  /* Message text (uwv_log): a smooth smaller font, the default, or the game's letters */
         if (step) log_font_original = !log_font_original, settings_save("log_font", log_font_original ? "original" : "smooth");
         snprintf(value, (size_t)n, "%s", log_font_original ? "The original's" : "Smooth");
         return 1;
+    }
+    return -1;
+}
+/* uwv_option's rows for smooth motion, object shadows, the menu background, light fade, fire breathing (ids 9, 16, 61-63): 1 or 0 as uwv_option returns, -1 when id is not one of them */
+static int opt_motion_fire(int id, int step, char *value, int n)
+{
+    char t[72];   /* a row's new value as text, for settings_save */
+    switch (id) {
     case 16:  /* Smooth motion: the camera eased between the game's steps (smooth_pose) */
         if (step) smooth_on = !smooth_on, settings_save("smooth_motion", smooth_on ? "1" : "0");
         snprintf(value, (size_t)n, "%s", smooth_on ? "On" : "Off");
@@ -3113,15 +3250,15 @@ UWV_API int uwv_option(int id, int step, char *value, int n)
         if (step) render_set_object_shadows(!render_object_shadows()), settings_save("object_shadows", render_object_shadows() ? "1" : "0");
         snprintf(value, (size_t)n, "%s", render_object_shadows() ? "On" : "Off");
         return 1;
-    case 63:  /* Menu background (the user, 2026-11-16): one dark colour, the default, or the leather */
+    case 63:  /* Menu background: one dark colour, the default, or the leather */
         if (step) menu_leather = !menu_leather, md_set_solid(!menu_leather), settings_save("menu_background", menu_leather ? "leather" : "solid");
         snprintf(value, (size_t)n, "%s", menu_leather ? "Leather" : "Solid colour");
         return 1;
-    case 62:  /* Light fade (the user 2026-11-16): 50% at 2 tiles, 30% at 3, gone at 4, every light; or as before */
+    case 62:  /* Light fade: 50% at 2 tiles, 30% at 3, gone at 4, every light; or as before */
         if (step) render_set_light_fade(!render_light_fade()), settings_save("light_fade", render_light_fade() ? "1" : "0");
         snprintf(value, (size_t)n, "%s", render_light_fade() ? "2 / 3 / 4 tiles" : "Original");
         return 1;
-    case 61: {  /* Fire breathing (the user 2026-11-16): the fires' slow breath now and then, Off then 10 to 40 % */
+    case 61: {  /* Fire breathing: the fires' slow breath now and then, Off then 10 to 40 % */
         int pc = (int)(render_breath_depth() * 100.0f + 0.5f);
         if (step) {
             pc += step > 0 ? 10 : -10;
@@ -3133,7 +3270,15 @@ UWV_API int uwv_option(int id, int step, char *value, int n)
         else snprintf(value, (size_t)n, "%d%%", pc);
         return 1;
     }
-    case 50: {  /* Joint shadows (AO, the user 2026-11-14): the walls' and floors' occlusion maps, Off then 25 to 200 % */
+    }
+    return -1;
+}
+/* uwv_option's rows for joint and relief shadows, the textures and the three relief maps' detail (ids 50-55): 1 or 0 as uwv_option returns, -1 when id is not one of them */
+static int opt_textures(int id, int step, char *value, int n)
+{
+    char t[72];   /* a row's new value as text, for settings_save */
+    switch (id) {
+    case 50: {  /* Joint shadows (AO): the walls' and floors' occlusion maps, Off then 25 to 200 % */
         int pc = (int)(S.texture_ao * 100.0f + 0.5f);
         if (step) {
             pc += step > 0 ? 25 : -25;
@@ -3145,7 +3290,7 @@ UWV_API int uwv_option(int id, int step, char *value, int n)
         else snprintf(value, (size_t)n, "%d%%", pc);
         return 1;
     }
-    case 51: {  /* Relief shadows (the user 2026-11-14): the relief's depth its shadows are cast from, Off then 1 to 8 */
+    case 51: {  /* Relief shadows: the relief's depth its shadows are cast from, Off then 1 to 8 */
         int d = (int)(S.texture_shadow + 0.5f);
         if (step) {
             d += step > 0 ? 1 : -1;
@@ -3157,7 +3302,7 @@ UWV_API int uwv_option(int id, int step, char *value, int n)
         else snprintf(value, (size_t)n, "Depth %d", d);
         return 1;
     }
-    case 52: {  /* Textures (the user 2026-11-14): the walls' and floors' own, or upscaled 256 / 512; at once (hires_apply) */
+    case 52: {  /* Textures: the walls' and floors' own, or upscaled 256 / 512; at once (hires_apply) */
         static const int RES[3] = {0, 256, 512};
         int k = tex_res == 512 ? 2 : tex_res == 256 ? 1 : 0;
         if (step) {
@@ -3169,7 +3314,7 @@ UWV_API int uwv_option(int id, int step, char *value, int n)
         snprintf(value, (size_t)n, "%s", k == 0 ? "Original" : k == 1 ? "Upscaled 256" : "Upscaled 512");
         return 1;
     }
-    case 53: case 54: case 55: {  /* Normal / Joint shadow / Relief height map detail (the user 2026-11-16: a row for
+    case 53: case 54: case 55: {  /* Normal / Joint shadow / Relief height map detail (a row for
                                    * each kind of map, with the textures' choices); at once (hires_apply) */
         static const int RES[4] = {-1, 0, 256, 512};
         static const char *const KEY[3] = {"normal_map_res", "ao_map_res", "height_map_res"};
@@ -3184,10 +3329,104 @@ UWV_API int uwv_option(int id, int step, char *value, int n)
         return 1;
     }
     }
+    return -1;
+}
+/* uwv_option's rows for fog, vertical sync, exposure, gamma and the other rows for settings.txt keys (ids 13, 90-104),
+   and the level of this DLL's log (id 105, the front end's Log detail row): 1 or 0 as uwv_option returns, -1 when id
+   is not one of them */
+static int opt_more(int id, int step, char *value, int n)
+{
+    char t[72];   /* a row's new value as text, for settings_save */
+    switch (id) {
+    /* (rows for settings.txt keys the menu had no row for) */
+    case 13: {  /* Fog and light shafts: off, or its quality 1-3 (fx_fog) */
+        static const char *const Q[4] = {"Off", "Low", "Medium", "High"};
+        if (step) FX.fog = (FX.fog + (step > 0 ? 1 : 3)) % 4, snprintf(t, sizeof t, "%d", FX.fog), settings_save("fx_fog", t),
+                  render_set_fx(FX.particles, FX.decals, FX.water, FX.fog);
+        snprintf(value, (size_t)n, "%s", Q[FX.fog & 3]);
+        return 1;
+    }
+    case 90: {  /* Vertical sync (vsync): the swap chain is made with it, at the start */
+        static int run = -1;
+        if (run < 0) run = S.vsync != 0;
+        if (step) S.vsync = !S.vsync, settings_save("vsync", S.vsync ? "1" : "0");
+        snprintf(value, (size_t)n, "%s%s", S.vsync ? "On" : "Off", (S.vsync != 0) != run ? " (from the next start)" : "");
+        return 1;
+    }
+    case 91: {  /* Exposure (the renderer's, at the start) */
+        static float run = -1;
+        if (run < 0) run = S.exposure;
+        return opt_num(&S.exposure, step, 0.5f, 4.0f, 0.25f, "exposure", "", 1, run, value, n);
+    }
+    case 92: return opt_num(&S.gamma, step, 0.5f, 2.0f, 0.05f, "gamma", "", 0, 0, value, n);   /* the lights' gamma (Look, every frame) */
+    case 93:    /* Invert mouse (our view's up and down: uwv_mouse) */
+        if (step) S.invert_mouse = !S.invert_mouse, settings_save("invert_mouse", S.invert_mouse ? "1" : "0");
+        snprintf(value, (size_t)n, "%s", S.invert_mouse ? "On" : "Off");
+        return 1;
+    case 94:    /* Your light: held up over the head (1) or at the eye */
+        if (step) S.hand = !S.hand, settings_save("torch_in_hand", S.hand ? "1" : "0");
+        snprintf(value, (size_t)n, "%s", S.hand ? "Over the head" : "At the eye");
+        return 1;
+    case 95: return opt_num(&S.sheen, step, 0, 1.0f, 0.05f, "sheen", "", 0, 0, value, n);                     /* the stone's sheen */
+    case 96: {  /* Light bounces: 1 one; 2 and more the probes' light fed back; 0 as many as build up */
+        if (step) S.bounces = (S.bounces + (step > 0 ? 1 : 4)) % 5, snprintf(t, sizeof t, "%d", S.bounces), settings_save("rt_bounces", t);
+        if (S.bounces) snprintf(value, (size_t)n, "%d", S.bounces);
+        else snprintf(value, (size_t)n, "As many as build up");
+        return 1;
+    }
+    case 97: return opt_num(&S.ray_length, step, 2, 32, 1, "rt_ray_length", " tiles", 0, 0, value, n);   /* a bounce ray's reach */
+    case 98: return opt_num(&S.sprite_strength, step, 0, 1.0f, 0.05f, "sprite_normal_strength", "", 0, 0, value, n);
+    case 99: return opt_num(&S.sprite_ao, step, 0, 1.0f, 0.05f, "sprite_ao_strength", "", 0, 0, value, n);
+    case 100: return opt_num(&S.sprite_height, step, 0, 4.0f, 0.25f, "sprite_height", " texels", 0, 0, value, n);
+    case 101: case 102: {  /* DLSS 5's tone and saturation (the renderer's, at the start) */
+        static float run[2] = {-1, -1};
+        float *v = id == 101 ? &S.dlss5_tone : &S.dlss5_saturation;
+        if (!render_dlss5_available()) return 0;
+        if (run[id - 101] < 0) run[id - 101] = *v;
+        return opt_num(v, step, 0, 2.0f, 0.05f, id == 101 ? "dlss5_tone" : "dlss5_saturation", "", 1, run[id - 101], value, n);
+    }
+    case 103: {  /* the campfires' swell */
+        int r = opt_num(&camp_swell, step, 0, 0.6f, 0.05f, "campfire_swell", "", 0, 0, value, n);
+        render_set_campfire_depth(camp_swell);
+        return r;
+    }
+    case 104: {  /* the other fires' swell */
+        int r = opt_num(&flame_swell, step, 0, 0.5f, 0.05f, "flame_swell", "", 0, 0, value, n);
+        render_set_puff_depth(flame_swell);
+        return r;
+    }
+    case 105: {  /* Log detail (the front end's own row, kept in its uw1port.cfg): this DLL's logger has its own level,
+                    set here. step = the level + 1 (1 Errors only to 4 Everything); 0 reads it */
+        static const char *const L[4] = {"Errors only", "Warnings", "Normal", "Everything"};
+        if (step >= 1 && step <= 4) rlog_set_level(step - 1);
+        snprintf(value, (size_t)n, "%s", L[rlog_level()]);
+        return 1;
+    }
+    }
+    return -1;
+}
+/* one of our renderer's Esc rows by id: its value as text, step != 0 changes it (and keeps it in settings.txt); 0 when
+   the row is not offered. The Sprites tab's ids first, then each group of rows in turn */
+UWV_API int uwv_option(int id, int step, char *value, int n)
+{
+    int r;
+    if (!started) return 0;
+    if (id >= 1000 && id < 1512) return spr_option(id - 1000, step, value, n);   /* the Sprites tab: a picture's row */
+    if (id >= 3000 && id < 3512) return spr_label(id - 3000, value, n);          /* and the row's name */
+    if ((r = opt_rendering(id, step, value, n)) >= 0) return r;
+    if ((r = opt_light_view(id, step, value, n)) >= 0) return r;
+    if ((r = opt_effects_glow(id, step, value, n)) >= 0) return r;
+    if ((r = opt_colour_hdr(id, step, value, n)) >= 0) return r;
+    if ((r = opt_water_sound_text(id, step, value, n)) >= 0) return r;
+    if ((r = opt_acoustics(id, step, value, n)) >= 0) return r;
+    if ((r = opt_text(id, step, value, n)) >= 0) return r;
+    if ((r = opt_motion_fire(id, step, value, n)) >= 0) return r;
+    if ((r = opt_textures(id, step, value, n)) >= 0) return r;
+    if ((r = opt_more(id, step, value, n)) >= 0) return r;
     return 0;
 }
 
-/* the menu's drawing: src\menu_draw.c (2026-11-15: moved there, unchanged, for the backends without this renderer) */
+/* the menu's drawing: src\menu_draw.c (there so the backends without this renderer have it too) */
 UWV_API void uwv_menu_wheel(int notches) { md_wheel(notches); }
 UWV_API int uwv_menu_click(int mx, int my, int down) { return md_click(ui_ok, mx, my, down); }
 /* the rows' sliders (the Fog and smoke page; menu_draw.c): the places along their tracks for the next uwv_menu_rows2,
@@ -3209,7 +3448,7 @@ UWV_API int uwv_menu_rows2(const char *title, const char *const *labels, const c
     }
     return md_rows(ui_buf, ui_w, ui_h, !menu_font_original, title, labels, values, hints, n, sel, mx, my);
 }
-/* (a backend built before 2026-11-14: no hints) */
+/* (an older backend: no hints) */
 UWV_API int uwv_menu_rows(const char *title, const char *const *labels, const char *const *values, int n, int sel, int mx, int my)
 {
     return uwv_menu_rows2(title, labels, values, NULL, n, sel, mx, my);
@@ -3253,7 +3492,7 @@ static void ui_blend_overlay(void)
  * window pixels; sheet: the character sheet beside it. Returns what the pointer is on (uwinv_draw.c's uwi_panel). */
 int uwi_panel(const UwiSnap *s, int mx, int my, int sheet, int draw, float *fx, float *fy);
 /* the size of the snapshot this DLL was built with: the backend uses the panel only when its own is the same (an
-   exe and a DLL of different builds once read the panel's words from the exe's mouse, then crashed: 2026-11-14) */
+   exe and a DLL of different builds can read the panel's words from the wrong places and crash) */
 UWV_API int uwv_snap_size(void) { return (int)sizeof(UwiSnap); }
 UWV_API int uwv_inventory(const UwiSnap *s, int mx, int my, int sheet)
 {
@@ -3276,52 +3515,38 @@ UWV_API int uwv_inv_hit(const UwiSnap *s, int mx, int my, int sheet, float *fx, 
     return uwi_panel(s, mx, my, sheet, 0, fx, fy);
 }
 
-/* one frame: the interface layer (uwv_ui_size, RGBA, rows from the top) over the scene, presented */
-static bool clip_wanted;                /* P: the next frame to the clipboard */
-UWV_API int uwv_frame(const unsigned char *ui_rgba)
+/* uwv_frame's step: the checks' UWVIEW_COMPARE_FX, the effect on in the first picture and off in the second (in
+   the normal maps' place), and the scene's clock held while they are taken */
+static void frame_compare_fx(Look *look)
 {
-    if (!started) return 0;
-    int uw, uh, us;
-    render_ui_size(&uw, &uh, &us);
-    if (cmp_phase == 1 && cmp_frames == 0 && steady_check()) fx_steady_reset = 1;   /* (the emitters from nothing: fx_frame) */
-    if (cmp_phase == 1 && cmp_frames == 0) { /* the picture as it is now, kept */
-        free(cmp_ui);
-        cmp_ui = malloc((size_t)uw * uh * 4);
-        if (cmp_ui) memcpy(cmp_ui, ui_rgba, (size_t)uw * uh * 4);
-    }
-    render_set_ui(cmp_phase && cmp_phase < 3 && cmp_ui ? cmp_ui : ui_rgba);
-    Look look = {S.gamma, S.normal_maps != 0, S.normal_strength, S.bounce, S.sheen, S.ray_length, S.bounces, S.sprite_strength, S.sprite_ao, S.sprite_height, S.texture_ao, S.texture_shadow};
-    {
-        const char *cf = getenv("UWVIEW_COMPARE_FX");   /* the checks: the effect on / off in place of the normal maps */
-        if (cmp_phase == 2 && !(cf && *cf)) look.normal_maps = false;
-        /* "texture": the walls' and floors' AO and relief shadows on, then off (menucheck textures) */
-        if (cmp_phase == 2 && cf && !strcmp(cf, "texture")) look.texture_ao = 0, look.texture_shadow = 0;
-        if (cf && *cf && (cmp_phase == 1 || cmp_phase == 2)) {
-            int on = cmp_phase == 1;
-            render_set_fx(!strcmp(cf, "particles") ? on : FX.particles, !strcmp(cf, "decals") ? on : FX.decals,
-                          !strcmp(cf, "water") ? on : FX.water || !strcmp(cf, "ripple"), !strcmp(cf, "fog") ? (on ? (FX.fog ? FX.fog : 2) : 0) : FX.fog);
-            render_water_ripples_shown(strcmp(cf, "ripple") || on);
-        } else if (cmp_phase == 3 && cf && *cf) render_set_fx(FX.particles, FX.decals, FX.water, FX.fog);
-        if (steady_check()) render_hold_time(true);   /* (from the first frame: the frame count stays 0) */
-        else if (cf && *cf) render_hold_time(cmp_phase == 1 || cmp_phase == 2);
-    }
-    fx_frame();
-    if (cmp_phase == 1 || cmp_phase == 2) {
-        cmp_frames++;
-        if (cmp_frames == cmp_at(1) || cmp_frames == cmp_at(2)) render_want_screenshot();
-    }
+    const char *cf = getenv("UWVIEW_COMPARE_FX");   /* the checks: the effect on / off in place of the normal maps */
+    if (cmp_phase == 2 && !(cf && *cf)) look->normal_maps = false;
+    /* "texture": the walls' and floors' AO and relief shadows on, then off (menucheck textures) */
+    if (cmp_phase == 2 && cf && !strcmp(cf, "texture")) look->texture_ao = 0, look->texture_shadow = 0;
+    if (cf && *cf && (cmp_phase == 1 || cmp_phase == 2)) {
+        int on = cmp_phase == 1;
+        render_set_fx(!strcmp(cf, "particles") ? on : FX.particles, !strcmp(cf, "decals") ? on : FX.decals,
+                      !strcmp(cf, "water") ? on : FX.water || !strcmp(cf, "ripple"), !strcmp(cf, "fog") ? (on ? (FX.fog ? FX.fog : 2) : 0) : FX.fog);
+        render_water_ripples_shown(strcmp(cf, "ripple") || on);
+    } else if (cmp_phase == 3 && cf && *cf) render_set_fx(FX.particles, FX.decals, FX.water, FX.fog);
+    if (steady_check()) render_hold_time(true);   /* (from the first frame: the frame count stays 0) */
+    else if (cf && *cf) render_hold_time(cmp_phase == 1 || cmp_phase == 2);
+}
+/* uwv_frame's step: the player's light (the torch) for this frame: where it is, its motion, its colour */
+static void frame_torch(void)
+{
     /* the player's light, as our engine makes it from the original's light level (inventory.c's inv_light): the
      * intensity 0.5 + 0.4 a level, the reach the original's view distance for the level (SHADES.DAT's 4th word,
      * UW.EXE 0x810f8: 3 3 4 4 5 6 7 7 tiles), a torch's warm colour */
     static const float REACH[8] = {3, 3, 4, 4, 5, 6, 7, 7};
     static const float warm[3] = {1.0f, 0.70f, 0.40f};
-    /* held up over the head, in the very centre of the body (the user, 2026-11-13: "above the player in the very
-     * center of the character ... rather than off to the side"): the light above the eye, so that it still crosses
+    /* held up over the head, in the very centre of the body (above the player, not off to the side): the light
+     * above the eye, so that it still crosses
      * floors and walls at an angle from above and the normal maps read, but the same to the left and the right.
-     * (It was a hand's reach to the right, 0.1 ahead-right and 0.2 below the eye: a door seen edge-on then lit its
-     * right face at once and its left only 0.1 tile further on, as the light crossed the door's plane.) */
+     * (Not a hand's reach to the right: a door seen edge-on would light its right face at once and its left only
+     * 0.1 tile further on, as the light crossed the door's plane.) */
     float tp[3] = {cam.pos[0], cam.pos[1], cam.pos[2]};
-    /* no light carried (level 0): the light is the player's own eyes, the user's: steady, at the eye, white, a fifth
+    /* no light carried (level 0): the light is the player's own eyes: steady, at the eye, white, a fifth
        shorter (common.hlsli's original_light for level 0); a torch, lantern, candle or spell keeps its flame */
     /* UWVIEW_STEADY=1 (the checks: tools\vkcompare.py): a carried light steady too, at the eye and white as with none
        (its flame's puffs go by the clock, so no two runs' pictures were the same: 815 235 pixels of a 1920 x 1080
@@ -3344,7 +3569,7 @@ UWV_API int uwv_frame(const unsigned char *ui_rgba)
     {
         static const float CURVRAD[8] = {3, 3, 4, 4, 5, 6, 7, 7};
         float eye[3] = {cam.pos[0], cam.pos[1], cam.pos[2]};
-        /* the torch's flicker (the user's, the physics of fire): it puffs at about 7 a second (a flame 5 cm across:
+        /* the torch's flicker (the physics of fire): it puffs at about 7 a second (a flame 5 cm across:
            1.5 / sqrt(0.05)), a little at rest; moving, the air past it tears at it, deeper the faster, and leans the
            flame back (the light a little behind the hand) */
         static float last[3], speed;
@@ -3378,6 +3603,10 @@ UWV_API int uwv_frame(const unsigned char *ui_rgba)
         render_set_torch_original(lv_number > 0, tp, eye, light_level, flick, 2.2f * S.gamma);   /* 3 tiles (common.hlsli TORCH_REACH) + the hand's offset */
         (void)CURVRAD;
     }
+}
+/* uwv_frame's step: the moving light (settings.txt moving_light, level 1) along its hall and back */
+static void frame_moving_light(void)
+{
     if (S.moving_light && lv_number == 1 && !mv_tried) moving_light_place();
     if (mv_index >= 0) { /* along the hall and back, a tile and a half a second, on repeat */
         float dx = mv_b[0] - mv_a[0], dz = mv_b[1] - mv_a[1], len = sqrtf(dx * dx + dz * dz);
@@ -3389,6 +3618,65 @@ UWV_API int uwv_frame(const unsigned char *ui_rgba)
         p[1] = level_floor_y(&lv, p[0], p[2]) + 0.6f;
         render_set_light_pos(mv_index, p);
     }
+}
+/* uwv_frame's step after the frame: the checks' UWVIEW_COMPARE pictures (on, then off) written, and the two
+   compared */
+static void frame_compare_shots(bool ok)
+{
+    if (ok && (cmp_frames == cmp_at(1) || cmp_frames == cmp_at(2)) && (cmp_phase == 1 || cmp_phase == 2)) {
+        const char *pre = getenv("UWVIEW_COMPARE");
+        unsigned char *px = malloc((size_t)out_w * out_h * 4);
+        char p[MAX_PATH];
+        bool wrote = false;
+        if (!px) RLOG_E("view", "the comparison's picture: out of memory");
+        if (px && render_readback(px)) {
+            snprintf(p, sizeof p, "%s-%s.png", pre, cmp_phase == 1 ? "on" : "off");
+            wrote = png_write(p, px, out_w, out_h, 4);
+            if (!wrote) RLOG_E("view", "cannot write %s", p);
+            if (cmp_phase == 1) {
+                free(cmp_a);
+                cmp_a = px, px = NULL;
+            } else if (cmp_a) {
+                long long sum = 0;
+                int changed = 0, n = out_w * out_h;
+                for (int i = 0; i < n; i++) {
+                    int d = abs(cmp_a[i * 4] - px[i * 4]) + abs(cmp_a[i * 4 + 1] - px[i * 4 + 1]) + abs(cmp_a[i * 4 + 2] - px[i * 4 + 2]);
+                    sum += d, changed += d > 12;
+                }
+                RLOG_I("view", "%s on / off: %d of %d pixels differ by more than 12 (%.1f%%), mean difference %.2f",
+                        getenv("UWVIEW_COMPARE_FX") && *getenv("UWVIEW_COMPARE_FX") ? getenv("UWVIEW_COMPARE_FX") : "normal maps",
+                        changed, n, 100.0 * changed / n, (double)sum / n / 3.0);
+            }
+            if (wrote) RLOG_I("view", "wrote %s", p);
+        }
+        free(px);
+        cmp_phase++;
+    }
+}
+/* one frame: the interface layer (uwv_ui_size, RGBA, rows from the top) over the scene, presented */
+static bool clip_wanted;                /* P: the next frame to the clipboard */
+UWV_API int uwv_frame(const unsigned char *ui_rgba)
+{
+    if (!started) return 0;
+    int uw, uh, us;
+    render_ui_size(&uw, &uh, &us);
+    if (cmp_phase == 1 && cmp_frames == 0 && steady_check()) fx_steady_reset = 1;   /* (the emitters from nothing: fx_frame) */
+    if (cmp_phase == 1 && cmp_frames == 0) { /* the picture as it is now, kept */
+        free(cmp_ui);
+        cmp_ui = malloc((size_t)uw * uh * 4);
+        if (cmp_ui) memcpy(cmp_ui, ui_rgba, (size_t)uw * uh * 4);
+        else RLOG_E("view", "the comparison's interface layer: out of memory (the live one used)");
+    }
+    render_set_ui(cmp_phase && cmp_phase < 3 && cmp_ui ? cmp_ui : ui_rgba);
+    Look look = {S.gamma, S.normal_maps != 0, S.normal_strength, S.bounce, S.sheen, S.ray_length, S.bounces, S.sprite_strength, S.sprite_ao, S.sprite_height, S.texture_ao, S.texture_shadow};
+    frame_compare_fx(&look);
+    fx_frame();
+    if (cmp_phase == 1 || cmp_phase == 2) {
+        cmp_frames++;
+        if (cmp_frames == cmp_at(1) || cmp_frames == cmp_at(2)) render_want_screenshot();
+    }
+    frame_torch();
+    frame_moving_light();
     if (!cmp_phase) things_update();
     /* UWVIEW_SHOT_CRIT=FILE (the checks): the picture once a creature has been drawn for 30 frames */
     const char *crit_shot = getenv("UWVIEW_SHOT_CRIT");
@@ -3414,40 +3702,16 @@ UWV_API int uwv_frame(const unsigned char *ui_rgba)
     if (ok) uwrec_frame(render_readback);
     if (ok && crit_now) {
         unsigned char *px = malloc((size_t)out_w * out_h * 4);
-        if (px && render_readback(px) && png_write(crit_shot, px, out_w, out_h, 4)) fprintf(stderr, "uwview: wrote %s\n", crit_shot);
+        if (px && render_readback(px) && png_write(crit_shot, px, out_w, out_h, 4)) RLOG_I("view", "wrote %s", crit_shot);
+        else RLOG_E("view", "cannot write %s%s", crit_shot, px ? " (no picture read back, or the PNG not written)" : ": out of memory");
         free(px);
         crit_shot_done = true;
     }
-    if (ok && (cmp_frames == cmp_at(1) || cmp_frames == cmp_at(2)) && (cmp_phase == 1 || cmp_phase == 2)) {
-        const char *pre = getenv("UWVIEW_COMPARE");
-        unsigned char *px = malloc((size_t)out_w * out_h * 4);
-        char p[MAX_PATH];
-        if (px && render_readback(px)) {
-            snprintf(p, sizeof p, "%s-%s.png", pre, cmp_phase == 1 ? "on" : "off");
-            png_write(p, px, out_w, out_h, 4);
-            if (cmp_phase == 1) {
-                free(cmp_a);
-                cmp_a = px, px = NULL;
-            } else if (cmp_a) {
-                long long sum = 0;
-                int changed = 0, n = out_w * out_h;
-                for (int i = 0; i < n; i++) {
-                    int d = abs(cmp_a[i * 4] - px[i * 4]) + abs(cmp_a[i * 4 + 1] - px[i * 4 + 1]) + abs(cmp_a[i * 4 + 2] - px[i * 4 + 2]);
-                    sum += d, changed += d > 12;
-                }
-                fprintf(stderr, "uwview: %s on / off: %d of %d pixels differ by more than 12 (%.1f%%), mean difference %.2f\n",
-                        getenv("UWVIEW_COMPARE_FX") && *getenv("UWVIEW_COMPARE_FX") ? getenv("UWVIEW_COMPARE_FX") : "normal maps",
-                        changed, n, 100.0 * changed / n, (double)sum / n / 3.0);
-            }
-            fprintf(stderr, "uwview: wrote %s\n", p);
-        }
-        free(px);
-        cmp_phase++;
-    }
+    frame_compare_shots(ok);
     return ok;
 }
 
-/* --- the effects' particles (Task 3; render_particles.c draws them): spawned here --- */
+/* --- the effects' particles (render_particles.c draws them): spawned here --- */
 static void gpu_part(const float p[3], const float v[3], float life, float size, const float c[3], int kind, float grav, float drag)
 {
     RParticle q;
@@ -3461,7 +3725,7 @@ static void fx_decal(float x, float z, int kind, float size, const float rgb[3],
 {
     if (!lv_number) return;
     render_decals_add(x, level_floor_y(&lv, x, z), z, kind, size, frand() * 6.2831853f, rgb);
-    if (getenv("UWVIEW_FX_LOG")) fprintf(stderr, "uwview: decal %d at %.2f %.2f (creature %d), %d in all\n", kind, x, z, who, render_decals_count());
+    if (getenv("UWVIEW_FX_LOG")) RLOG_I("view", "decal %d at %.2f %.2f (creature %d), %d in all", kind, x, z, who, render_decals_count());
 }
 static int fx_emitters;    /* the flames giving embers this frame */
 static float fx_emit_screen[2] = {-1, -1};   /* the nearest one in view (0..1 across and down): the checks' region */
@@ -3469,6 +3733,7 @@ static float fx_emit_screen[2] = {-1, -1};   /* the nearest one in view (0..1 ac
  * at its flame's own rate (a torch about 6 a second, a campfire about 25) */
 #include "volfog.inc"
 
+/* each frame: the embers, sparks, smoke and water fog for this frame (the fog and smoke's own frame first) */
 static void fx_frame(void)
 {
     static float acc[MAX_LIGHTS];
@@ -3535,7 +3800,7 @@ static void fx_frame(void)
             float c[3] = {1.0f, 0.55f + frand() * 0.2f, 0.18f};
             gpu_part(base, v, spark ? 0.7f + frand() * 0.5f : 0.9f + frand() * 0.9f, 0.006f + frand() * 0.005f, c, 1, spark ? 3.0f : -0.35f, spark ? 0.3f : 1.2f);
         }
-        /* a campfire's smoke (the user, 2026-11-17: "smoke from the campfires that dissipates over time"): grey puffs
+        /* a campfire's smoke (smoke that thins out over time): grey puffs
            rising from above the flames, slowing, widening and thinning out over 5 to 8 seconds, lit from below by the
            fire while young (particles.hlsl's kind 5); under the ceiling they spread */
         if (GL.camp_smoke && L->flame >= 0.4f && !vol_covers(L->pos[0], L->pos[2], 1)) {   /* (inside the box of air: the real smoke) */
@@ -3551,7 +3816,7 @@ static void fx_frame(void)
             }
         }
     }
-    /* the fog over the water (the user, 2026-11-17: "fog over the water"): soft pale wisps lying just above every
+    /* the fog over the water: soft pale wisps lying just above every
        water tile within 7 tiles of the eye, drifting slowly, each coming and going over 7 to 12 seconds (kind 4) */
     if (GL.water_mist) {
         static float macc;
@@ -3588,6 +3853,7 @@ static void fx_decal_screen(float x, float y, float z)
         fprintf(stderr, "uwview: decal test at screen %.3f %.3f\n", (d[0] * r[0] + d[1] * r[1] + d[2] * r[2]) / ahead / tx * 0.5f + 0.5f,
                 0.5f - (d[0] * u[0] + d[1] * u[1] + d[2] * u[2]) / ahead / ty * 0.5f);
 }
+/* a new level: the old level's particles and marks gone */
 static void fx_level_change(int n)
 {
     render_particles_clear();
@@ -3622,6 +3888,7 @@ UWV_API int uwv_recording(void) { return uwrec_seconds_left(); }
 /* P: the next frame (what the window shows) to the clipboard */
 UWV_API void uwv_clipboard_shot(void) { if (started) clip_wanted = true; }
 
+/* the renderer stopped (a video being made stopped first) */
 UWV_API void uwv_shutdown(void)
 {
     uwrec_shutdown();
@@ -3630,7 +3897,7 @@ UWV_API void uwv_shutdown(void)
 }
 
 /* an effect event from the game (fxevent.c, drained by the backend once a picture): x, y, z the renderer's tiles, fx the
- * SOUNDS.DAT entry or the item, mob the mobile or 0. The renderer's effects take what they need of them (Tasks 3-5) */
+ * SOUNDS.DAT entry or the item, mob the mobile or 0. The renderer's effects take what they need of them */
 UWV_API void uwv_fx_event(int kind, float x, float y, float z, int fx, int mob)
 {
     static int log = -1;

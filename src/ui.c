@@ -1,37 +1,50 @@
+/* ui.c: the interface layer shared by the menus, inventory and conversation screens: an overlay of pixels in game
+   units (scale) plus a window-sized text layer for the smooth font; loads the game's .SYS fonts and the pictures
+   (kept once loaded), draws pictures, text (wrapped, justified), parchment/leather frames, buttons and tooltips. */
 #include "ui.h"
 #include "smoothtext.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+/* the logger: the renderer builds find it by -I port\win32, the Esc menu build one folder up */
+#if __has_include("rlog.h")
+#include "rlog.h"
+#else
+#include "../rlog.h"
+#endif
+#define LOG_TAG "ui"
 
 static Overlay O;
 static int g_scale0, g_ww, g_wh;   /* the window's own scale and size (ui_start) */
 
-/* ---- the interface's font (the user, 2026-11-14: "change the font to something that is easy to read and apply it to
-   everything in the game. choose the font size based on the resolution of the game. also put options in the esc menu
-   to change the font and font size"). g_font 0: the game's own letters on the overlay as before; 1..: a smooth face
-   (smoothtext.c's st_face_label(g_font - 1)), its size st_game_em of the window's height (FONT_SMALL 85 %, FONT_BIG
-   130 %), drawn at the window's own pixels into the text layer T, which is laid over the overlay wherever the overlay
-   is laid on the screen (ui_text_apply). Anything opaque drawn on the overlay afterwards clears the text under it
-   (blend), so what is drawn later still covers it (a tooltip over the sheet). Widths and heights are the face's,
-   in overlay pixels, so the layouts measure and wrap by it. Presentation only. ---- */
-static int g_font = 0;   /* (the port's renderer sets it from settings.txt ui_font, 1 by default: uwview.c) */
+/* ---- the interface's font. g_font 0: the game's own letters on the overlay; 1..: a smooth face (smoothtext.c's
+   st_face_label(g_font - 1)), its size st_game_em of the window's height (FONT_SMALL 85 %, FONT_BIG 130 %), drawn at
+   the window's own pixels into the text layer T, which is laid over the overlay wherever the overlay is laid on the
+   screen (ui_text_apply). Anything opaque drawn on the overlay afterwards clears the text under it (blend), so what
+   is drawn later still covers it (a tooltip over the sheet). Widths and heights are the face's, in overlay pixels,
+   so the layouts measure and wrap by it. Presentation only. ---- */
+static int g_font = 0;   /* (the renderer sets it from settings.txt ui_font, 1 by default) */
 static unsigned *T;                                      /* window pixels, st_draw's 0xAABBGGRR (premultiplied) */
 static int tx0 = 1 << 30, ty0 = 1 << 30, tx1 = -1, ty1 = -1;   /* what of T is drawn on */
+/* picks the font: 0 the game's letters, n the smooth face n - 1 */
 void ui_set_font(int f) { g_font = f < 0 ? 0 : f; if (g_font) st_set_face(g_font - 1); }
 int ui_font(void) { return g_font; }
+/* empties the part of the text layer that was drawn on */
 static void t_clear(void) {
     if (T && tx1 >= tx0 && ty1 >= ty0)
         for (int y = ty0; y <= ty1; y++) memset(T + (size_t)y * g_ww + tx0, 0, (size_t)(tx1 - tx0 + 1) * 4);
     tx0 = ty0 = 1 << 30, tx1 = ty1 = -1;
 }
+/* the smooth face's size for font f (small, normal or big) at this window height */
 static int sm_em(int f) {
     int e = st_game_em(g_wh);
     return f == FONT_SMALL ? e * 85 / 100 : f == FONT_BIG ? e * 13 / 10 : e;
 }
+/* lays the text layer over the pixels d (w x h), fully opaque */
 void ui_text_apply(unsigned *d, int w, int h) { ui_text_apply_a(d, w, h, 256); }
-void ui_text_apply_a(unsigned *d, int w, int h, unsigned A) {   /* A: its opacity, 0..256 (a fading box) */
+/* the same at opacity A, 0..256 (a fading box) */
+void ui_text_apply_a(unsigned *d, int w, int h, unsigned A) {
     if (!T || tx1 < tx0) return;
     if (A > 256) A = 256;
     for (int y = ty0; y <= ty1 && y < h && y < g_wh; y++)
@@ -49,7 +62,7 @@ void ui_text_apply_a(unsigned *d, int w, int h, unsigned A) {   /* A: its opacit
             d[(size_t)y * w + x] = oa << 24 | (r > 255 ? 255 : r) | (g > 255 ? 255 : g) << 8 | (b > 255 ? 255 : b) << 16;
         }
 }
-/* draw at another scale for a while (the Esc menu, smaller); 0: the window's own again. Clears the overlay. */
+/* draws at another scale (the Esc menu, smaller); 0: the window's own again. Clears the overlay. */
 void ui_set_scale(int s) {
     if (!g_ww) return;
     O.scale = s > 0 ? s : g_scale0;
@@ -67,8 +80,11 @@ typedef struct {
 } Font;
 static Font F[FONTS];
 static char g_game[600];   /* the game's folder (ui_game_dir), where the fonts are copied from when missing */
+/* remembers the game folder, where missing fonts are copied from */
 void ui_game_dir(const char *game_dir) { str_copy(g_game, sizeof g_game, game_dir ? game_dir : ""); }
 
+/* sets up the overlay and text layer for a window ww x wh and loads the three .SYS fonts (copying them from the game
+   folder into data_dir\ui\fonts when missing); a font that cannot be found is logged and its text draws as nothing */
 bool ui_start(const char *data_dir, int ww, int wh) {
     str_copy(g_data, sizeof g_data, data_dir);
     O.scale = g_scale0 = MAX(1, (wh + 150) / 300);
@@ -76,6 +92,7 @@ bool ui_start(const char *data_dir, int ww, int wh) {
     O.w = ww / O.scale, O.h = wh / O.scale;
     O.px = arena_alloc((size_t)ww * wh * 4);   /* room for any scale (ui_set_scale), down to 1 */
     T = calloc((size_t)ww * wh, 4);            /* the smooth text layer */
+    if (!T) RLOG_E(LOG_TAG, "out of memory (%zu bytes)", (size_t)ww * wh * 4);
     static const char *names[FONTS] = {"font4x5p", "font5x6p", "fontbig"};   /* (lower case: the same files on Windows) */
     char path[700];
     for (int f = 0; f < FONTS; f++) {
@@ -86,10 +103,16 @@ bool ui_start(const char *data_dir, int ww, int wh) {
             snprintf(src, sizeof src, "%s\\..\\game\\data\\%s.sys", data_dir, names[f]);
             if (!file_exists(src) && g_game[0]) snprintf(src, sizeof src, "%s\\data\\%s.sys", g_game, names[f]);
             Bytes b = file_read(src);
-            if (b.size) make_dirs_for(path), file_write(path, b.data, b.size);
+            if (b.size) {
+                make_dirs_for(path);
+                if (!file_write(path, b.data, b.size)) RLOG_E(LOG_TAG, "cannot write %s: %s", path, rlog_errno());
+            }
         }
         Bytes b = file_read(path);
-        if (b.size < 12) continue;
+        if (b.size < 12) {
+            RLOG_W(LOG_TAG, "font %s missing or too short: the game's own letters for that font will not draw", path);
+            continue;
+        }
         Font *t = &F[f];
         t->d = b, t->size = (int)rd16(b.data + 2), t->space = (int)rd16(b.data + 4), t->height = (int)rd16(b.data + 6), t->row = (int)rd16(b.data + 8);
         t->count = (int)((b.size - 12) / (size_t)(t->size + 1));
@@ -97,7 +120,9 @@ bool ui_start(const char *data_dir, int ww, int wh) {
     return true;
 }
 
+/* the overlay the interface draws on */
 Overlay *ui_overlay(void) { return &O; }
+/* empties the overlay and the text layer */
 void ui_clear(void) { memset(O.px, 0, (size_t)O.w * O.h * 4); t_clear(); }
 
 /* pictures, kept once loaded */
@@ -110,7 +135,8 @@ typedef struct {
 static PicSlot g_pics[512];
 static int g_npics;
 
-/* a picture by its file name under the data folder ("ui\\screens\\MAIN.png"), kept once loaded */
+/* a picture by its file name under the data folder ("ui\\screens\\MAIN.png"), kept once loaded; NULL if missing
+   (logged once) */
 const Pic *ui_pic_file(const char *rel) {
     static struct { char rel[64]; Pic pic; bool tried; } f[8];
     int i;
@@ -126,11 +152,13 @@ const Pic *ui_pic_file(const char *rel) {
     if (png_read(path, &img)) {
         f[i].pic.rgba = malloc((size_t)img.w * img.h * 4);
         if (f[i].pic.rgba) memcpy(f[i].pic.rgba, img.rgba, (size_t)img.w * img.h * 4), f[i].pic.w = img.w, f[i].pic.h = img.h;
-    }
+        else RLOG_E(LOG_TAG, "out of memory (%zu bytes)", (size_t)img.w * img.h * 4);
+    } else RLOG_W(LOG_TAG, "picture %s missing or unreadable", path);
     arena_reset(mark);
     return f[i].pic.rgba ? &f[i].pic : NULL;
 }
 
+/* picture k of a folder under the data folder (dir\NNN.png), kept once loaded; NULL if missing (logged once) */
 const Pic *ui_pic(const char *dir, int k) {
     if (!g_data[0]) return NULL;   /* before ui_start: not tried */
     for (int i = 0; i < g_npics; i++)
@@ -145,11 +173,13 @@ const Pic *ui_pic(const char *dir, int k) {
     if (png_read(path, &img)) { /* kept outside the arena: levels come and go, the interface stays */
         s->pic.rgba = malloc((size_t)img.w * img.h * 4);
         if (s->pic.rgba) memcpy(s->pic.rgba, img.rgba, (size_t)img.w * img.h * 4), s->pic.w = img.w, s->pic.h = img.h;
-    }
+        else RLOG_E(LOG_TAG, "out of memory (%zu bytes)", (size_t)img.w * img.h * 4);
+    } else RLOG_D(LOG_TAG, "picture %s missing or unreadable", path);   /* (an item without new art is normal) */
     arena_reset(mark);
     return s->pic.rgba ? &s->pic : NULL;
 }
 
+/* puts one overlay pixel of colour c at alpha a over what is there; something opaque also clears the text under it */
 static void blend(int x, int y, const u8 *c, int a) {
     if (x < 0 || y < 0 || x >= O.w || y >= O.h || a <= 0) return;
     if (a >= 200 && tx1 >= tx0) {   /* something opaque over the smooth text drawn before: it covers it */
@@ -167,6 +197,7 @@ static void blend(int x, int y, const u8 *c, int a) {
     d[3] = (u8)oa;
 }
 
+/* draws a picture at (x, y), each pixel s overlay pixels big */
 void ui_draw(const Pic *p, int x, int y, int s) {
     if (!p) return;
     s = MAX(1, s);
@@ -177,7 +208,8 @@ void ui_draw(const Pic *p, int x, int y, int s) {
         }
 }
 
-u8 ui_new_sprite[512];
+u8 ui_new_sprite[512];   /* 1: the item has a replacement picture in newsprites\objects */
+/* the picture of an item: the replacement (32x32 at most, *div 2 when above 16) if there is one, else the original */
 const Pic *ui_item_pic(int item, int *div) {
     if (div) *div = 1;
     if (item >= 0 && item < 512 && ui_new_sprite[item]) {
@@ -190,6 +222,7 @@ const Pic *ui_item_pic(int item, int *div) {
     return ui_pic("sprites\\objects", item);
 }
 
+/* draws a picture of div x div pixels per overlay pixel, at the window's finer pixels when there are any */
 void ui_draw_fine(const Pic *p, int x, int y, int div) {
     if (!p) return;
     if (div <= 1) { ui_draw(p, x, y, 1); return; }
@@ -220,12 +253,14 @@ void ui_draw_fine(const Pic *p, int x, int y, int div) {
     }
 }
 
+/* fills a rectangle with a colour at alpha a */
 void ui_fill(int x, int y, int w, int h, u8 r, u8 g, u8 b, u8 a) {
     u8 c[3] = {r, g, b};
     for (int py = y; py < y + h; py++)
         for (int px = x; px < x + w; px++) blend(px, py, c, a);
 }
 
+/* the height of a line of font f, in overlay pixels */
 int ui_font_height(int f) {
     if (g_font && g_wh) return (st_height(ST_REGULAR, sm_em(f)) + O.scale - 1) / O.scale;
     return F[f].height ? F[f].height : 6;
@@ -242,6 +277,7 @@ const u8 *ui_glyph(int f, int ch, int *w, int *h, int *row) {
     return t->d.data + 12 + (size_t)i * (t->size + 1);
 }
 
+/* the width of character ch in the game's font t (the pen moves one more) */
 static int glyph_width(const Font *t, int ch) {
     if (ch == ' ') return t->space;
     int i = ch;
@@ -249,8 +285,8 @@ static int glyph_width(const Font *t, int ch) {
     return t->d.data[12 + (size_t)i * (t->size + 1) + t->size];
 }
 
-/* text wrapped at word breaks to width w (and at new lines); returns the height used; draw false: measure only */
 static int g_clip0 = -(1 << 30), g_clip1 = 1 << 30;
+/* text is drawn only between rows y0 and y1 of the overlay; both negative: no limit */
 void ui_clip(int y0, int y1) {
     if (y0 < 0 && y1 < 0) g_clip0 = -(1 << 30), g_clip1 = 1 << 30;
     else g_clip0 = y0, g_clip1 = y1;
@@ -283,7 +319,8 @@ static void just_line(int f, const char *line, int x, int y, int w, u8 r, u8 g, 
         X += wpx + gap;
     }
 }
-static bool g_justify;   /* ui_text_wrap spreads its wrapped lines (the tooltips: the user, 2026-11-14) */
+static bool g_justify;   /* ui_text_wrap spreads its wrapped lines (the tooltips) */
+/* text wrapped at word breaks to width w (and at new lines); returns the height used; draw false: measure only */
 int ui_text_wrap(int f, const char *s, int x, int y, int w, u8 r, u8 g, u8 b, bool draw) {
     int lh = ui_font_height(f) + 1, cy = y;   /* (one overlay pixel between lines: less wasted room) */
     char line[512];
@@ -313,6 +350,7 @@ int ui_text_wrap(int f, const char *s, int x, int y, int w, u8 r, u8 g, u8 b, bo
     return cy - y;
 }
 
+/* the width of a text in overlay pixels */
 int ui_text_width(int f, const char *s) {
     if (g_font && g_wh) return (st_width(ST_REGULAR, sm_em(f), s) + O.scale - 1) / O.scale;
     int w = 0;
@@ -342,6 +380,7 @@ static int t_draw(int f, const char *s, int X, int y, u8 r, u8 g, u8 b) {
         return (w + sc - 1) / sc;
     }
 }
+/* draws one line of text at overlay (x, y); returns its width */
 int ui_text(int f, const char *s, int x, int y, u8 r, u8 g, u8 b) {
     if (g_font && T && g_wh) return t_draw(f, s, x * O.scale, y, r, g, b);
     const Font *t = &F[f];
@@ -364,6 +403,7 @@ int ui_text(int f, const char *s, int x, int y, u8 r, u8 g, u8 b) {
     return x - x0;
 }
 
+/* draws mouse cursor picture n with its hot spot at (x, y) */
 void ui_cursor(int n, int x, int y) {
     const Pic *c = ui_pic("ui\\cursors", n);
     if (!c) return;
@@ -387,9 +427,8 @@ static void t_rect(int X, int Y, int W, int H, u8 r, u8 g, u8 b) {
     if (x1 - 1 > tx1) tx1 = x1 - 1;
     if (y1 - 1 > ty1) ty1 = y1 - 1;
 }
-/* a frame round the overlay rectangle (x, y, w, h), one overlay pixel thick in all (the user, 2026-11-14: "reduce the
-   thickness of the outline by half": it was two overlay pixels, the ink and the bevel): at the window's pixels, the
-   dark edge half of it and the bevel (lit top-left, shaded bottom-right: ul and dr) the rest */
+/* a frame round the overlay rectangle (x, y, w, h), one overlay pixel thick in all, at the window's pixels: the dark
+   edge half of it and the bevel (lit top-left, shaded bottom-right: ul and dr) the rest */
 static void frame_half(int x, int y, int w, int h, const u8 ink[3], const u8 ul[3], const u8 dr[3]) {
     int sc = O.scale, X = x * sc, Y = y * sc, W = w * sc, H = h * sc, e = (sc + 1) / 2, v = sc - e;
     if (!T) return;
@@ -400,6 +439,7 @@ static void frame_half(int x, int y, int w, int h, const u8 ink[3], const u8 ul[
         t_rect(X + e, Y + H - e - v, W - 2 * e, v, dr[0], dr[1], dr[2]), t_rect(X + W - e - v, Y + e, v, H - 2 * e, dr[0], dr[1], dr[2]);
     }
 }
+/* a parchment panel with a raised frame */
 void ui_parchment(int x, int y, int w, int h) {
     static const u8 ink[3] = {UI_INK}, lit[3] = {168, 130, 106}, dark[3] = {UI_PAPER_DARK};
     ui_fill(x, y, w, h, UI_PAPER, 250);
@@ -431,7 +471,7 @@ void ui_leather(int x, int y, int w, int h) {
             const u8 *c = p->rgba + ((size_t)(62 + yy % 42) * p->w + (size_t)(4 + xx % 26)) * 4;
             blend(x + xx, y + yy, c, 255);
         }
-    if (T) {   /* its frame at half the thickness (the user, 2026-11-14), at the window's pixels */
+    if (T) {   /* its frame at the window's pixels */
         static const u8 ink[3] = {52, 24, 12}, lit[3] = {89, 48, 12}, dark[3] = {52, 24, 12};
         frame_half(x, y, w, h, ink, lit, dark);
         return;
@@ -456,6 +496,7 @@ void ui_button(int x, int y, int w, bool lit) {
     }
 }
 
+/* a sunken box, lighter when hot */
 void ui_inset(int x, int y, int w, int h, bool hot) {
     if (hot) ui_fill(x + 1, y + 1, w - 2, h - 2, 156, 120, 98, 255);
     else ui_fill(x + 1, y + 1, w - 2, h - 2, UI_PAPER_MID, 255);
@@ -463,6 +504,7 @@ void ui_inset(int x, int y, int w, int h, bool hot) {
     ui_fill(x, y + h - 1, w, 1, 172, 136, 112, 255), ui_fill(x + w - 1, y, 1, h, 172, 136, 112, 255);
 }
 
+/* darkens a colour to read on parchment: greys to the ink, other hues to the same hue at the ink's darkness */
 void ui_ink(u8 *r, u8 *g, u8 *b) {
     int R = *r, G = *g, B = *b, l = (R * 3 + G * 6 + B) / 10;
     int hi = MAX(R, MAX(G, B)), lo = MIN(R, MIN(G, B));
@@ -476,6 +518,7 @@ void ui_ink(u8 *r, u8 *g, u8 *b) {
     *r = (u8)(R * k / 256), *g = (u8)(G * k / 256), *b = (u8)(B * k / 256);
 }
 
+/* a tooltip near the mouse (mx, my): a title and a body wrapped to at most w, kept on the overlay */
 void ui_tip(int mx, int my, const char *title, const char *body, int w) {
     const Overlay *o = ui_overlay();
     int lh = ui_font_height(FONT_NORMAL) + 2, tw = title && title[0] ? ui_text_width(FONT_NORMAL, title) : 0;
@@ -490,8 +533,8 @@ void ui_tip(int mx, int my, const char *title, const char *body, int w) {
         }
         w = MIN(w, MAX(tw, widest));
     }
-    /* (the user, 2026-11-14: margins of 1-5 pixels, the text justified: the frame is one overlay pixel, the text one
-       more inside it; the body's wrapped lines spread to the full width) */
+    /* margins of 1-5 pixels, the text justified: the frame is one overlay pixel, the text one more inside it; the
+       body's wrapped lines spread to the full width */
     lh = ui_font_height(FONT_NORMAL) + 1;
     int bh = ui_text_wrap(FONT_NORMAL, body, 0, 0, w, 0, 0, 0, false);
     int bw = w + 4, h = bh + (tw ? lh + 2 : 0) + 4;

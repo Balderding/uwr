@@ -1,3 +1,10 @@
+/* render.c: the Direct3D 12 renderer (built into uwview.dll and uwtour.exe; the Vulkan one is render_vk.c).
+ * It holds the GPU objects (R, below), takes a level's mesh, textures and lights (render_upload, render_set_*),
+ * and draws a frame (render_frame): the light probes and the pictures' shadows by ray tracing, the scene pass,
+ * the effects' passes, DLSS / Ray Reconstruction / DLSS 5, then the present pass with the interface over it.
+ * Its CPU side (the constants, a light, the flame, the black body, the matrices) is copied word for word into
+ * render_vk_cpu.h by tools\render_vk_cpu.py, which the build checks: those parts are not to be edited here alone.
+ * Failures are logged through rlog (tag "render"). */
 #include "render.h"
 
 #include "normals.h"
@@ -8,6 +15,8 @@
 #include "ngx.h" /* d3d12.h, dxgi1_4.h with COBJMACROS and WIDL_C_INLINE_WRAPPERS */
 #include <dxgi1_6.h> /* IDXGIOutput6: the monitor's HDR (render_hdr_*) */
 #include <windows.h>
+
+#include "rlog.h"
 
 /* the shaders, compiled by DXC at build time (build.cmd; sources in src\shaders) */
 #include "present_ps.h"
@@ -20,8 +29,8 @@
 
 #define FRAMES 2
 
-/* the effects' passes (docs\superpowers\plans\2026-11-12-fx-audio-and-visual.md): attached by the program that has them
- * (uwview.dll: render_particles.c, Task 3), so a program built without them (build.cmd's uw.exe) draws as before */
+/* the effects' passes (particles, decals): attached by the program that has them (uwview.dll: render_particles.c,
+ * render_decals.c), so a program built without them (build.cmd's uw.exe) draws as before */
 static const RenderFxPasses *g_fxp;
 void render_fx_attach(const RenderFxPasses *p) { g_fxp = p; }
 static struct { int particles, decals, water, fog; } g_fx;   /* render_set_fx: all off unless the settings say */
@@ -200,7 +209,7 @@ void render_set_torch_motion(float vx, float vz) { g_torch_vel[0] = vx, g_torch_
 
 static bool g_want_shot; /* the next frame's picture is copied for render_readback (window) */
 
-/* HDR output (the user, 2026-11-15: real HDR for an HDR monitor): the swap chain FP16 in scRGB (linear, Rec. 709
+/* HDR output (real HDR for an HDR monitor): the swap chain FP16 in scRGB (linear, Rec. 709
  * primaries, 1.0 = 80 nits) while Windows runs the window's monitor in HDR and the setting is on. The picture is the
  * same as in SDR up to paper white; above it the highlights (fire, a torch-lit wall up close) go on up to the
  * monitor's peak instead of being eased into white. The interface sits at paper white. */
@@ -279,24 +288,37 @@ static struct {
 } R;
 
 /* --- helpers -------------------------------------------------------------------------------------- */
+/* a D3D12 / DXGI call whose result the code does not act on: a failure is logged (the first one at each place only,
+ * so a call made every frame cannot flood uwr.log), and the code carries on as before */
+static void hr_note(HRESULT hr, const char *what, int *said) {
+    if (FAILED(hr) && !*said) {
+        *said = 1;
+        RLOG_E("render", "%s failed: 0x%08lx", what, (unsigned long)hr);
+    }
+}
+#define HR_LOG(what, call) do { static int said_; hr_note((call), (what), &said_); } while (0)
+
+/* the CPU waits until the GPU has done everything sent so far (a fence signalled after it) */
 static void wait_gpu(void) {
     R.fence_value++;
-    ID3D12CommandQueue_Signal(R.queue, R.fence, R.fence_value);
+    HR_LOG("ID3D12CommandQueue_Signal", ID3D12CommandQueue_Signal(R.queue, R.fence, R.fence_value));
     if (ID3D12Fence_GetCompletedValue(R.fence) < R.fence_value) {
-        ID3D12Fence_SetEventOnCompletion(R.fence, R.fence_value, R.fence_event);
+        HR_LOG("ID3D12Fence_SetEventOnCompletion", ID3D12Fence_SetEventOnCompletion(R.fence, R.fence_value, R.fence_event));
         WaitForSingleObject(R.fence_event, INFINITE);
     }
 }
 
+/* the command list recorded so far run on the GPU and waited for; the list opened again, empty */
 static void submit_and_wait(void) {
-    ID3D12GraphicsCommandList_Close(R.cl);
+    HR_LOG("ID3D12GraphicsCommandList_Close", ID3D12GraphicsCommandList_Close(R.cl));
     ID3D12CommandList *lists[1] = {(ID3D12CommandList *)R.cl};
     ID3D12CommandQueue_ExecuteCommandLists(R.queue, 1, lists);
     wait_gpu();
-    ID3D12CommandAllocator_Reset(R.alloc);
-    ID3D12GraphicsCommandList_Reset(R.cl, R.alloc, NULL);
+    HR_LOG("ID3D12CommandAllocator_Reset", ID3D12CommandAllocator_Reset(R.alloc));
+    HR_LOG("ID3D12GraphicsCommandList_Reset", ID3D12GraphicsCommandList_Reset(R.cl, R.alloc, NULL));
 }
 
+/* a resource's state changed from one to the other (nothing when they are the same) */
 static void barrier(ID3D12Resource *res, D3D12_RESOURCE_STATES from, D3D12_RESOURCE_STATES to) {
     if (from == to) return;
     D3D12_RESOURCE_BARRIER b;
@@ -308,6 +330,7 @@ static void barrier(ID3D12Resource *res, D3D12_RESOURCE_STATES from, D3D12_RESOU
     b.Transition.StateAfter = to;
     ID3D12GraphicsCommandList_ResourceBarrier(R.cl, 1, &b);
 }
+/* the GPU's writes to an unordered-access resource finished before the next reads of it */
 static void uav_barrier(ID3D12Resource *res) {
     D3D12_RESOURCE_BARRIER b;
     memset(&b, 0, sizeof b);
@@ -316,6 +339,7 @@ static void uav_barrier(ID3D12Resource *res) {
     ID3D12GraphicsCommandList_ResourceBarrier(R.cl, 1, &b);
 }
 
+/* a buffer of size bytes in the given heap and start state (NULL when it cannot be made: the caller says so) */
 static ID3D12Resource *make_buffer_ex(size_t size, D3D12_HEAP_TYPE heap, D3D12_RESOURCE_STATES state, D3D12_RESOURCE_FLAGS flags) {
     D3D12_HEAP_PROPERTIES hp = {heap, D3D12_CPU_PAGE_PROPERTY_UNKNOWN, D3D12_MEMORY_POOL_UNKNOWN, 1, 1};
     D3D12_RESOURCE_DESC d;
@@ -331,10 +355,12 @@ static ID3D12Resource *make_buffer_ex(size_t size, D3D12_HEAP_TYPE heap, D3D12_R
         return NULL;
     return r;
 }
+/* the same with no flags */
 static ID3D12Resource *make_buffer(size_t size, D3D12_HEAP_TYPE heap, D3D12_RESOURCE_STATES state) {
     return make_buffer_ex(size, heap, state, D3D12_RESOURCE_FLAG_NONE);
 }
 
+/* a 2D texture in GPU memory, w x h of fmt (NULL when it cannot be made: the caller says so) */
 static ID3D12Resource *make_texture(int w, int h, DXGI_FORMAT fmt, D3D12_RESOURCE_FLAGS flags, D3D12_RESOURCE_STATES state,
                                     const D3D12_CLEAR_VALUE *clear) {
     D3D12_HEAP_PROPERTIES hp = {D3D12_HEAP_TYPE_DEFAULT, D3D12_CPU_PAGE_PROPERTY_UNKNOWN, D3D12_MEMORY_POOL_UNKNOWN, 1, 1};
@@ -353,18 +379,21 @@ static ID3D12Resource *make_texture(int w, int h, DXGI_FORMAT fmt, D3D12_RESOURC
     return r;
 }
 
+/* descriptor i of a heap, for the CPU (views are written there) */
 static D3D12_CPU_DESCRIPTOR_HANDLE cpu_at(ID3D12DescriptorHeap *h, UINT step, int i) {
     D3D12_CPU_DESCRIPTOR_HANDLE c = ID3D12DescriptorHeap_GetCPUDescriptorHandleForHeapStart(h);
     c.ptr += (SIZE_T)step * (SIZE_T)i;
     return c;
 }
 
+/* descriptor i of the shader-visible heap, for the GPU (a table starts there) */
 static D3D12_GPU_DESCRIPTOR_HANDLE gpu_at(int i) {
     D3D12_GPU_DESCRIPTOR_HANDLE g = ID3D12DescriptorHeap_GetGPUDescriptorHandleForHeapStart(R.srv_heap);
     g.ptr += (UINT64)R.srv_step * (UINT64)i;
     return g;
 }
 
+/* a shader's view of a 2D texture, written into the shader-visible heap's slot */
 static void srv(ID3D12Resource *res, DXGI_FORMAT fmt, int slot) {
     D3D12_SHADER_RESOURCE_VIEW_DESC d;
     memset(&d, 0, sizeof d);
@@ -375,6 +404,7 @@ static void srv(ID3D12Resource *res, DXGI_FORMAT fmt, int slot) {
     ID3D12Device_CreateShaderResourceView(R.dev, res, &d, cpu_at(R.srv_heap, R.srv_step, slot));
 }
 
+/* a compiled shader (the arrays from the build's headers) as D3D12 takes it */
 static D3D12_SHADER_BYTECODE code(const void *p, size_t n) {
     D3D12_SHADER_BYTECODE b = {p, n};
     return b;
@@ -423,15 +453,16 @@ static ID3D12PipelineState *make_pso(D3D12_SHADER_BYTECODE vs, D3D12_SHADER_BYTE
     }
     ID3D12PipelineState *pso = NULL;
     HRESULT hr = ID3D12Device_CreateGraphicsPipelineState(R.dev, &d, &IID_ID3D12PipelineState, (void **)&pso);
-    if (FAILED(hr)) logf_("render: pipeline state failed 0x%08lX\n", (unsigned long)hr);
+    if (FAILED(hr)) RLOG_E("render", "pipeline state failed 0x%08lX", (unsigned long)hr);
     return pso;
 }
 
+/* a root signature from its description (NULL, logged, when it cannot be made) */
 static ID3D12RootSignature *serialize(const D3D12_ROOT_SIGNATURE_DESC *rd) {
     ID3DBlob *blob = NULL, *err = NULL;
     ID3D12RootSignature *rs = NULL;
     if (FAILED(D3D12SerializeRootSignature(rd, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &err))) {
-        logf_("render: root signature: %s\n", err ? (const char *)ID3D10Blob_GetBufferPointer(err) : "?");
+        RLOG_E("render", "root signature: %s", err ? (const char *)ID3D10Blob_GetBufferPointer(err) : "?");
         return NULL;
     }
     if (FAILED(ID3D12Device_CreateRootSignature(R.dev, 0, ID3D10Blob_GetBufferPointer(blob), ID3D10Blob_GetBufferSize(blob),
@@ -501,18 +532,20 @@ static void hdr_apply(bool on) {
     for (int i = 0; i < FRAMES; i++) if (R.back[i]) ID3D12Resource_Release(R.back[i]), R.back[i] = NULL;
     DXGI_FORMAT f = on ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_R8G8B8A8_UNORM;
     HRESULT hr = IDXGISwapChain3_ResizeBuffers(R.swap, FRAMES, (UINT)R.cfg.w, (UINT)R.cfg.h, f, 0);
+    if (FAILED(hr) && !on) RLOG_E("render", "%s failed: 0x%08lx", "IDXGISwapChain3_ResizeBuffers", (unsigned long)hr);
     if (FAILED(hr) && on) {   /* back to SDR as it was */
-        logf_("render: HDR: the swap chain would not take FP16 (0x%08lX)\n", (unsigned long)hr);
+        RLOG_W("render", "HDR: the swap chain would not take FP16 (0x%08lX)", (unsigned long)hr);
         on = false, f = DXGI_FORMAT_R8G8B8A8_UNORM;
-        IDXGISwapChain3_ResizeBuffers(R.swap, FRAMES, (UINT)R.cfg.w, (UINT)R.cfg.h, f, 0);
+        HR_LOG("IDXGISwapChain3_ResizeBuffers (back to SDR)", IDXGISwapChain3_ResizeBuffers(R.swap, FRAMES, (UINT)R.cfg.w, (UINT)R.cfg.h, f, 0));
     }
-    IDXGISwapChain3_SetColorSpace1(R.swap, on ? DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709 : DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709);
+    HR_LOG("IDXGISwapChain3_SetColorSpace1",
+           IDXGISwapChain3_SetColorSpace1(R.swap, on ? DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709 : DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709));
     for (int i = 0; i < FRAMES; i++) {
-        IDXGISwapChain3_GetBuffer(R.swap, (UINT)i, &IID_ID3D12Resource, (void **)&R.back[i]);
+        HR_LOG("IDXGISwapChain3_GetBuffer", IDXGISwapChain3_GetBuffer(R.swap, (UINT)i, &IID_ID3D12Resource, (void **)&R.back[i]));
         ID3D12Device_CreateRenderTargetView(R.dev, R.back[i], NULL, cpu_at(R.rtv_heap, R.rtv_step, RTV_BACK + i));
     }
     R.hdr_on = on;
-    logf_("render: HDR output %s\n", on ? "on (FP16 scRGB)" : "off");
+    RLOG_I("render", "HDR output %s", on ? "on (FP16 scRGB)" : "off");
 }
 /* each frame: HDR on while it is wanted and the monitor runs HDR (looked at twice a second: the window may move to
    another monitor, or HDR be switched in Windows' settings) */
@@ -536,6 +569,7 @@ float render_hdr_peak(void) { return g_hdr_peak > 0 ? g_hdr_peak : g_hdr_display
 float render_hdr_peak_setting(void) { return g_hdr_peak; }
 float render_hdr_paper(void) { return g_hdr_paper; }
 
+/* the menu's words for DLSS now (render_dlss_text): unavailable, off, on, with or without DLSS 5 */
 static void set_dlss_text(void) {
     snprintf(R.dlss_text, sizeof R.dlss_text, "%s", !R.dlss_ok ? "DLSS unavailable"
                                                     : !R.on    ? "DLSS off"
@@ -554,6 +588,7 @@ void render_size_for(int q, int *rw, int *rh) {
     *rw = MAX(64, (int)((float)R.cfg.w * DLSS_SCALE[q] + 0.5f));
     *rh = MAX(64, (int)((float)R.cfg.h * DLSS_SCALE[q] + 0.5f));
 }
+/* NGX started and DLSS Super Resolution made at the quality's render size; then DLSS 5 (on a card newer than RTX 20) */
 static void start_dlss(void) {
     int q = R.cfg.dlss_quality = MAX(0, MIN(R.cfg.dlss_quality, 4));
     const int *NGX_Q = DLSS_NGX_Q;
@@ -570,7 +605,7 @@ static void start_dlss(void) {
     /* DLSS 5 is not tried on an RTX 20-series card or older (DLSS upscaling works there; DLSS 5 is taken not to) */
     bool old_card = strstr(R.gpu, "RTX 20") || strstr(R.gpu, "GTX") || strstr(R.gpu, "Quadro RTX");
     /* started whatever the settings say (they only say whether it starts on), so ' can switch it any time */
-    if (old_card) logf_("render: %s: DLSS 5 is not tried on this card (DLSS only)\n", R.gpu);
+    if (old_card) RLOG_I("render", "%s: DLSS 5 is not tried on this card (DLSS only)", R.gpu);
     if (!old_card) {
         wchar_t nr_dll[MAX_PATH];
         swprintf(nr_dll, MAX_PATH, L"%ls\\nvngx_dlssnr.dll", R.cfg.dlss_dir);
@@ -593,17 +628,22 @@ static void start_rt(void) {
     memset(&o5, 0, sizeof o5);
     if (FAILED(ID3D12Device_CheckFeatureSupport(R.dev, D3D12_FEATURE_D3D12_OPTIONS5, &o5, sizeof o5)) ||
         o5.RaytracingTier < D3D12_RAYTRACING_TIER_1_1) {
-        logf_("render: this GPU has no DXR 1.1: shadows are traced through the tile grid instead\n");
+        RLOG_I("render", "this GPU has no DXR 1.1: shadows are traced through the tile grid instead");
         return;
     }
     if (FAILED(ID3D12Device_QueryInterface(R.dev, &IID_ID3D12Device5, (void **)&R.dev5)) ||
-        FAILED(ID3D12GraphicsCommandList_QueryInterface(R.cl, &IID_ID3D12GraphicsCommandList4, (void **)&R.cl4)))
+        FAILED(ID3D12GraphicsCommandList_QueryInterface(R.cl, &IID_ID3D12GraphicsCommandList4, (void **)&R.cl4))) {
+        RLOG_W("render", "ray tracing: no ID3D12Device5 / ID3D12GraphicsCommandList4 (shadows through the tile grid)");
         return;
+    }
     D3D12_COMPUTE_PIPELINE_STATE_DESC cd;
     memset(&cd, 0, sizeof cd);
     cd.pRootSignature = R.croot;
     cd.CS = code(PROBES_CS, sizeof PROBES_CS);
-    if (FAILED(ID3D12Device_CreateComputePipelineState(R.dev, &cd, &IID_ID3D12PipelineState, (void **)&R.probe_pso))) return;
+    if (FAILED(ID3D12Device_CreateComputePipelineState(R.dev, &cd, &IID_ID3D12PipelineState, (void **)&R.probe_pso))) {
+        RLOG_W("render", "ray tracing: the probes' compute pipeline failed (shadows through the tile grid)");
+        return;
+    }
     ID3D12PipelineState *ps = make_pso(code(SCENE_VS, sizeof SCENE_VS), code(SCENE_PS_RT, sizeof SCENE_PS_RT), 2);
     R.high_pso = make_pso(code(SCENE_VS, sizeof SCENE_VS), code(SCENE_PS_RTH, sizeof SCENE_PS_RTH), 5);
     if (!ps) return;
@@ -618,16 +658,19 @@ static void start_rt(void) {
     R.rt = true;
 }
 
+/* the renderer started: the first hardware D3D12 GPU, its queue and command list, every target at the output size,
+ * the swap chain (with a window), the root signatures and pipelines, then ray tracing, the effects' passes and DLSS.
+ * False (logged) when something it cannot do without fails. */
 bool render_init(const RenderConfig *cfg) {
     memset(&R, 0, sizeof R);
     R.cfg = *cfg;
     if (R.cfg.exposure <= 0) R.cfg.exposure = 2;
-    if (FAILED(CreateDXGIFactory1(&IID_IDXGIFactory4, (void **)&R.factory))) return logf_("render: no DXGI\n"), false;
+    if (FAILED(CreateDXGIFactory1(&IID_IDXGIFactory4, (void **)&R.factory))) return RLOG_E("render", "no DXGI"), false;
     IDXGIAdapter1 *adapter = NULL;
     char gpu[128] = "?";
     for (UINT i = 0; IDXGIFactory4_EnumAdapters1(R.factory, i, &adapter) == S_OK; i++) {
         DXGI_ADAPTER_DESC1 d;
-        IDXGIAdapter1_GetDesc1(adapter, &d);
+        HR_LOG("IDXGIAdapter1_GetDesc1", IDXGIAdapter1_GetDesc1(adapter, &d));
         if (!(d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) &&
             SUCCEEDED(D3D12CreateDevice((IUnknown *)adapter, D3D_FEATURE_LEVEL_12_0, &IID_ID3D12Device, (void **)&R.dev))) {
             WideCharToMultiByte(CP_UTF8, 0, d.Description, -1, gpu, sizeof gpu, NULL, NULL);
@@ -637,20 +680,22 @@ bool render_init(const RenderConfig *cfg) {
         }
         IDXGIAdapter1_Release(adapter);
     }
-    if (!R.dev) return logf_("render: no D3D12 GPU\n"), false;
+    if (!R.dev) return RLOG_E("render", "no D3D12 GPU"), false;
     D3D12_COMMAND_QUEUE_DESC qd = {D3D12_COMMAND_LIST_TYPE_DIRECT, 0, D3D12_COMMAND_QUEUE_FLAG_NONE, 0};
-    ID3D12Device_CreateCommandQueue(R.dev, &qd, &IID_ID3D12CommandQueue, (void **)&R.queue);
-    ID3D12Device_CreateCommandAllocator(R.dev, D3D12_COMMAND_LIST_TYPE_DIRECT, &IID_ID3D12CommandAllocator, (void **)&R.alloc);
-    ID3D12Device_CreateCommandList(R.dev, 0, D3D12_COMMAND_LIST_TYPE_DIRECT, R.alloc, NULL, &IID_ID3D12GraphicsCommandList, (void **)&R.cl);
-    ID3D12Device_CreateFence(R.dev, 0, D3D12_FENCE_FLAG_NONE, &IID_ID3D12Fence, (void **)&R.fence);
+    HR_LOG("ID3D12Device_CreateCommandQueue", ID3D12Device_CreateCommandQueue(R.dev, &qd, &IID_ID3D12CommandQueue, (void **)&R.queue));
+    HR_LOG("ID3D12Device_CreateCommandAllocator",
+           ID3D12Device_CreateCommandAllocator(R.dev, D3D12_COMMAND_LIST_TYPE_DIRECT, &IID_ID3D12CommandAllocator, (void **)&R.alloc));
+    HR_LOG("ID3D12Device_CreateCommandList", ID3D12Device_CreateCommandList(R.dev, 0, D3D12_COMMAND_LIST_TYPE_DIRECT, R.alloc, NULL,
+                                                                             &IID_ID3D12GraphicsCommandList, (void **)&R.cl));
+    HR_LOG("ID3D12Device_CreateFence", ID3D12Device_CreateFence(R.dev, 0, D3D12_FENCE_FLAG_NONE, &IID_ID3D12Fence, (void **)&R.fence));
     R.fence_event = CreateEventW(NULL, FALSE, FALSE, NULL);
 
     D3D12_DESCRIPTOR_HEAP_DESC hd = {D3D12_DESCRIPTOR_HEAP_TYPE_RTV, RTVS, D3D12_DESCRIPTOR_HEAP_FLAG_NONE, 0};
-    ID3D12Device_CreateDescriptorHeap(R.dev, &hd, &IID_ID3D12DescriptorHeap, (void **)&R.rtv_heap);
+    HR_LOG("ID3D12Device_CreateDescriptorHeap (RTV)", ID3D12Device_CreateDescriptorHeap(R.dev, &hd, &IID_ID3D12DescriptorHeap, (void **)&R.rtv_heap));
     hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV, hd.NumDescriptors = 1;
-    ID3D12Device_CreateDescriptorHeap(R.dev, &hd, &IID_ID3D12DescriptorHeap, (void **)&R.dsv_heap);
+    HR_LOG("ID3D12Device_CreateDescriptorHeap (DSV)", ID3D12Device_CreateDescriptorHeap(R.dev, &hd, &IID_ID3D12DescriptorHeap, (void **)&R.dsv_heap));
     hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, hd.NumDescriptors = HEAP_SRV, hd.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-    ID3D12Device_CreateDescriptorHeap(R.dev, &hd, &IID_ID3D12DescriptorHeap, (void **)&R.srv_heap);
+    HR_LOG("ID3D12Device_CreateDescriptorHeap (SRV)", ID3D12Device_CreateDescriptorHeap(R.dev, &hd, &IID_ID3D12DescriptorHeap, (void **)&R.srv_heap));
     R.rtv_step = ID3D12Device_GetDescriptorHandleIncrementSize(R.dev, D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
     R.srv_step = ID3D12Device_GetDescriptorHandleIncrementSize(R.dev, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
@@ -685,15 +730,15 @@ bool render_init(const RenderConfig *cfg) {
         R.ui_up = make_buffer((size_t)ut, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
     }
     if (!R.color || !R.motion || !R.albedo || !R.spec || !R.nrough || !R.depth || !R.dlss_out || !R.nr_out || !R.final_tex || !R.cbuf || !R.lights_buf || !R.tiles_buf)
-        return logf_("render: out of GPU memory\n"), false;
+        return RLOG_E("render", "out of GPU memory"), false;
     D3D12_RANGE none = {0, 0};
-    ID3D12Resource_Map(R.cbuf, 0, &none, (void **)&R.cb);
-    ID3D12Resource_Map(R.lights_buf, 0, &none, (void **)&R.lights_ptr);
-    if (!R.sprite_vb) return logf_("render: out of GPU memory (sprites)\n"), false;
-    ID3D12Resource_Map(R.sprite_vb, 0, &none, (void **)&R.sprite_ptr);
+    HR_LOG("ID3D12Resource_Map (constants)", ID3D12Resource_Map(R.cbuf, 0, &none, (void **)&R.cb));
+    HR_LOG("ID3D12Resource_Map (lights)", ID3D12Resource_Map(R.lights_buf, 0, &none, (void **)&R.lights_ptr));
+    if (!R.sprite_vb) return RLOG_E("render", "out of GPU memory (sprites)"), false;
+    HR_LOG("ID3D12Resource_Map (sprites)", ID3D12Resource_Map(R.sprite_vb, 0, &none, (void **)&R.sprite_ptr));
     memset(R.lights_ptr, 0, sizeof(GpuLight) * (MAX_LIGHTS + 1));
     u32 *tp = NULL;
-    ID3D12Resource_Map(R.tiles_buf, 0, &none, (void **)&tp);
+    HR_LOG("ID3D12Resource_Map (tile lists)", ID3D12Resource_Map(R.tiles_buf, 0, &none, (void **)&tp));
     for (int i = 0; i < 64 * 64 * TILE_LIGHTS; i++) tp[i] = NO_LIGHT;
     ID3D12Resource_Unmap(R.tiles_buf, 0, NULL);
     D3D12_RESOURCE_DESC fd = ID3D12Resource_GetDesc(R.final_tex);
@@ -727,16 +772,16 @@ bool render_init(const RenderConfig *cfg) {
         sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT, sd.BufferCount = FRAMES, sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
         IDXGISwapChain1 *s1 = NULL;
         if (FAILED(IDXGIFactory4_CreateSwapChainForHwnd(R.factory, (IUnknown *)R.queue, (HWND)cfg->hwnd, &sd, NULL, NULL, &s1)))
-            return logf_("render: swap chain failed\n"), false;
-        IDXGIFactory4_MakeWindowAssociation(R.factory, (HWND)cfg->hwnd, DXGI_MWA_NO_ALT_ENTER);
-        IDXGISwapChain1_QueryInterface(s1, &IID_IDXGISwapChain3, (void **)&R.swap);
+            return RLOG_E("render", "swap chain failed"), false;
+        HR_LOG("IDXGIFactory4_MakeWindowAssociation", IDXGIFactory4_MakeWindowAssociation(R.factory, (HWND)cfg->hwnd, DXGI_MWA_NO_ALT_ENTER));
+        HR_LOG("IDXGISwapChain1_QueryInterface (IDXGISwapChain3)", IDXGISwapChain1_QueryInterface(s1, &IID_IDXGISwapChain3, (void **)&R.swap));
         IDXGISwapChain1_Release(s1);
         for (int i = 0; i < FRAMES; i++) {
-            IDXGISwapChain3_GetBuffer(R.swap, (UINT)i, &IID_ID3D12Resource, (void **)&R.back[i]);
+            HR_LOG("IDXGISwapChain3_GetBuffer", IDXGISwapChain3_GetBuffer(R.swap, (UINT)i, &IID_ID3D12Resource, (void **)&R.back[i]));
             ID3D12Device_CreateRenderTargetView(R.dev, R.back[i], NULL, cpu_at(R.rtv_heap, R.rtv_step, RTV_BACK + i));
         }
     }
-    if (!make_roots()) return logf_("render: root signature failed\n"), false;
+    if (!make_roots()) return RLOG_E("render", "root signature failed"), false;
     R.scene_pso = make_pso(code(SCENE_VS, sizeof SCENE_VS), code(SCENE_PS, sizeof SCENE_PS), 2);
     R.present_pso = make_pso(code(PRESENT_VS, sizeof PRESENT_VS), code(PRESENT_PS, sizeof PRESENT_PS), 0);
     R.present_hdr_pso = make_pso(code(PRESENT_VS, sizeof PRESENT_VS), code(PRESENT_PS, sizeof PRESENT_PS), -1);   /* (none: no HDR) */
@@ -757,6 +802,7 @@ bool render_init(const RenderConfig *cfg) {
     return true;
 }
 
+/* what the renderer has and what is on (the menu and the status line ask; the settings switch them) */
 const char *render_status(void) { return R.status; }
 const char *render_dlss_text(void) { return R.dlss_text; }
 bool render_dlss_on(void) { return R.on; }
@@ -814,15 +860,16 @@ bool render_set_dlss_quality(int q) {
         render_size_for(old, &R.rw, &R.rh);
         if (!ngx_dlss_create(R.cl, R.rw, R.rh, R.cfg.w, R.cfg.h, DLSS_NGX_Q[old])) R.dlss_ok = false, R.on = false;
         submit_and_wait();
-        logf_("render: DLSS %s could not be made: %s again\n", DLSS_QN[q], DLSS_QN[old]);
+        RLOG_W("render", "DLSS %s could not be made: %s again", DLSS_QN[q], DLSS_QN[old]);
     }
     g_dlss_made++;
     R.have_prev = false;
     R.high_active = false;
     set_dlss_text();
-    logf_("render: DLSS mode %s: %dx%d -> %dx%d (made %d)\n", DLSS_QN[R.cfg.dlss_quality], R.rw, R.rh, R.cfg.w, R.cfg.h, g_dlss_made);
+    RLOG_I("render", "DLSS mode %s: %dx%d -> %dx%d (made %d)", DLSS_QN[R.cfg.dlss_quality], R.rw, R.rh, R.cfg.w, R.cfg.h, g_dlss_made);
     return ok;
 }
+/* DLSS on or off (when the card has it); the history starts again */
 bool render_set_dlss(bool on) {
     R.on = on && R.dlss_ok;
     R.have_prev = false; /* the history starts again */
@@ -835,16 +882,16 @@ bool render_set_dlss(bool on) {
  * the copy has run */
 static ID3D12Resource *upload_texture(int w, int h, DXGI_FORMAT fmt, const u8 *px, int slot, ID3D12Resource **up) {
     ID3D12Resource *tex = make_texture(w, h, fmt, D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_COPY_DEST, NULL);
-    if (!tex) return logf_("render: out of GPU memory\n"), NULL;
+    if (!tex) return RLOG_E("render", "out of GPU memory"), NULL;
     D3D12_RESOURCE_DESC ad = ID3D12Resource_GetDesc(tex);
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp;
     UINT64 total = 0;
     ID3D12Device_GetCopyableFootprints(R.dev, &ad, 0, 1, 0, &fp, NULL, NULL, &total);
     *up = make_buffer((size_t)total, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
-    if (!*up) return logf_("render: out of GPU memory\n"), NULL;
+    if (!*up) return RLOG_E("render", "out of GPU memory"), NULL;
     u8 *ap = NULL;
     D3D12_RANGE none = {0, 0};
-    ID3D12Resource_Map(*up, 0, &none, (void **)&ap);
+    HR_LOG("ID3D12Resource_Map (texture upload)", ID3D12Resource_Map(*up, 0, &none, (void **)&ap));
     size_t bpt = fmt == DXGI_FORMAT_R8_UNORM ? 1 : 4;   /* bytes a texel: R8 (the occlusion maps) or RGBA8 */
     for (int y = 0; y < h; y++) memcpy(ap + fp.Offset + (size_t)y * fp.Footprint.RowPitch, px + (size_t)y * w * bpt, (size_t)w * bpt);
     ID3D12Resource_Unmap(*up, 0, NULL);
@@ -857,6 +904,7 @@ static ID3D12Resource *upload_texture(int w, int h, DXGI_FORMAT fmt, const u8 *p
 }
 
 static bool cards_as_make(void);
+/* a resource let go, its pointer NULL (nothing when it is NULL already) */
 static void release(ID3D12Resource **r) {
     if (*r) ID3D12Resource_Release(*r);
     *r = NULL;
@@ -868,8 +916,8 @@ static bool cards_as_make(void) {
     if (!R.cpos) {
         D3D12_RANGE none0 = {0, 0};
         R.cpos = make_buffer(12 * (size_t)RENDER_MAX_SPRITE_VERTS, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
-        if (!R.cpos) return logf_("render: the pictures' shadows: out of GPU memory (the level's alone)\n"), false;
-        ID3D12Resource_Map(R.cpos, 0, &none0, (void **)&R.cpos_ptr);
+        if (!R.cpos) return RLOG_W("render", "the pictures' shadows: out of GPU memory (the level's alone)"), false;
+        HR_LOG("ID3D12Resource_Map (cards' corners)", ID3D12Resource_Map(R.cpos, 0, &none0, (void **)&R.cpos_ptr));
     }
     D3D12_RAYTRACING_GEOMETRY_DESC g;
     memset(&g, 0, sizeof g);
@@ -901,10 +949,10 @@ static bool cards_as_make(void) {
     R.cinst = make_buffer(sizeof(D3D12_RAYTRACING_INSTANCE_DESC) * 2, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
     if (!R.cblas || !R.ctlas || !R.cscratch || !R.cinst) {
         release(&R.cblas), release(&R.ctlas), release(&R.cscratch), release(&R.cinst);
-        return logf_("render: the pictures' shadows: out of GPU memory (the level's alone)\n"), false;
+        return RLOG_W("render", "the pictures' shadows: out of GPU memory (the level's alone)"), false;
     }
     D3D12_RANGE none = {0, 0};
-    ID3D12Resource_Map(R.cinst, 0, &none, (void **)&R.cinst_ptr);
+    HR_LOG("ID3D12Resource_Map (cards' instances)", ID3D12Resource_Map(R.cinst, 0, &none, (void **)&R.cinst_ptr));
     memset(R.cinst_ptr, 0, sizeof(D3D12_RAYTRACING_INSTANCE_DESC) * 2);
     for (int k = 0; k < 2; k++) {
         D3D12_RAYTRACING_INSTANCE_DESC *d = &R.cinst_ptr[k];
@@ -1011,11 +1059,11 @@ static bool build_as(int vertices, ID3D12Resource **scratch_out, ID3D12Resource 
                             D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
     *scratch_out = make_buffer_ex(scratch, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
     *inst_out = make_buffer(sizeof inst, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
-    if (!R.blas || !R.tlas || !*scratch_out || !*inst_out) return logf_("render: out of GPU memory (ray tracing)\n"), false;
+    if (!R.blas || !R.tlas || !*scratch_out || !*inst_out) return RLOG_E("render", "out of GPU memory (ray tracing)"), false;
     inst.AccelerationStructure = ID3D12Resource_GetGPUVirtualAddress(R.blas);
     void *ip = NULL;
     D3D12_RANGE none = {0, 0};
-    ID3D12Resource_Map(*inst_out, 0, &none, &ip);
+    HR_LOG("ID3D12Resource_Map (level instance)", ID3D12Resource_Map(*inst_out, 0, &none, &ip));
     memcpy(ip, &inst, sizeof inst);
     ID3D12Resource_Unmap(*inst_out, 0, NULL);
     ti.InstanceDescs = ID3D12Resource_GetGPUVirtualAddress(*inst_out);
@@ -1036,6 +1084,8 @@ static bool build_as(int vertices, ID3D12Resource **scratch_out, ID3D12Resource 
     return true;
 }
 
+/* a level's mesh taken in: its vertices and triangles, its textures (the atlases, the tile grid), its ray-tracing
+ * structures and dark probes; everything of the level before let go first */
 bool render_upload(const Mesh *m) {
     wait_gpu();
     release(&R.vbuf), release(&R.ibuf), release(&R.atlas), release(&R.natlas), release(&R.snatlas), release(&R.saoatlas), release(&R.grid), release(&R.blas), release(&R.tlas);
@@ -1046,10 +1096,10 @@ bool render_upload(const Mesh *m) {
     size_t vsize = sizeof(Vertex) * (size_t)MAX(m->vertices, 3);
     ID3D12Resource *up = make_buffer(vsize, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
     R.vbuf = make_buffer(vsize, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST);
-    if (!up || !R.vbuf) return logf_("render: out of GPU memory\n"), false;
+    if (!up || !R.vbuf) return RLOG_E("render", "out of GPU memory"), false;
     void *p = NULL;
     D3D12_RANGE none = {0, 0};
-    ID3D12Resource_Map(up, 0, &none, &p);
+    HR_LOG("ID3D12Resource_Map (vertices upload)", ID3D12Resource_Map(up, 0, &none, &p));
     memcpy(p, m->vert, sizeof(Vertex) * (size_t)m->vertices);
     ID3D12Resource_Unmap(up, 0, NULL);
     ID3D12GraphicsCommandList_CopyBufferRegion(R.cl, R.vbuf, 0, up, 0, vsize);
@@ -1061,8 +1111,8 @@ bool render_upload(const Mesh *m) {
     size_t isize = sizeof(u32) * (size_t)MAX(m->indices, 3);
     ID3D12Resource *iup = make_buffer(isize, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
     R.ibuf = make_buffer(isize, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST);
-    if (!iup || !R.ibuf) return logf_("render: out of GPU memory (indices)\n"), false;
-    ID3D12Resource_Map(iup, 0, &none, &p);
+    if (!iup || !R.ibuf) return RLOG_E("render", "out of GPU memory (indices)"), false;
+    HR_LOG("ID3D12Resource_Map (indices upload)", ID3D12Resource_Map(iup, 0, &none, &p));
     memcpy(p, m->index, sizeof(u32) * (size_t)m->indices);
     ID3D12Resource_Unmap(iup, 0, NULL);
     ID3D12GraphicsCommandList_CopyBufferRegion(R.cl, R.ibuf, 0, iup, 0, isize);
@@ -1084,7 +1134,7 @@ bool render_upload(const Mesh *m) {
         zero = make_buffer(PROBE_BYTES, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
         if (zero) {
             void *zp = NULL;
-            ID3D12Resource_Map(zero, 0, &none, &zp);
+            HR_LOG("ID3D12Resource_Map (probes' zeroes)", ID3D12Resource_Map(zero, 0, &none, &zp));
             memset(zp, 0, PROBE_BYTES);
             ID3D12Resource_Unmap(zero, 0, NULL);
             for (int i = 0; i < 2; i++) {
@@ -1103,6 +1153,8 @@ bool render_upload(const Mesh *m) {
     return ok;
 }
 
+/* the walls' and floors' upscaled textures (with their relief maps beside them when maps) put in their slot; none:
+ * a 1 x 1 white one, the scale 0 (off) */
 bool render_set_hires(const u8 *rgba, int size, int factor, bool maps, bool colours) {
     static const u8 white[4] = {255, 255, 255, 255};
     if (!R.cl) return false;
@@ -1119,6 +1171,7 @@ bool render_set_hires(const u8 *rgba, int size, int factor, bool maps, bool colo
     return true;
 }
 
+/* the level's placed lights (after the torch, light 0) and each tile's list of the lights reaching it */
 void render_set_lights(const Light *l, int n, const u32 *tiles) {
     R.nplaced = MAX(0, MIN(n, MAX_LIGHTS));
     memcpy(R.placed, l, sizeof(Light) * (size_t)R.nplaced);
@@ -1131,7 +1184,7 @@ void render_set_lights(const Light *l, int n, const u32 *tiles) {
     }
     u32 *tp = NULL;
     D3D12_RANGE none = {0, 0};
-    ID3D12Resource_Map(R.tiles_buf, 0, &none, (void **)&tp);
+    HR_LOG("ID3D12Resource_Map (tile lists)", ID3D12Resource_Map(R.tiles_buf, 0, &none, (void **)&tp));
     /* the tile lists name placed lights from 0; in the buffer they follow the torch */
     for (int i = 0; i < 64 * 64 * TILE_LIGHTS; i++) tp[i] = tiles[i] == NO_LIGHT ? NO_LIGHT : tiles[i] + 1;
     ID3D12Resource_Unmap(R.tiles_buf, 0, NULL);
@@ -1160,22 +1213,26 @@ void render_set_light_pos(int k, const float pos[3]) {
     memcpy(R.lights_ptr[1 + k].pr, pos, 12);
 }
 
+/* the interface layer's size (a whole factor smaller than the output) */
 void render_ui_size(int *w, int *h, int *scale) { *w = R.ui_w, *h = R.ui_h, *scale = R.ui_s; }
+/* this frame's interface picture copied into its upload buffer (sent to the GPU at the next frame) */
 void render_set_ui(const u8 *rgba) {
     if (!R.ui_up) return;
     if (!R.ui_ptr) {
         D3D12_RANGE none = {0, 0};
-        ID3D12Resource_Map(R.ui_up, 0, &none, (void **)&R.ui_ptr);
+        HR_LOG("ID3D12Resource_Map (interface upload)", ID3D12Resource_Map(R.ui_up, 0, &none, (void **)&R.ui_ptr));
     }
     for (int y = 0; y < R.ui_h; y++) memcpy(R.ui_ptr + R.ui_fp.Offset + (size_t)y * R.ui_fp.Footprint.RowPitch, rgba + (size_t)y * R.ui_w * 4, (size_t)R.ui_w * 4);
     R.ui_dirty = true;
 }
 
+/* the picture cards (objects, creatures) for the next frames */
 void render_set_sprites(const Vertex *v, int n) {
     R.nsprites = MAX(0, MIN(n, RENDER_MAX_SPRITE_VERTS));
     memcpy(R.sprite_ptr, v, sizeof(Vertex) * (size_t)R.nsprites);
 }
 
+/* the player's light (light 0) as a plain point light */
 void render_set_torch(bool on, const float pos[3], const float color[3], float intensity, float range) {
     GpuLight *g = &R.lights_ptr[0];
     memcpy(g->pr, pos, 12), g->pr[3] = range;
@@ -1190,6 +1247,35 @@ void render_set_torch_original(bool on, const float pos[3], const float eye[3], 
     memcpy(g->col, eye, 12);
     g->col[3] = on ? 2.0f + (float)(level & 7) + exponent / 10.0f : 0.0f;
 }
+
+/* --- a frame's steps (render_frame, after the matrices: what lies between is copied for the Vulkan renderer) ---- */
+/* what one frame's steps hand on to the later ones; on render_frame's stack */
+typedef struct {
+    const Camera *cam;
+    const Look *look;
+    Constants *c;                       /* the frame's constants (R.cb, mapped) */
+    bool dlss, reset, high, rt_live;    /* DLSS on; the history cut; ray tracing High (Ray Reconstruction); rays live */
+    bool parts;                         /* the particles drawn this frame */
+    int rw, rh;                         /* the render size */
+    float jx, jy;                       /* the DLSS jitter (pixels, -0.5..0.5) */
+    float secs;                         /* the flames' and the water's time (s; held in a comparison) */
+    int wp;                             /* the probes written this frame (the other holds last frame's) */
+    int show;                           /* the picture the present pass shows (SLOT_COLOR, SLOT_DLSS or SLOT_NR) */
+    ID3D12DescriptorHeap *heaps[1];
+    D3D12_GPU_VIRTUAL_ADDRESS cbva, lva, tva;   /* the constants, the lights, the tile lists */
+    D3D12_RESOURCE_STATES readable;
+} Frame;
+static void frame_view(Frame *f);
+static void frame_constants(Frame *f);
+static void frame_flames(Frame *frame);
+static void frame_orbs_and_settings(Frame *f);
+static void frame_uploads(Frame *f);
+static void frame_bind_and_particles(Frame *f);
+static void frame_ray_tracing(Frame *f);
+static void frame_scene_pass(Frame *f);
+static void frame_upscale(Frame *f);
+static void frame_present_pass(Frame *f);
+static void frame_submit(Frame *f);
 
 /* --- matrices (row-major, used as mul(M, v)) --------------------------------------------------- */
 static void mat_mul(const float *a, const float *b, float *o) {
@@ -1382,6 +1468,31 @@ static float halton(int i, int base) {
 }
 
 bool render_frame(const Camera *cam, const Look *look, bool reset) {
+    /* one frame drawn and shown, its steps in this order: the camera and the constants, the lights' flames, the
+     * uploads, the probes and the pictures' shadows (ray tracing), the scene pass with the effects, DLSS, the present
+     * pass, the submit; the steps' shared state is fr, on this stack */
+    Frame fr;
+    memset(&fr, 0, sizeof fr);
+    fr.cam = cam, fr.look = look, fr.reset = reset;
+    frame_view(&fr);
+    frame_constants(&fr);
+    frame_flames(&fr);
+    frame_orbs_and_settings(&fr);
+    frame_uploads(&fr);
+    frame_bind_and_particles(&fr);
+    frame_ray_tracing(&fr);
+    frame_scene_pass(&fr);
+    frame_upscale(&fr);
+    frame_present_pass(&fr);
+    frame_submit(&fr);
+    return true;
+}
+
+/* the render size, the DLSS jitter, the camera's matrices (with and without the jitter, and last frame's), and
+ * whether ray tracing High (Ray Reconstruction in DLSS upscaling's place) runs this frame: a change cuts the history */
+static void frame_view(Frame *f) {
+    const Camera *cam = f->cam;
+    bool reset = f->reset;
     bool dlss = R.on && R.dlss_ok;
     int rw = dlss ? R.rw : R.cfg.w, rh = dlss ? R.rh : R.cfg.h;
     reset = reset || !R.have_prev;
@@ -1411,6 +1522,17 @@ bool render_frame(const Camera *cam, const Look *look, bool reset) {
     transpose(view, R.w2v), transpose(proj, R.v2c);
     if (reset) memcpy(R.prev_vp, c->vp_nojit, 64);
     memcpy(c->vp_prev, R.prev_vp, 64);
+    f->c = c, f->dlss = dlss, f->rw = rw, f->rh = rh, f->reset = reset, f->jx = jx, f->jy = jy, f->high = high, f->rt_live = rt_live;
+}
+
+/* the constants of the eye, the look's settings, the exposure and gamma, and HDR (the swap chain follows the
+ * setting and the monitor here) */
+static void frame_constants(Frame *f) {
+    const Camera *cam = f->cam;
+    const Look *look = f->look;
+    Constants *c = f->c;
+    bool reset = f->reset;
+    int rw = f->rw, rh = f->rh;
     if (!g_hold) g_hold_frame = R.frame;
     memcpy(c->eye, cam->pos, 12), c->eye[3] = (float)g_hold_frame;
     /* the light's size for soft shadows; bounced light; how much of the probes' old light they keep */
@@ -1422,6 +1544,11 @@ bool render_frame(const Camera *cam, const Look *look, bool reset) {
     c->hdr[0] = R.hdr_on ? 1.0f : 0.0f, c->hdr[1] = g_hdr_paper / 80.0f;
     c->hdr[2] = render_hdr_peak() / g_hdr_paper, c->hdr[3] = g_light_fade ? 1.0f : 0.0f;   /* (w: the lights' fade, light_fade) */
     if (c->hdr[2] < 1.0f) c->hdr[2] = 1.0f;
+}
+
+/* the wall torches' and the sparks' flicker and the flames' puffs (render_flame), then the player's torch; the time
+ * they use is kept for the water (f->secs) */
+static void frame_flames(Frame *frame) {
     /* the burning torches flicker, each in its own way */
     float secs = g_hold ? g_hold_secs : (float)(GetTickCount64() % 100000000ull) / 1000.0f;
     for (int k = 0; k < R.nplaced; k++) {
@@ -1461,6 +1588,17 @@ bool render_frame(const Camera *cam, const Look *look, bool reset) {
         }
         else g0->info[0] = 0;
     }
+    frame->secs = secs;
+}
+
+/* the orbs nearest in front of the camera, then the constants the settings give (normal maps, the bounce rays, the
+ * pictures' and the walls' maps, the upscaled textures, full bright) and the water's splash rings */
+static void frame_orbs_and_settings(Frame *f) {
+    const Camera *cam = f->cam;
+    const Look *look = f->look;
+    Constants *c = f->c;
+    int rw = f->rw;
+    float secs = f->secs;
     /* the orbs: the placed lights in front of the camera and within 30 tiles, nearest first (16 at most) */
     int no = 0;
     float od[16];
@@ -1496,7 +1634,7 @@ bool render_frame(const Camera *cam, const Look *look, bool reset) {
     c->sprite[0] = look->normal_maps ? look->sprite_ao : 0, c->sprite[1] = look->normal_maps ? look->sprite_height : 0;
     /* the walls' and floors' (NNN_o, NNN_p): z their occlusion's strength, w their relief's depth in texels of a 64
      * texel texture, which the lights' shadows across the relief are cast from (0: none). Their own Esc rows, not
-     * tied to the normal maps' (the user, 2026-11-14: each its own switch) */
+     * tied to the normal maps' (each its own switch) */
     c->sprite[2] = look->texture_ao, c->sprite[3] = look->texture_shadow;
     c->texres[0] = (float)R.hatlas_f, c->texres[1] = R.hatlas_maps ? 1.0f : 0.0f, c->texres[2] = R.hatlas_colours ? 1.0f : 0.0f, c->texres[3] = 0;
     c->rtlim[3] = g_fullbright ? -1.0f : g_shade_k;   /* the original's depth scale for its shading; < 0: full bright */
@@ -1511,7 +1649,11 @@ bool render_frame(const Camera *cam, const Look *look, bool reset) {
         }
         c->fxw[0] = g_fx.water ? 1.0f : 0.0f, c->fxw[1] = (float)nr, c->fxw[2] = secs, c->fxw[3] = 0;
     }
+}
 
+/* the copies sent at the frame's start: the atlas's rewritten top rows (render_update_atlas) and the interface */
+static void frame_uploads(Frame *f) {
+    (void)f;
     if (g_atlas_pending >= 0 && R.atlas) { /* the textures' cycling colours, as the game's palette has them now */
         D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp = {0, {DXGI_FORMAT_R8G8B8A8_UNORM, ATLAS_SIZE, (UINT)g_atlas_rows, 1, ATLAS_SIZE * 4}};
         D3D12_TEXTURE_COPY_LOCATION ad = {R.atlas, D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, {.SubresourceIndex = 0}};
@@ -1529,20 +1671,36 @@ bool render_frame(const Camera *cam, const Look *look, bool reset) {
         barrier(R.ui_tex, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         R.ui_dirty = false;
     }
-    ID3D12DescriptorHeap *heaps[1] = {R.srv_heap};
-    ID3D12GraphicsCommandList_SetDescriptorHeaps(R.cl, 1, heaps);
-    D3D12_GPU_VIRTUAL_ADDRESS cbva = ID3D12Resource_GetGPUVirtualAddress(R.cbuf);
-    D3D12_GPU_VIRTUAL_ADDRESS lva = ID3D12Resource_GetGPUVirtualAddress(R.lights_buf), tva = ID3D12Resource_GetGPUVirtualAddress(R.tiles_buf);
-    D3D12_RESOURCE_STATES readable = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-    int wp = (int)(R.frame & 1); /* the probes written this frame; the other holds last frame's */
-    const bool parts = g_fx.particles && g_rp_ok;
-    if (parts) {   /* the particles moved (render_particles.c), drawn after the level and its pictures */
+}
+
+/* the descriptor heap bound and the buffers' GPU addresses taken for the passes; the particles moved (their compute
+ * pass, render_particles.c) when they are on */
+static void frame_bind_and_particles(Frame *f) {
+    const Camera *cam = f->cam;
+    Constants *c = f->c;
+    f->heaps[0] = R.srv_heap;
+    ID3D12GraphicsCommandList_SetDescriptorHeaps(R.cl, 1, f->heaps);
+    f->cbva = ID3D12Resource_GetGPUVirtualAddress(R.cbuf);
+    f->lva = ID3D12Resource_GetGPUVirtualAddress(R.lights_buf), f->tva = ID3D12Resource_GetGPUVirtualAddress(R.tiles_buf);
+    f->readable = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    f->wp = (int)(R.frame & 1); /* the probes written this frame; the other holds last frame's */
+    f->parts = g_fx.particles && g_rp_ok;
+    if (f->parts) {   /* the particles moved (render_particles.c), drawn after the level and its pictures */
         float right[3] = {cosf(cam->yaw), 0, -sinf(cam->yaw)}, f3[3] = {fwd_of(cam, 0), fwd_of(cam, 1), fwd_of(cam, 2)};
         float up[3] = {f3[1] * right[2] - f3[2] * right[1], f3[2] * right[0] - f3[0] * right[2], f3[0] * right[1] - f3[1] * right[0]};
         float torch[4] = {cam->pos[0], cam->pos[1], cam->pos[2], g_fullbright ? 99.0f : 4.0f};
         g_fxp->particles_frame(R.cl, c->vp, cam->pos, R.cfg.exposure, right, up, torch, g_torch_rgb);
     }
+}
 
+/* with ray tracing live: this frame's picture cards into the acceleration structure (their shadows), then the light
+ * probes' compute pass (each fires its rays and keeps the light arriving) */
+static void frame_ray_tracing(Frame *f) {
+    const Camera *cam = f->cam;
+    bool rt_live = f->rt_live;
+    int wp = f->wp;
+    D3D12_RESOURCE_STATES readable = f->readable;
+    D3D12_GPU_VIRTUAL_ADDRESS cbva = f->cbva, lva = f->lva, tva = f->tva;
     if (rt_live) cards_as_build(cam->pos);   /* the pictures' shadows: this frame's cards in the ray tracing */
     /* the light probes: each fires its rays and keeps the light arriving */
     if (rt_live) {
@@ -1561,7 +1719,15 @@ bool render_frame(const Camera *cam, const Look *look, bool reset) {
         ID3D12GraphicsCommandList_Dispatch(R.cl, (PROBES + 63) / 64, 1, 1);
         barrier(R.probes[wp], D3D12_RESOURCE_STATE_UNORDERED_ACCESS, readable);
     }
+}
 
+/* the scene pass: the level's triangles and the picture cards into the colour and the motion (and, with ray tracing
+ * High, Ray Reconstruction's guides), then the decals and the particles over them */
+static void frame_scene_pass(Frame *f) {
+    Constants *c = f->c;
+    bool rt_live = f->rt_live, high = f->high, parts = f->parts;
+    int rw = f->rw, rh = f->rh, wp = f->wp;
+    D3D12_GPU_VIRTUAL_ADDRESS cbva = f->cbva, lva = f->lva, tva = f->tva;
     ID3D12GraphicsCommandList_SetGraphicsRootSignature(R.cl, R.root);
     ID3D12GraphicsCommandList_SetGraphicsRootConstantBufferView(R.cl, GP_CB, cbva);
     ID3D12GraphicsCommandList_SetGraphicsRootShaderResourceView(R.cl, GP_LIGHTS, lva);
@@ -1625,7 +1791,16 @@ bool render_frame(const Camera *cam, const Look *look, bool reset) {
     barrier(R.depth, D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     if (high)
         for (int g = 0; g < 3; g++) barrier(guides[g], D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+}
 
+/* with DLSS on: DLSS upscaling (or Ray Reconstruction, DLSS upscaling when it fails), then DLSS 5 on its picture;
+ * f->show says which picture the present pass shows */
+static void frame_upscale(Frame *f) {
+    Constants *c = f->c;
+    bool dlss = f->dlss, high = f->high, reset = f->reset;
+    int rw = f->rw, rh = f->rh;
+    float jx = f->jx, jy = f->jy;
+    D3D12_GPU_VIRTUAL_ADDRESS cbva = f->cbva;
     /* DLSS (or Ray Reconstruction), then DLSS 5 on its picture */
     int show = SLOT_COLOR;
     if (dlss) {
@@ -1653,11 +1828,20 @@ bool render_frame(const Camera *cam, const Look *look, bool reset) {
             }
         }
         /* NGX changes the bound heaps and root state */
-        ID3D12GraphicsCommandList_SetDescriptorHeaps(R.cl, 1, heaps);
+        ID3D12GraphicsCommandList_SetDescriptorHeaps(R.cl, 1, f->heaps);
         ID3D12GraphicsCommandList_SetGraphicsRootSignature(R.cl, R.root);
         ID3D12GraphicsCommandList_SetGraphicsRootConstantBufferView(R.cl, GP_CB, cbva);
     }
+    f->show = show;
+}
 
+/* the present pass: the picture shown (with the interface over it) into the window's back buffer, or the final
+ * texture without a window; a screenshot copied into the readback buffer when one is wanted (with HDR on, drawn once
+ * more as SDR for it) */
+static void frame_present_pass(Frame *f) {
+    Constants *c = f->c;
+    int show = f->show;
+    D3D12_GPU_VIRTUAL_ADDRESS cbva = f->cbva;
     UINT bi = R.swap ? IDXGISwapChain3_GetCurrentBackBufferIndex(R.swap) : 0;
     ID3D12Resource *target = R.swap ? R.back[bi] : R.final_tex;
     D3D12_RESOURCE_STATES before = R.swap ? D3D12_RESOURCE_STATE_PRESENT : D3D12_RESOURCE_STATE_COPY_SOURCE;
@@ -1705,21 +1889,28 @@ bool render_frame(const Camera *cam, const Look *look, bool reset) {
         D3D12_TEXTURE_COPY_LOCATION src = {R.final_tex, D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, {.SubresourceIndex = 0}};
         ID3D12GraphicsCommandList_CopyTextureRegion(R.cl, &dst, 0, 0, 0, &src, NULL);
     }
-    ID3D12GraphicsCommandList_Close(R.cl);
+}
+
+/* the frame's commands run, the picture presented, the GPU waited for; the list opened again for the next frame,
+ * this frame's matrix kept as the next one's "last frame" */
+static void frame_submit(Frame *f) {
+    Constants *c = f->c;
+    HR_LOG("ID3D12GraphicsCommandList_Close (frame)", ID3D12GraphicsCommandList_Close(R.cl));
     ID3D12CommandList *lists[1] = {(ID3D12CommandList *)R.cl};
     ID3D12CommandQueue_ExecuteCommandLists(R.queue, 1, lists);
-    if (R.swap) IDXGISwapChain3_Present(R.swap, R.cfg.vsync ? 1 : 0, 0);
+    if (R.swap) HR_LOG("IDXGISwapChain3_Present", IDXGISwapChain3_Present(R.swap, R.cfg.vsync ? 1 : 0, 0));
     wait_gpu();
-    ID3D12CommandAllocator_Reset(R.alloc);
-    ID3D12GraphicsCommandList_Reset(R.cl, R.alloc, NULL);
+    HR_LOG("ID3D12CommandAllocator_Reset (frame)", ID3D12CommandAllocator_Reset(R.alloc));
+    HR_LOG("ID3D12GraphicsCommandList_Reset (frame)", ID3D12GraphicsCommandList_Reset(R.cl, R.alloc, NULL));
     memcpy(R.prev_vp, c->vp_nojit, 64);
     R.have_prev = true;
     R.frame++;
-    return true;
 }
 
+/* the next frame's picture copied for render_readback */
 void render_want_screenshot(void) { g_want_shot = true; }
 
+/* the last screenshot's picture (render_want_screenshot) copied out as RGBA rows, output size */
 bool render_readback(u8 *rgba) {
     if (!R.readback) return false;
     u8 *p = NULL;
@@ -1728,7 +1919,7 @@ bool render_readback(u8 *rgba) {
     HRESULT mh = ID3D12Resource_Map(R.readback, 0, &all, (void **)&p);
     if (FAILED(mh)) {
         D3D12_RESOURCE_DESC rd = ID3D12Resource_GetDesc(R.readback);
-        logf_("render: the picture cannot be read back (0x%08lX, device 0x%08lX; pitch %u x %d rows, buffer %llu, offset %llu)\n",
+        RLOG_E("render", "the picture cannot be read back (0x%08lX, device 0x%08lX; pitch %u x %d rows, buffer %llu, offset %llu)",
               (unsigned long)mh, (unsigned long)ID3D12Device_GetDeviceRemovedReason(R.dev), R.readback_fp.Footprint.RowPitch, R.cfg.h,
               (unsigned long long)rd.Width, (unsigned long long)R.readback_fp.Offset);
         return false;
@@ -1740,12 +1931,13 @@ bool render_readback(u8 *rgba) {
     return true;
 }
 
+/* the end: the GPU idle, the run's Ray Reconstruction and DLSS 5 counts logged, NGX stopped */
 void render_shutdown(void) {
     if (!R.dev) return;
     wait_gpu();
     if (R.rr_frames_ok || R.rr_frames_failed)
-        logf_("Ray Reconstruction: %d frames, %d failed (shown with DLSS upscaling)\n", R.rr_frames_ok, R.rr_frames_failed);
-    if (R.nr_ok) logf_("DLSS 5: %d frames through the neural model, %d failed (shown with DLSS alone)\n", R.nr_frames_ok, R.nr_frames_failed);
+        RLOG_I("render", "Ray Reconstruction: %d frames, %d failed (shown with DLSS upscaling)", R.rr_frames_ok, R.rr_frames_failed);
+    if (R.nr_ok) RLOG_I("render", "DLSS 5: %d frames through the neural model, %d failed (shown with DLSS alone)", R.nr_frames_ok, R.nr_frames_failed);
     ngx_stop(R.dev);
 }
 

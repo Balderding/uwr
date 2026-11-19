@@ -1,7 +1,7 @@
-/* uwaudio.c: our positional sound effects over OpenAL Soft (uwaudio.h; docs\superpowers\plans\2026-11-12-fx-audio-
-   and-visual.md, Task 1). OpenAL Soft (LGPL 2.1) is never linked: soft_oal.dll is loaded from the folder given (the
-   game's bin\) when fx_audio is 1, its functions taken by GetProcAddress; without it, or without a sound device, the
-   module stays off with one log line and the game sounds as it always has.
+/* uwaudio.c: the game's sound effects placed in 3D over OpenAL Soft (uwaudio.h; the plan is
+   docs\superpowers\plans\2026-11-12-fx-audio-and-visual.md). OpenAL Soft (LGPL 2.1) is never linked: soft_oal.dll
+   is loaded from the folder given (the game's bin\) when fx_audio is 1, its functions taken by GetProcAddress;
+   without it, or without a sound device, the module stays off with one log line and the game sounds as it always has.
 
    What plays is the game's choice: an effect event (fxevent.c, from SOUND.C's play_effect / play_effect_here) plays
    the effect at the place the game gave, with the original's own falloff (play_effect: the effect's full volume
@@ -9,9 +9,9 @@
    reference 1 and maximum 6); nothing beyond six tiles, as the original plays nothing there; nothing when the game's
    effects are off (FX_MUTED). 32 sources, the listener at the camera.
 
-   The sound is the Roland's own (2026-11-13): each SOUNDS.DAT effect (timbre of bank 1 from SOUND\UW.MT, note,
-   velocity, length) is rendered once by a Munt of our own (mt32emu.dll beside the game, the user's CM-32L ROMs in
-   roms\; set up as UW's MT32MPU.ADV driver sets the unit up) into a mono OpenAL buffer, on a worker thread at start;
+   The sound is the Roland's own: each SOUNDS.DAT effect (timbre of bank 1 from SOUND\UW.MT, note, velocity,
+   length) is rendered once by a Munt of our own (mt32emu.dll beside the game, the player's CM-32L ROMs in roms\;
+   set up as UW's MT32MPU.ADV driver sets the unit up) into a mono OpenAL buffer, on a worker thread at start;
    OpenAL then places it. While an effect's buffer exists the game's own copy on the music driver is not played at all
    (SOUND.C fx_play through port_fx_control: uwaudio_taken; no note is sent, no channel taken from the music), so
    nothing plays twice; before it is rendered, or when
@@ -21,17 +21,30 @@
    Coordinates: ours are the renderer's (tiles; x east, y up, z north, a left-handed frame); OpenAL's are right-handed,
    so z is negated on the way in (the listener's right, at x up, then comes out east).
 
+   Acoustics (fx_acoustics): "On" is OpenAL's EFX reverb and filters driven by our own rays (uwacoustic.c); "High"
+   adds Steam Audio's echoes, and on headphones the sound itself, from uwsteam.c, played by one stereo stream.
+
+   Threads: the window's (the whole API, uwaudio_event and the rest), Munt's rendering worker (mt_worker), and with
+   Acoustics High on a sound card two of its own: the echoes' simulation (hi_sim_worker) and their feed
+   (hi_feed_worker). They share only the Interlocked counters and flags marked so below.
+
+   The log: lines through rlog with the tag "audio"; the "fx: ..." lines that tools\fxcheck.py and the scripts in
+   work\ pick out by their start (fx: audio, fx: Roland, fx: HRTF, fx: al, fx: acoustics on / high / room / path)
+   stay plain stderr lines, word for word.
+
    The checks (hidden runs, nothing heard on the machine): UWPORT_FX_LOOPBACK=FILE renders through OpenAL Soft's
    loopback device into that WAV (48 kHz stereo) as the run goes (uwaudio_pump), so a run can prove where a sound
    came out. */
 #define WIN32_LEAN_AND_MEAN
 #include "uwos.h"   /* windows.h on Windows */
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
 #include "uwaudio.h"
 #include "uwsteam.h"
+#include "rlog.h"
 
 #ifndef FX_MUTED
 #define FX_MUTED 0x100
@@ -135,7 +148,7 @@ static int src_fx[NSRC];           /* the effect each source plays (-1 none), fo
 static unsigned buf[256];          /* the samples, by SOUNDS.DAT entry: 0 not read yet */
 static signed char buf_state[256]; /* 0 not tried, 1 a wav, 2 Munt's rendering, -1 no file and nothing rendered yet */
 static char sfx_dir[MAX_PATH];
-/* Task 6, footsteps by the floor (fx_footsteps, on unless written 0; the Esc menu's "Footsteps by floor"): the game's
+/* Footsteps by the floor (fx_footsteps, on unless written 0; the Esc menu's "Footsteps by floor"): the game's
    two footstep effects (1 and 2: the two feet, alternating, of the player and of a creature alike) sound by what the floor there is made of
    (uwacmat.c's presets through the level the backend hands over): a data\sfx\NNN-<preset>.wav of the user's when
    there is one, else the Roland's own note moved by the preset's `step` semitones (a rendering of its own, asked of
@@ -151,14 +164,15 @@ static int footsteps = 1;
    (0x48 / 0x38: an eighth to a side, barely heard over headphones); data\settings.txt fx_feet_spread in percent
    (400: half way to a side; 0: the middle), UWPORT_FX_FEET for the checks */
 static float feet_spread = 1.0f;
-/* the hearing range, tiles (the user, 2026-11-16; settings.txt fx_hear_range, the Esc menu's "Hearing range"): 6 is
+/* the hearing range, tiles (settings.txt fx_hear_range, the Esc menu's "Hearing range"): 6 is
    play_effect's own (nothing beyond dist 0x30); a longer one stretches its line: full within a tile, falling to
    nothing at the range. The walls' muffling and the way round corners go on as they are. */
 static int hear_range = 6;
-/* the footsteps' own level and their echoes' (the user, 2026-11-16: "a bit too loud, reverby"; settings.txt
+/* the footsteps' own level and their echoes' (settings.txt
    fx_step_volume and fx_step_echo, percentages, 80 and 50 unless written): effects 1 and 2 of anyone who steps. The
    echo's share is Acoustics High's (the voice's gain in uwsteam.c); the level scales both. */
 static float step_vol = 0.8f, step_echo = 0.5f;
+static float own_step_vol = 1.0f;   /* fx_own_step_volume, percent: the player's own steps on top of step_vol */
 static int step_plain;             /* fx_step_plain: the player's own steps as the plain rendering */
 #define AL_DIRECT_CHANNELS_SOFT_ 0x1033
 static unsigned step_buf[2 * STEP_PRESETS];  /* the user's NNN-<preset>.wav, by (effect - 1) * 16 + preset */
@@ -169,23 +183,21 @@ static int wav_load(const char *path, unsigned *out);
 static float lis[3];               /* the listener (ours) */
 static float lis_yaw;              /* its facing: 0 north, east positive (radians) */
 static float gain = 1.0f;          /* the menu's Sound volume */
-/* our copy brought up to the game's own Roland mix (2026-11-15, the user: "so quiet, like the volume at 10%", once
-   90da6b4 stopped the Roland copy that had covered it). A sound at the listener measured against the game's own
+/* our copy brought up to the game's own Roland mix (without it our effects come out far quieter than the game's
+   own). A sound at the listener measured against the game's own
    mix (work\acoustics\levelcmp.py + levelsum.py, the same walk's footsteps): 2.15 x under it with plain stereo (the
    pan's spread over two ears), 5.2 x with Headphone 3D (the HRTF's own loss on top). On the listener's gain, so the
    reverb and Acoustics High's echoes keep their balance with the sound. */
 #define MAKEUP_STEREO 2.15f
 #define MAKEUP_HRTF 5.2f
-/* The sound's dials (2026-11-16, the user: "make every option for the sound system an option in the Esc menu ... so
-   we can fine tune the reverb, time to hear the sound etc"): every number that was fixed in the code is a key of
-   settings.txt with a row of the Esc menu (uwfront.c's SOUND_DIALS: the same keys and values as they come), read
+/* The sound's dials: every number of the sound is a key of settings.txt with a row of the Esc menu (uwfront.c's SOUND_DIALS: the same keys and values as they come), read
    by tune_read at the start and whenever a row changes, heard at once. As they come, each is the number it was.
      fx_makeup_stereo 215, fx_makeup_hrtf 520   the makeup gains, percent
      acoustics_echo_level 5      Acoustics High: Steam Audio's echoes against the sound itself, percent (HI_LEVEL).
-                                 12 until 2026-11-16: set when the stream still went through OpenAL's HRTF a second
-                                 time; straight to the ears the same 12 came out 2.6 times as strong (a footstep's
-                                 echoes at RMS 327 to 380 against the step's own 342 to 403, nearly all under 300 Hz:
-                                 work\acoustics\steps16). 5 puts them back where 12 was measured.
+                                 5 straight to the ears is where 12 was with the stream through OpenAL's HRTF a
+                                 second time (straight, 12 came out 2.6 times as strong: a footstep's echoes at RMS
+                                 327 to 380 against the step's own 342 to 403, nearly all under 300 Hz:
+                                 work\acoustics\steps16).
      fx_step_plain 0             1: the player's own footsteps as the plain Roland rendering: no floor's note, no
                                  echoes, no placing by HRTF, no muffling (the row to compare by ear)
      acoustics_echo_first 1      High: a new sound rings at once, with the listener's place's response (uwsteam.h uwst_ear)
@@ -200,9 +212,9 @@ static float gain = 1.0f;          /* the menu's Sound volume */
      acoustics_filter_ms 300     the muffling's time constant on the way to a new path
      acoustics_room_rays 64, acoustics_room_legs 12, acoustics_room_reach 16     the room probe (uwacoustic.h uwac_tune)
      acoustics_way_reach 12      the way round a corner, tiles
-     acoustics_echo_ahead 4      High: blocks of echoes (10.7 ms each) kept queued ahead; 2 until 2026-11-16
+     acoustics_echo_ahead 4      High: blocks of echoes (10.7 ms each) kept queued ahead
      acoustics_echo_direct 1     High: the echoes' stream straight to the two ears (0: through OpenAL's own
-                                 placing again, as until 2026-11-16)
+                                 placing as well)
      acoustics_steam_direct 1    High, on headphones: the sound itself by Steam Audio (its binaural rendering), our
                                  OpenAL copy of it silent
      acoustics_steam_occlusion 1 ... and what the level lets through by Steam Audio's occlusion and transmission
@@ -230,15 +242,16 @@ static float makeup(void)
     if (e && *e) return (float)atof(e);
     return hrtf_status == 1 || hrtf_status == 4 ? TU.makeup_hrtf : TU.makeup_stereo;
 }
+/* the listener's gain: the menu's volume with the makeup */
 static float listener_gain(void) { return gain * makeup(); }
 static FILE *lbfile;               /* UWPORT_FX_LOOPBACK: the WAV the loopback device is rendered into */
 static unsigned lbframes, lbrate;
 static LARGE_INTEGER lbtime, lbfreq;
 static char bin_dir[MAX_PATH];     /* where soft_oal.dll (and phonon.dll) are */
-/* the samples behind our OpenAL buffers (mono, 16 bits), by the buffer's name: Acoustics High (Task 7) feeds a sound's
+/* the samples behind our OpenAL buffers (mono, 16 bits), by the buffer's name: Acoustics High feeds a sound's
    own samples to Steam Audio's reflections. own: the copy is ours to free (a wav's; a rendering's is the Rend's). */
-/* (2026-11-16, the review: the table was 512 long and a rendering past it silently got no echoes and no placing by
-   Steam Audio; every new velocity is a rendering, so a long session reached it. It grows now.) */
+/* (the table grows: every new velocity is a rendering, and one past a table of fixed length would get no echoes and
+   no placing by Steam Audio) */
 static struct PcmOf { unsigned al; const short *pcm; int frames, rate, own; } *pcm_of;
 static int npcm, pcm_cap;
 static void pcm_keep(unsigned al, const short *pcm, int frames, int rate, int copy)
@@ -246,16 +259,25 @@ static void pcm_keep(unsigned al, const short *pcm, int frames, int rate, int co
     if (frames <= 0) return;
     if (npcm >= pcm_cap) {
         struct PcmOf *t = realloc(pcm_of, sizeof *t * (size_t)(pcm_cap ? pcm_cap * 2 : 256));
-        if (!t) return;
+        if (!t) {
+            static int said;
+            if (!said++) RLOG_E("audio", "out of memory (%zu bytes): new sounds get no echoes or placing by Steam Audio", sizeof *t * (size_t)(pcm_cap ? pcm_cap * 2 : 256));
+            return;
+        }
         pcm_of = t, pcm_cap = pcm_cap ? pcm_cap * 2 : 256;
     }
     if (copy) {
         short *c = malloc(sizeof *c * (size_t)frames);
-        if (!c) return;
+        if (!c) {
+            static int said;
+            if (!said++) RLOG_E("audio", "out of memory (%zu bytes): a sound gets no echoes or placing by Steam Audio", sizeof *c * (size_t)frames);
+            return;
+        }
         memcpy(c, pcm, sizeof *c * (size_t)frames), pcm = c;
     }
     pcm_of[npcm].al = al, pcm_of[npcm].pcm = pcm, pcm_of[npcm].frames = frames, pcm_of[npcm].rate = rate, pcm_of[npcm++].own = copy;
 }
+/* the samples table emptied (the copies that are ours freed) */
 static void pcm_forget(void)
 {
     for (int i = 0; i < npcm; i++) if (pcm_of[i].own) free((void *)pcm_of[i].pcm);
@@ -295,8 +317,8 @@ static struct {
     volatile LONG quit;
 } M;
 
-/* the renderings, by effect and the note's velocity (2026-11-13: the game's velocity is the SOUNDS.DAT one plus the
-   caller's, a blow's rising with its damage, so one rendering an effect was too quiet for a hard hit): the effect's
+/* the renderings, by effect and the note's velocity (the game's velocity is the SOUNDS.DAT one plus the caller's, a
+   blow's rising with its damage, so one rendering an effect would be too quiet for a hard hit): the effect's
    own velocity at start, then those of the fight sounds 3 and 4 that a blow can give (base + 4k, and 0x7F), the rest
    as the game asks for them (the first play of a new velocity uses the base rendering louder or softer by a guess,
    the exact one from then on) */
@@ -370,7 +392,11 @@ static int mt_render_as(int slot, int n, int vel, int shift)
     if (r->state == 2) return 1;
     if (!mt_install(n, e[0], n)) return 0;
     if (hold > M.rate * 30) hold = M.rate * 30;
-    if (!(mono = malloc(cap * sizeof *mono))) return 0;
+    if (!(mono = malloc(cap * sizeof *mono))) {
+        static int said;   /* (the worker's alone) */
+        if (!said++) RLOG_E("audio", "out of memory (%zu bytes) for a Roland rendering", (size_t)cap * sizeof *mono);
+        return 0;
+    }
     mt_msg(0xC1, (unsigned)n, 0);
     mt_msg(0xB1, 0x79, 0), mt_msg(0xB1, 7, 0x7F), mt_msg(0xB1, 0x0B, 0x7F), mt_msg(0xB1, 0x0A, 0x40);
     mt_msg(0x91, (unsigned)note, (unsigned)(vel & 0x7F));
@@ -392,7 +418,7 @@ static int mt_render_as(int slot, int n, int vel, int shift)
     }
     mt_msg(0xB1, 0x7B, 0);   /* all notes off, whatever was left */
     if (M.quit) { free(mono); return 0; }
-    {   /* (2026-11-16, the review: each rendering kept the whole 34 s it was made in, some 2 to 3 MB whatever its length) */
+    {   /* (cut to its length: the buffer was made for 34 s, some 2 to 3 MB) */
         short *t = realloc(mono, sizeof *mono * (size_t)(done ? done : 1));
         if (t) mono = t;
     }
@@ -401,7 +427,7 @@ static int mt_render_as(int slot, int n, int vel, int shift)
     return 1;
 }
 static int mt_render(int n, int vel) { return mt_render_as(n, n, vel, 0); }
-/* a footstep by its floor (Task 6): slot 32 + (effect - 1) * 16 + preset, the effect's note moved by the preset's step */
+/* a footstep by its floor: slot 32 + (effect - 1) * 16 + preset, the effect's note moved by the preset's step */
 static int mt_render_step(int slot, int vel)
 {
     int n = 1 + (slot - 32) / STEP_PRESETS;
@@ -409,6 +435,8 @@ static int mt_render_step(int slot, int vel)
     return m && n < M.nsounds ? mt_render_as(slot, n, vel, m->step) : 0;
 }
 
+/* Munt's worker thread: every effect at its own velocity, then the blows' louder ones, then whatever the window's
+   thread asks for (rend_ask's ring, woken by M.asked) until M.quit */
 static DWORD WINAPI mt_worker(LPVOID p)
 {
     (void)p;
@@ -432,20 +460,27 @@ static DWORD WINAPI mt_worker(LPVOID p)
     return 0;
 }
 
+/* a whole file of at most `most` bytes into *out (malloc'd, the caller's to free); 0 when it is not there or not read */
 static int read_file(const char *path, unsigned char **out, long *len, long most)
 {
     FILE *f = fopen(path, "rb");
     long n;
     if (!f) return 0;
     fseek(f, 0, SEEK_END), n = ftell(f), fseek(f, 0, SEEK_SET);
-    if (n <= 0 || n > most || !(*out = malloc((size_t)n))) { fclose(f); return 0; }
+    if (n <= 0 || n > most || !(*out = malloc((size_t)n))) {
+        if (n > 0 && n <= most) RLOG_E("audio", "out of memory (%ld bytes) for %s", n, path);
+        else RLOG_W("audio", "%s: %ld bytes, not 1 to %ld (not taken)", path, n, most);
+        fclose(f);
+        return 0;
+    }
     *len = (long)fread(*out, 1, (size_t)n, f);
+    if (*len != n) RLOG_W("audio", "%s: read %ld of %ld bytes: %s", path, *len, n, rlog_errno());
     fclose(f);
     return *len == n;
 }
 
-/* The game's own folder (uwaudio_game_dir, the front end's before uwaudio_init). The game's files are no longer
-   extracted onto the disk (the user, 2026-11-16), so data\sound\sounds.dat and uw.mt (plain copies of the game's
+/* The game's own folder (uwaudio_game_dir, the front end's before uwaudio_init). The game's files are not
+   extracted onto the disk, so data\sound\sounds.dat and uw.mt (plain copies of the game's
    SOUND\SOUNDS.DAT and UW.MT) may not be there: the game's own are read then, the folder and the name in either case. */
 static char game_dir_set[1024];
 void uwaudio_game_dir(const char *dir) { snprintf(game_dir_set, sizeof game_dir_set, "%s", dir ? dir : ""); }
@@ -501,15 +536,15 @@ static int mt_start(const char *datadir)
     }
     if (!why) {
         M.ctx = M.mt32emu_create_context(NULL, NULL);
+        if (!M.ctx) RLOG_E("audio", "Munt made no context (mt32emu_create_context)");
         snprintf(p, sizeof p, "%sroms" UWOS_SEP "cm32l_ctrl_1_02.rom", base);
         int r1 = M.mt32emu_add_rom_file(M.ctx, p);
         snprintf(p, sizeof p, "%sroms" UWOS_SEP "cm32l_pcm.rom", base);
         int r2 = M.mt32emu_add_rom_file(M.ctx, p);
         if (r1 < 0 || r2 < 0) why = "no roms\\cm32l_ctrl_1_02.rom + cm32l_pcm.rom";
         else {
-            /* (2026-11-16, read in Exhume's audio.c mt_open: the emulator is asked for the output's own rate, its own
-               resampler doing it. Ours rendered at the unit's 32 kHz and left the rest to a straight-line resampling
-               in uwsteam.c and to OpenAL's.) */
+            /* (as Exhume's audio.c mt_open: the emulator is asked for the output's own rate, its own resampler
+               doing it, not the unit's 32 kHz with a straight-line resampling in uwsteam.c and OpenAL's after it) */
             if (M.mt32emu_set_stereo_output_samplerate) M.mt32emu_set_stereo_output_samplerate(M.ctx, 48000.0);
             if (M.mt32emu_open_synth(M.ctx) != 0) why = "Munt did not open";
         }
@@ -525,8 +560,8 @@ static int mt_start(const char *datadir)
     mt_sysex(0x7F, 0, 0, part_chans, 1);          /* reset */
     mt_sysex(0x10, 0, 0x0D, part_chans, 9);       /* the channel map */
     mt_sysex(0x10, 0, 0x04, part_rsv, 9);         /* the partial reserve */
-    {   /* The Roland's own reverb (2026-11-16, the review): the driver sets a small room on every note (mode 0, time 3,
-           level 2), and with the acoustics on the real room's echo was then made of a sound that already carried
+    {   /* The Roland's own reverb: the driver sets a small room on every note (mode 0, time 3,
+           level 2), and with the acoustics on the real room's echo would be made of a sound that already carried
            one, its tail muffled and placed as if it were the sound. fx_roland_reverb (the Esc menu's "Roland's own
            reverb"): 0 never, 1 always, 2 as it comes: none while the acoustics are on, the original's without them. */
         const char *ae = getenv("UWPORT_FX_ACOUSTICS"), *re = getenv("UWPORT_FX_ROLAND_REVERB");
@@ -539,6 +574,7 @@ static int mt_start(const char *datadir)
     M.ready = 0, M.quit = 0;
     ask_head = ask_tail = 0;
     if (!M.asked) M.asked = CreateSemaphoreA(NULL, 0, ASK_RING, NULL);
+    if (!M.asked) RLOG_E("audio", "no semaphore for the Roland worker: renderings asked for wait for its 200 ms round");
     M.thread = CreateThread(NULL, 1 << 20, mt_worker, NULL, 0, NULL);
     if (!M.thread) { fprintf(stderr, "fx: Roland effects off (no thread)\n"); return 0; }
     fprintf(stderr, "fx: Roland effects rendered by Munt (%d effects, %u Hz, %s)\n", M.nsounds, M.rate,
@@ -546,12 +582,13 @@ static int mt_start(const char *datadir)
     return 1;
 }
 
+/* the worker stopped and waited for, every rendering freed, Munt closed */
 static void mt_stop(void)
 {
     if (M.thread) {
         InterlockedExchange(&M.quit, 1);
         if (M.asked) ReleaseSemaphore(M.asked, 1, NULL);
-        WaitForSingleObject(M.thread, 30000);
+        if (WaitForSingleObject(M.thread, 30000) != WAIT_OBJECT_0) RLOG_W("audio", "the Roland worker did not end in 30 s");
         CloseHandle(M.thread), M.thread = NULL;
     }
     for (int i = 0; i < 64; i++)
@@ -562,6 +599,8 @@ static void mt_stop(void)
     free(M.mt), M.mt = NULL, M.mtlen = 0, M.nsounds = 0;
 }
 
+/* settings.txt's key as a whole number (the last line with it wins), dflt without one; the checks' environment
+   variables over fx_audio, fx_pan_fix and fx_hrtf */
 static int setting_get(const char *datadir, const char *key, int dflt)
 {
     char p[MAX_PATH], line[256], k[64], v[64];
@@ -573,6 +612,9 @@ static int setting_get(const char *datadir, const char *key, int dflt)
         while (fgets(line, sizeof line, f))
             if (sscanf(line, "%63s %63s", k, v) == 2 && !strcmp(k, key)) val = atoi(v);
         fclose(f);
+    } else if (errno != ENOENT) {
+        static _Atomic int said;
+        if (!said++) RLOG_W("audio", "cannot read %s: %s (the sound's settings as they come)", p, rlog_errno());
     }
     /* UWPORT_FX_AUDIO=0 / 1, UWPORT_FX_PANFIX=0 / 1 (the checks): whatever the settings say */
     if (!strcmp(key, "fx_audio") && (e = getenv("UWPORT_FX_AUDIO")) != NULL && *e) val = atoi(e);
@@ -586,7 +628,15 @@ static int setting_get(const char *datadir, const char *key, int dflt)
 static int *context_attrs(const char *datadir, const int *more, int *attrs)
 {
     int h = uwaudio_setting(datadir, "fx_hrtf", 1), n = 0;
+    /* OpenAL Soft's output limiter, the Esc menu's "Loudness limiter" (fx_limiter, On by
+       default; UWPORT_FX_LIMITER=0/1 for the checks). Left to OpenAL it is off on a device that takes float samples, as
+       many speakers do (work\soundprobe\alquery.py: limiter 0): the effects at the makeup's 5.2 that add up past
+       full scale are then cut flat by Windows at the device, heard as crackle. The limiter turns the whole down for
+       the moment instead, and does nothing below full scale. */
+    const char *le = getenv("UWPORT_FX_LIMITER");
+    int lim = le && *le ? atoi(le) != 0 : uwaudio_setting(datadir, "fx_limiter", 1) != 0;
     attrs[n++] = ALC_HRTF_SOFT, attrs[n++] = h == 1 ? 1 : h == 0 ? 0 : ALC_DONT_CARE_SOFT;
+    attrs[n++] = 0x199A /* ALC_OUTPUT_LIMITER_SOFT */, attrs[n++] = lim;
     for (; more && *more && n < 14; more += 2) attrs[n++] = more[0], attrs[n++] = more[1];
     attrs[n] = 0;
     return attrs;
@@ -608,9 +658,14 @@ static void hrtf_read(void)
     hrtf_status = v;
     if (A.alcGetString && (s = A.alcGetString(dev, ALC_HRTF_SPECIFIER_SOFT)) != NULL) snprintf(hrtf_name, sizeof hrtf_name, "%s", s);
     fprintf(stderr, "fx: HRTF %s%s%s%s\n", v >= 0 && v < 6 ? st[v] : "?", hrtf_name[0] ? " (" : "", hrtf_name, hrtf_name[0] ? ")" : "");
+    {   /* what the device made of the limiter (context_attrs) */
+        int lim = -1;
+        A.alcGetIntegerv(dev, 0x199A /* ALC_OUTPUT_LIMITER_SOFT */, 1, &lim);
+        RLOG_I("audio", "loudness limiter %s", lim == 1 ? "on" : lim == 0 ? "off" : "unknown");
+    }
     if (on) {   /* the makeup follows what the device made of HRTF */
         A.alListenerf(AL_GAIN, listener_gain());
-        fprintf(stderr, "fx: makeup gain %.2f (to the game's own mix)\n", makeup());
+        RLOG_I("audio", "makeup gain %.2f (to the game's own mix)", makeup());
     }
 }
 
@@ -619,6 +674,7 @@ const char *uwaudio_hrtf_name(void) { return hrtf_name; }
 static int setting_on(const char *datadir, const char *key) { return setting_get(datadir, key, 0); }
 int uwaudio_setting(const char *datadir, const char *key, int dflt) { return setting_get(datadir, key, dflt); }
 
+/* soft_oal.dll loaded and its functions taken (the acoustics' few optional ones may be missing); 0 without it */
 static int load_dll(const char *bindir)
 {
     char p[MAX_PATH];
@@ -627,7 +683,7 @@ static int load_dll(const char *bindir)
     snprintf(bin_dir, sizeof bin_dir, "%s", bindir ? bindir : ".");   /* (phonon.dll's place too: the game's own bin\) */
     if (!uwos_lib_findable(p)) return 0;   /* (elsewhere: beside the path or by its bare name) */
     A.dll = LoadLibraryExA(p, NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
-    if (!A.dll) return 0;
+    if (!A.dll) { RLOG_W("audio", "%s is there but did not load", p); return 0; }
 #define GET(n) (*(FARPROC *)&A.n = GetProcAddress(A.dll, #n)) != NULL
     if (!(GET(alcOpenDevice) && GET(alcCreateContext) && GET(alcMakeContextCurrent) && GET(alcDestroyContext) &&
           GET(alcCloseDevice) && GET(alcGetProcAddress) && GET(alcIsExtensionPresent) && GET(alcGetIntegerv) &&
@@ -635,6 +691,7 @@ static int load_dll(const char *bindir)
           GET(alGenSources) && GET(alGenBuffers) && GET(alDeleteSources) && GET(alDeleteBuffers) && GET(alBufferData) &&
           GET(alSourcei) && GET(alSourcef) && GET(alSource3f) && GET(alSourcePlay) && GET(alSourceStop) &&
           GET(alGetSourcei) && GET(alListener3f) && GET(alListenerfv) && GET(alListenerf) && GET(alDistanceModel))) {
+        RLOG_W("audio", "%s lacks one of OpenAL's functions", p);
         FreeLibrary(A.dll), A.dll = NULL;
         return 0;
     }
@@ -646,7 +703,7 @@ static int load_dll(const char *bindir)
     return 1;
 }
 
-/* --- acoustics (docs\superpowers\plans\2026-11-14-acoustics-ours.md, Task 4): OpenAL's EFX driven by our own rays
+/* --- acoustics (docs\superpowers\plans\2026-11-14-acoustics-ours.md): OpenAL's EFX driven by our own rays
    (uwacoustic.c). One auxiliary slot with an EAX reverb for the room round the listener, every source sending to it;
    one band-pass filter a source on its direct sound for what stands between it and the listener. Off (and nothing
    of it touched: the sound as before) unless fx_acoustics is 1 and the device has ALC_EXT_EFX. --- */
@@ -692,6 +749,7 @@ static struct {
     LARGE_INTEGER clock;             /* a visible run's last step */
 } AC;
 
+/* settings.txt's key as a number (the last line with it wins), dflt without one */
 static float setting_float(const char *datadir, const char *key, float dflt)
 {
     char p[MAX_PATH], line[256], k[64], v[64];
@@ -702,12 +760,15 @@ static float setting_float(const char *datadir, const char *key, float dflt)
         while (fgets(line, sizeof line, f))
             if (sscanf(line, "%63s %63s", k, v) == 2 && !strcmp(k, key)) val = (float)atof(v);
         fclose(f);
+    } else if (errno != ENOENT) {
+        static _Atomic int said;
+        if (!said++) RLOG_W("audio", "cannot read %s: %s (the sound's settings as they come)", p, rlog_errno());
     }
     return val;
 }
 static float clampf(float v, float lo, float hi) { return v < lo ? lo : v > hi ? hi : v; }
 
-/* --- Acoustics High (the acoustics plan's Task 7; fx_acoustics 2): Steam Audio's reflections on top of ours ---
+/* --- Acoustics High (fx_acoustics 2): Steam Audio's reflections on top of ours ---
    The muffling by walls and the way round corners stay ours (the filters, above). What changes: the one EFX reverb
    is off, and each sound's own echoes come from uwsteam.c (the level's real shape, the sound's own place: a sound in
    the next room rings with that room), mixed there and played here by one stereo source that we keep fed, block by
@@ -718,17 +779,17 @@ static float clampf(float v, float lo, float hi) { return v < lo ? lo : v > hi ?
 #define AL_BUFFERS_PROCESSED 0x1016
 #define HI_RATE 48000
 #define HI_BUFS 8
-/* blocks kept queued ahead of the playing one (TU.ahead; settings.txt acoustics_echo_ahead, 2 to 6). 2 until
-   2026-11-16 (about 21 ms; the feed runs every 10): the uwr session's review measured the stream running dry
-   0.9 to 21 times a second with 2 on the user's device, never with 3 or more. 4 now: about 43 ms. */
+/* blocks kept queued ahead of the playing one (TU.ahead; settings.txt acoustics_echo_ahead, 2 to 6). With 2 (about
+   21 ms; the feed runs every 10) the stream was measured running dry 0.9 to 21 times a second, never with 3 or
+   more; 4, the default, is about 43 ms. */
 #define HI_AHEAD TU.ahead
 #define AL_FORMAT_STEREO_FLOAT32 0x10011   /* AL_EXT_FLOAT32 */
 #define AL_DIRECT_CHANNELS_SOFT 0x1033
-/* Steam Audio's echoes against the sound itself (the review, 2026-11-14): at 1 a footstep's echoes measured 15 dB
+/* Steam Audio's echoes against the sound itself: at 1 a footstep's echoes measured 15 dB
    OVER the step (its samples at full scale, as from a metre away, while OpenAL's own output of a sound at the listener
    is some 10 dB under that: the pan's 3 dB, the HRTF's 7). 0.12 puts them a few dB under it, about where the EFX
    reverb of "On" sits; the menu's Reverb level scales it from there. To be judged by ear. */
-#define HI_LEVEL TU.hi_level     /* (0.12 unless settings.txt acoustics_echo_level says another) */
+#define HI_LEVEL TU.hi_level     /* (0.05 unless settings.txt acoustics_echo_level says another) */
 static struct {
     int on;
     unsigned src, buf[HI_BUFS], free_buf[HI_BUFS];
@@ -744,6 +805,8 @@ static struct {
 
 /* the stream kept fed: done buffers taken back, blocks mixed and queued up to HI_AHEAD, the source started again
    when it ran dry */
+static double hi_feed_ms_last, hi_feed_gap_last, hi_sim_ms_last;   /* the threads' last passes (the dry-outs' log lines) */
+static DWORD hi_t0;                 /* when Acoustics High started (hi_start) */
 static void hi_feed(void)
 {
     static float blk[UWST_FRAME * 2];
@@ -776,30 +839,65 @@ static void hi_feed(void)
     if (queued > 0) {
         A.alGetSourcei(HI.src, AL_SOURCE_STATE, &st);
         if (st != AL_PLAYING) {
-            if (HI.live) HI.dry++;                   /* it stopped though more was to come: the feed was late */
+            if (HI.live) {                           /* it stopped though more was to come: the feed was late */
+                HI.dry++;
+                {   /* each one into the log (40 a run at most), with the feed thread's
+                       last passes and the last simulation's time: what was late */
+                    if (HI.dry <= 40) RLOG_I("audio", "the echo stream ran dry (%d) %.1f s after the sound started: the feed's last pass %.1f ms, %.1f ms after the one before; the last simulation %.1f ms",
+                                    HI.dry, (double)(GetTickCount() - hi_t0) / 1000.0, hi_feed_ms_last, hi_feed_gap_last, hi_sim_ms_last);
+                }
+            }
             A.alSourcePlay(HI.src);
         }
         HI.live = !HI.idle;
     }
 }
-/* every 50 ms, and at once when a new sound starts (2026-11-15: a voice's echoes are silent until its first run, so
-   waiting out the 50 ms lost the start of each sound's echoes) */
+/* now, ms (the performance counter) */
+static double hi_ms(void) { LARGE_INTEGER c, f; QueryPerformanceCounter(&c), QueryPerformanceFrequency(&f); return (double)c.QuadPart * 1000.0 / (double)f.QuadPart; }
+/* the echoes' simulation thread (a sound card): every 50 ms, and at once when a new sound starts (a voice's echoes
+   are silent until its first run, so waiting out the 50 ms would lose the start of each sound's echoes) */
 static DWORD WINAPI hi_sim_worker(LPVOID p)
 {
     (void)p;
-    while (!HI.quit) uwst_simulate(), WaitForSingleObject(HI.sim_wake, 50);
+    while (!HI.quit) {
+        double t0 = hi_ms();
+        uwst_simulate();
+        hi_sim_ms_last = hi_ms() - t0;   /* (UWPORT_PIT_LOG's lines) */
+        WaitForSingleObject(HI.sim_wake, 50);
+    }
     return 0;
 }
-static DWORD WINAPI hi_feed_worker(LPVOID p) { (void)p; while (!HI.quit) hi_feed(), Sleep(10); return 0; }
+/* the echoes' feed thread (a sound card): the stream kept fed every 10 ms, its passes timed for the dry-outs' lines */
+static DWORD WINAPI hi_feed_worker(LPVOID p)
+{
+    double prev = 0;
+    (void)p;
+    while (!HI.quit) {
+        double t0 = hi_ms();
+        if (prev > 0) hi_feed_gap_last = t0 - prev;
+        prev = t0;
+        hi_feed();
+        hi_feed_ms_last = hi_ms() - t0;
+        Sleep(10);
+    }
+    return 0;
+}
+/* Acoustics High stopped: its threads ended and waited for, its stream and Steam Audio released */
 static void hi_stop(void)
 {
     if (!HI.on) return;
     InterlockedExchange(&HI.quit, 1);
     if (HI.sim_wake) SetEvent(HI.sim_wake);
-    /* (2026-11-17: a minute, it was 5 s: past the wait everything the threads use is freed under them, and the
+    /* (a minute: past the wait everything the threads use is freed under them, and the
        simulation thread may be waiting out a bake of the level's sound paths) */
-    if (HI.sim_thread) WaitForSingleObject(HI.sim_thread, 60000), CloseHandle(HI.sim_thread), HI.sim_thread = NULL;
-    if (HI.feed_thread) WaitForSingleObject(HI.feed_thread, 60000), CloseHandle(HI.feed_thread), HI.feed_thread = NULL;
+    if (HI.sim_thread) {
+        if (WaitForSingleObject(HI.sim_thread, 60000) != WAIT_OBJECT_0) RLOG_W("audio", "the echoes' simulation thread did not end in a minute");
+        CloseHandle(HI.sim_thread), HI.sim_thread = NULL;
+    }
+    if (HI.feed_thread) {
+        if (WaitForSingleObject(HI.feed_thread, 60000) != WAIT_OBJECT_0) RLOG_W("audio", "the echoes' feed thread did not end in a minute");
+        CloseHandle(HI.feed_thread), HI.feed_thread = NULL;
+    }
     if (HI.sim_wake) CloseHandle(HI.sim_wake), HI.sim_wake = NULL;
     HI.on = 0;
     if (HI.dry) fprintf(stderr, "fx: acoustics high: the echo stream ran dry %d times\n", HI.dry);
@@ -827,29 +925,112 @@ static int hi_start(void)
         static const float zero[8];
         A.alBufferData(HI.buf[0], AL_FORMAT_STEREO_FLOAT32, zero, (int)sizeof zero, HI_RATE);
         HI.is_float = A.alGetError() == 0;
+        if (!HI.is_float) RLOG_W("audio", "the echo stream in 16-bit samples (OpenAL takes no float ones)");
     }
     A.alSourcei(HI.src, AL_SOURCE_RELATIVE, 1);
     A.alSource3f(HI.src, AL_POSITION, 0, 0, 0);
     A.alSourcef(HI.src, AL_ROLLOFF_FACTOR, 0);
-    /* (2026-11-16, the same review: the stream is the two ears' sound already, Steam Audio's own HRTF in it, and as
-       a plain stereo source it went through OpenAL's HRTF again: a click on the left smeared over 63 samples and
-       leaked to the right. Its two channels straight to the output's two.) */
+    /* (the stream is the two ears' sound already, Steam Audio's own HRTF in it; as a plain stereo source it would go
+       through OpenAL's HRTF again, a click on the left smeared over 63 samples and leaked to the right. Its two
+       channels go straight to the output's two.) */
     A.alSourcei(HI.src, AL_DIRECT_CHANNELS_SOFT, TU.direct);
-    A.alGetError();
+    {
+        int err = A.alGetError();
+        if (err) RLOG_W("audio", "the echo stream's setup: OpenAL error 0x%x (it may be placed by OpenAL as well)", (unsigned)err);
+    }
     uwst_tile_m(AC.tile_m);
     HI.on = 1;
+    hi_t0 = GetTickCount();
     if (AC.rate <= 0) {                              /* a sound card: its own two threads */
         HI.sim_wake = CreateEventA(NULL, FALSE, FALSE, NULL);
         HI.sim_thread = CreateThread(NULL, 0, hi_sim_worker, NULL, 0, NULL);
         HI.feed_thread = CreateThread(NULL, 0, hi_feed_worker, NULL, 0, NULL);
+        /* (at normal priority, below OpenAL's mixer, and every core kept busy (work\soundprobe\stress.py, run
+           stress1) the feed came every 30 to 77 ms instead of 10 and the stream, the sound itself with it on
+           headphones, ran dry 173 times in a minute; the music's thread, time-critical, not once. The same priority
+           as the music's: a pass is a few ms, then it sleeps.) */
+        if (HI.feed_thread) SetThreadPriority(HI.feed_thread, THREAD_PRIORITY_TIME_CRITICAL);
+        if (!HI.sim_wake || !HI.sim_thread || !HI.feed_thread)
+            RLOG_E("audio", "acoustics high: its threads did not all start (wake %s, simulation %s, feed %s): the echoes may stay silent",
+                   HI.sim_wake ? "yes" : "no", HI.sim_thread ? "yes" : "no", HI.feed_thread ? "yes" : "no");
     }
     return 1;
 }
+/* --- the heat shimmer: what hot air (and mist, fog and smoke) do to a sound ---
+   Air over a flame or lava is hotter in some places than others, and sound is faster in hot air, so a sound that
+   crosses the rising plume is bent this way and that as the hot pockets drift through: heard beyond it, it flickers
+   in loudness, the high notes most (acoustic scintillation, as measured through flames and over hot ground). The
+   renderer gives the hot spots (uwview's volfog.inc uwv_heat_spots, the fog and smoke's own temperatures); here each
+   sound's straight way to the listener is laid against them each step: inside a plume the sound dips by up to
+   HEAT_DB_HF dB at the high notes and a third of that in the middle, at a few flickers a second, never louder than
+   it would be (the filters only take away). Fog's damp air and smoke change nothing audible over these distances
+   (humid air takes less of the high notes away than dry, some hundredths of a dB a metre), so they are not added.
+   The Esc menu's "Heat shimmer" row: the strength, 0 off. */
+#define HEAT_MAX 96
+#define HEAT_DB_HF 4.5f
+static struct { int n; float s[HEAT_MAX][5]; float level, t; } HT;
+static float shim[NSRC][3] = {{0}}, shim_w[NSRC];
+/* the renderer's hot spots (x, y, z, radius, temperature each) and the Heat shimmer row's strength */
+void uwaudio_heat(const float *spots, int n, float level)
+{
+    HT.level = level < 0 ? 0 : level > 3.0f ? 3.0f : level;
+    {   /* (the log: when hot air first comes near, a few times a run) */
+        static int said;
+        if (n > 0 && HT.n == 0 && HT.level > 0 && said++ < 6) RLOG_I("audio", "heat shimmer: %d hot spots near (flames, lava, blasts)", n);
+    }
+    HT.n = n < 0 ? 0 : n > HEAT_MAX ? HEAT_MAX : n;
+    if (HT.n && spots) memcpy(HT.s, spots, sizeof(float) * 5 * (size_t)HT.n);
+}
+/* how much of a hot plume the straight way from p to the listener crosses: 0 none, about 1 through a campfire's */
+static float heat_crossed(const float p[3])
+{
+    float w = 0, dx = lis[0] - p[0], dz = lis[2] - p[2], len2 = dx * dx + dz * dz;
+    static int test = -1;   /* UWPORT_HEAT_TEST=1 (the checks): a campfire's plume halfway along every sound's way */
+    if (test < 0) { const char *e = getenv("UWPORT_HEAT_TEST"); test = e && *e == '1'; }
+    if (test && len2 > 0.04f) return 1.0f;
+    for (int i = 0; i < HT.n; i++) {
+        const float *s = HT.s[i];
+        float t = len2 > 1e-6f ? ((s[0] - p[0]) * dx + (s[2] - p[2]) * dz) / len2 : 0;
+        if (t < 0.02f || t > 0.98f) continue;   /* (a plume at either end: the sound's own fire, or the listener in it) */
+        float ex = p[0] + dx * t - s[0], ez = p[2] + dz * t - s[2], y = p[1] + (lis[1] - p[1]) * t - s[1];
+        if (y < -0.25f || y > 2.5f) continue;   /* (the plume rises from its foot, widening, cooling as it goes) */
+        float rr = s[3] + 0.25f + 0.2f * (y > 0 ? y : 0), d2 = (ex * ex + ez * ez) / (rr * rr);
+        if (d2 > 4.0f) continue;
+        float hot = s[4] / 400.0f / (1.0f + 1.5f * (y > 0 ? y : 0));
+        w += (hot > 1.5f ? 1.5f : hot) * expf(-d2);
+    }
+    return w > 1.5f ? 1.5f : w;
+}
+/* each step: the shimmer of each sound as it now is (shim[k]: gains by band, 1 none); 1 when it changed */
+static int heat_step(int k, float dt)
+{
+    static float ph[NSRC][3], fq[NSRC][3];
+    float w = HT.level > 0 && !AC.here[k] ? heat_crossed(AC.pos[k]) * HT.level : 0;
+    if (w <= 0 && shim_w[k] <= 0) return 0;
+    if (w > 0 && shim_w[k] <= 0) {   /* (the log: the first few sounds heard through hot air) */
+        static int said;
+        if (said++ < 8) RLOG_I("audio", "heat shimmer: sound %d from (%.1f, %.1f) heard through hot air (%.2f; %d hot spots near)", src_fx[k], AC.pos[k][0], AC.pos[k][2], w, HT.n);
+    }
+    if (fq[k][0] == 0) for (int j = 0; j < 3; j++) fq[k][j] = 2.0f + (float)((k * 7 + j * 13) % 17) * 0.55f, ph[k][j] = (float)(k * 3 + j);
+    float a = 0;
+    for (int j = 0; j < 3; j++) ph[k][j] += 6.2831853f * fq[k][j] * dt, a += sinf(ph[k][j]);
+    a = 0.5f + a / 6.0f;                          /* 0..1, mostly near the middle: a dip that comes and goes */
+    float db = -HEAT_DB_HF * w * (a < 0 ? 0 : a > 1 ? 1 : a);
+    shim[k][0] = 1.0f, shim[k][1] = powf(10.0f, db / 60.0f), shim[k][2] = powf(10.0f, db / 20.0f);
+    shim_w[k] = w;
+    if (w <= 0) shim[k][1] = shim[k][2] = 1.0f;   /* (out of the plume: whole again, then left alone) */
+    return 1;
+}
+/* source k's voice in uwsteam.c given where its sound is heard from and our gains (the heat shimmer's dips in them) */
 static void hi_push(int k)
 {
     if (!HI.on || HI.voice[k] < 0) return;
     if (AC.here[k]) { static const float one[3] = {1, 1, 1}; uwst_direct(HI.voice[k], NULL, one, 0); }
-    else uwst_direct(HI.voice[k], AC.heard[k], AC.gt[k], AC.raised[k]);
+    else {
+        float g[3];
+        for (int b = 0; b < 3; b++) g[b] = AC.gt[k][b] * (shim[k][b] > 0 ? shim[k][b] : 1.0f);   /* (the heat shimmer's) */
+        uwst_direct(HI.voice[k], AC.heard[k], g, AC.raised[k]);
+    }
 }
 /* source k starts a sound (buffer `al`, gain g; its echoes at `echo` of that) at a place: its voice in uwsteam.c.
    1: the sound itself is Steam Audio's too (the caller keeps its own copy silent) */
@@ -863,7 +1044,7 @@ static int hi_voice(int k, unsigned al, float x, float y, float z, float g, floa
             if (HI.voice[k] >= 0) {
                 uwst_echo(HI.voice[k], echo);
                 hi_push(k);
-                /* (the review, 2026-11-14: a voice is given again once its echoes have rung out; a source that had it
+                /* (a voice is given again once its echoes have rung out; a source that had it
                    before must not end the new sound's echoes when it starts its own next one) */
                 for (int j = 0; j < NSRC; j++) if (j != k && HI.voice[j] == HI.voice[k]) HI.voice[j] = -1;
                 InterlockedIncrement(&HI.kick);
@@ -937,7 +1118,7 @@ static void ac_path(int k, float g[3])
     g[0] = g[1] = g[2] = 1.0f;
     AC.raised[k] = 0;
     if (AC.here[k] || AC.occl <= 0) { ac_place(k, NULL); hi_push(k); return; }
-    /* Task 5, sound round corners: with rock on the straight line and a way round, the sound is louder by that way
+    /* sound round corners: with rock on the straight line and a way round, the sound is louder by that way
        (uwac_path_round) and is heard from the opening it comes through (uwac_waypoint), at its own distance (the
        falloff stays the original's, by the straight line) */
     float wp[3];
@@ -949,19 +1130,22 @@ static void ac_path(int k, float g[3])
     for (int b = 0; b < 3; b++) g[b] = 1.0f - (1.0f - g[b]) * AC.occl;
     hi_push(k);
 }
+/* source k's band-pass filter set to its gains now (the heat shimmer's on top), on its direct sound and its send */
 static void ac_filter_apply(int k)
 {
-    /* (the review, 2026-11-14: the same filter on the sound's way into the room's reverb. Unfiltered, a sound that
-       rock hid still rang in the listener's room at its full strength: its echo louder than itself, from everywhere) */
+    /* (the same filter on the sound's way into the room's reverb. Unfiltered, a sound that rock hides would still
+       ring in the listener's room at its full strength: its echo louder than itself, from everywhere) */
     if (AC.occl <= 0) {   /* 0: no filter at all */
         A.alSourcei(src[k], AL_DIRECT_FILTER, AL_FILTER_NULL);
         A.alSource3i(src[k], AL_AUXILIARY_SEND_FILTER, (int)AC.slot, 0, AL_FILTER_NULL);
         return;
     }
-    float mid = clampf(AC.g[k][1], 0.001f, 1.0f);
+    float sg[3];   /* (the heat shimmer's dips on top: heat_step) */
+    for (int b = 0; b < 3; b++) sg[b] = AC.g[k][b] * (shim[k][b] > 0 ? shim[k][b] : 1.0f);
+    float mid = clampf(sg[1], 0.001f, 1.0f);
     AC.alFilterf(AC.filter[k], AL_BANDPASS_GAIN, mid);
-    AC.alFilterf(AC.filter[k], AL_BANDPASS_GAINLF, clampf(AC.g[k][0] / mid, 0.001f, 1.0f));
-    AC.alFilterf(AC.filter[k], AL_BANDPASS_GAINHF, clampf(AC.g[k][2] / mid, 0.001f, 1.0f));
+    AC.alFilterf(AC.filter[k], AL_BANDPASS_GAINLF, clampf(sg[0] / mid, 0.001f, 1.0f));
+    AC.alFilterf(AC.filter[k], AL_BANDPASS_GAINHF, clampf(sg[2] / mid, 0.001f, 1.0f));
     A.alSourcei(src[k], AL_DIRECT_FILTER, (int)AC.filter[k]);
     A.alSource3i(src[k], AL_AUXILIARY_SEND_FILTER, (int)AC.slot, 0, (int)AC.filter[k]);
 }
@@ -977,16 +1161,33 @@ static void ac_source_start(int k, float x, float y, float z, int here)
         fprintf(stderr, "fx: acoustics: path of %d from (%.2f, %.2f, %.2f) to (%.2f, %.2f, %.2f): %.3f %.3f %.3f\n", src_fx[k], x, y, z, lis[0], lis[1], lis[2],
                 AC.g[k][0], AC.g[k][1], AC.g[k][2]);
 }
-/* dt seconds passed: the room and the paths asked again every 100 ms, the values eased */
+/* UWPORT_TIMING=1: the mixing's parts timed, in ms of the CPU, one log line for every 5 s of sound */
+static int tm_on = -1;
+static double tm_sim, tm_feed, tm_room, tm_render, tm_sound, tm_rest;
+static double tm_now(void) { LARGE_INTEGER c, f; QueryPerformanceCounter(&c), QueryPerformanceFrequency(&f); return (double)c.QuadPart * 1000.0 / (double)f.QuadPart; }
+static void tm_say(float dt)
+{
+    tm_sound += dt;
+    if (tm_sound < 5.0) return;
+    RLOG_I("audio", "(timing) a second of sound took: Steam Audio's simulation %.0f ms, the reflections' feed %.0f ms, the room and paths %.0f ms, "
+           "the rest of the step %.0f ms, OpenAL's mixing %.0f ms", tm_sim / tm_sound, tm_feed / tm_sound, tm_room / tm_sound, tm_rest / tm_sound, tm_render / tm_sound);
+    tm_sim = tm_feed = tm_room = tm_render = tm_sound = tm_rest = 0;
+}
+/* dt seconds passed: the room and the paths asked again every 100 ms, the values eased; Acoustics High in a hidden
+   run simulated and fed here too (a sound card has its own threads for that) */
 static void ac_step(float dt)
 {
     int st;
     if (!AC.on || dt <= 0) return;
+    if (tm_on < 0) { const char *e = getenv("UWPORT_TIMING"); tm_on = e && *e && *e != '0'; }
+    double t0 = tm_on ? tm_now() : 0, t1 = t0, t2 = t0, t3 = t0;
     AC.acc += dt;
     if (HI.on && AC.rate > 0) {                      /* Acoustics High in a hidden run: the rays every 100 ms rendered, the stream fed */
         HI.sim_acc += dt;
         if (HI.sim_acc >= AC_PROBE_S) HI.sim_acc = 0, uwst_simulate();
+        if (tm_on) t1 = tm_now();
         hi_feed();
+        if (tm_on) t2 = tm_now();
     }
     if (AC.acc >= AC_PROBE_S || !AC.have_room) {
         AC.acc = 0;
@@ -996,18 +1197,28 @@ static void ac_step(float dt)
             if (st == AL_PLAYING) ac_path(k, AC.gt[k]);
         }
     }
+    if (tm_on) {
+        t3 = tm_now();
+        if (t1 == t0) t1 = t2 = t0;
+        tm_sim += t1 - t0, tm_feed += t2 - t1, tm_room += t3 - t2;
+    }
     float a = TU.reverb_tc > 1e-3f ? 1.0f - expf(-dt / TU.reverb_tc) : 1.0f, b = TU.filter_tc > 1e-3f ? 1.0f - expf(-dt / TU.filter_tc) : 1.0f;
     for (int i = 0; i < 5; i++) AC.cur[i] += (AC.tgt[i] - AC.cur[i]) * a;
     if (AC.have_room) ac_reverb_apply(0);
     for (int k = 0; k < NSRC; k++) {
         float d = 0;
         for (int i = 0; i < 3; i++) d += fabsf(AC.gt[k][i] - AC.g[k][i]);
-        if (d < 1e-4f) continue;
+        if (d < 1e-4f && (HT.level <= 0 || HT.n == 0) && shim_w[k] <= 0) continue;
         A.alGetSourcei(src[k], AL_SOURCE_STATE, &st);
         if (st != AL_PLAYING) continue;
+        if (heat_step(k, dt)) {   /* (the heat shimmer: the dips heard at once, on both ways the sound may take) */
+            hi_push(k);
+            if (d < 1e-4f) { ac_filter_apply(k); continue; }
+        } else if (d < 1e-4f) continue;
         for (int i = 0; i < 3; i++) AC.g[k][i] += (AC.gt[k][i] - AC.g[k][i]) * b;
         ac_filter_apply(k);
     }
+    if (tm_on) tm_rest += tm_now() - t3;
 }
 /* the dials (TU, above) read from settings.txt; the makeup alone when the acoustics are not on */
 static void tune_read(const char *datadir)
@@ -1046,6 +1257,8 @@ static void tune_read(const char *datadir)
     uwst_scatter(clampf(setting_float(datadir, "acoustics_scatter", 25.0f) / 100.0f, 0, 1.0f));
     uwst_length(clampf(setting_float(datadir, "acoustics_echo_ms", 2000.0f) / 1000.0f, 0.25f, 6.0f));
 }
+/* every acoustics setting read again (the dials, the reverb's level, the muffling, the tile's size, the detour,
+   Acoustics High's rays) and handed to uwacoustic.c and uwsteam.c */
 static void ac_settings(const char *datadir)
 {
     tune_read(datadir);
@@ -1059,6 +1272,7 @@ static void ac_settings(const char *datadir)
         static const int RAYS[4] = {1024, 2048, 4096, 8192}, BOUNCES[4] = {8, 16, 32, 64};
         int q = (int)clampf(setting_float(datadir, "acoustics_quality", 1.0f), 0, 3.0f);
         uwst_quality(RAYS[q], TU.bounces > 0 ? TU.bounces : BOUNCES[q]);
+        uwst_fast_rays(setting_float(datadir, "acoustics_embree", 1.0f) != 0);   /* (the Fast echo rays row) */
     }
 }
 /* after the sources are made: the slot, the reverb, the filters, the sends; 0 and one log line when it is not to be */
@@ -1066,24 +1280,25 @@ static int ac_start(const char *datadir)
 {
     const char *e = getenv("UWPORT_FX_ACOUSTICS");   /* 0 / 1 (the checks): whatever the settings say */
     int want = e && *e ? atoi(e) : (int)setting_float(datadir, "fx_acoustics", 0);   /* 1 On, 2 High (Steam Audio's reflections) */
+    int err;
     AC.on = AC.have_room = 0, AC.acc = 0;
     memset(AC.cur, 0, sizeof AC.cur), memset(AC.tgt, 0, sizeof AC.tgt), memset(AC.set, 0, sizeof AC.set), memset(AC.here, 0, sizeof AC.here), memset(AC.moved, 0, sizeof AC.moved);
     if (!want) return 0;
     if (!A.alGetProcAddress || !A.alSource3i || !A.alcIsExtensionPresent(dev, "ALC_EXT_EFX")) {
-        fprintf(stderr, "fx: acoustics off (no EFX)\n");
+        RLOG_W("audio", "acoustics off (no EFX)");
         return 0;
     }
 #define GET(n) (*(void **)&AC.n = A.alGetProcAddress(#n)) != NULL
     if (!(GET(alGenEffects) && GET(alDeleteEffects) && GET(alGenAuxiliaryEffectSlots) && GET(alDeleteAuxiliaryEffectSlots) &&
           GET(alGenFilters) && GET(alDeleteFilters) && GET(alEffecti) && GET(alAuxiliaryEffectSloti) && GET(alFilteri) &&
           GET(alEffectf) && GET(alAuxiliaryEffectSlotf) && GET(alFilterf))) {
-        fprintf(stderr, "fx: acoustics off (no EFX)\n");
+        RLOG_W("audio", "acoustics off (no EFX)");
         return 0;
     }
 #undef GET
     uwacmat_write_default(datadir);                  /* data\acoustics.txt: the table we ship, when there is none yet */
     if (!uwacmat_load(datadir) && !uwacmat_load_default()) {
-        fprintf(stderr, "fx: acoustics off (no materials: data\\acoustics.txt)\n");
+        RLOG_W("audio", "acoustics off (no materials: data\\acoustics.txt)");
         return 0;
     }
     A.alGetError();
@@ -1091,8 +1306,8 @@ static int ac_start(const char *datadir)
     AC.alGenEffects(1, &AC.effect);
     AC.alGenFilters(NSRC, AC.filter);
     AC.alEffecti(AC.effect, AL_EFFECT_TYPE, AL_EFFECT_EAXREVERB);
-    if (A.alGetError()) {
-        fprintf(stderr, "fx: acoustics off (no EFX reverb)\n");
+    if ((err = A.alGetError()) != 0) {
+        RLOG_W("audio", "acoustics off (no EFX reverb: OpenAL error 0x%x)", (unsigned)err);
         return 0;
     }
     ac_settings(datadir);
@@ -1123,17 +1338,20 @@ static void ac_stop(void)   /* (the context current, before the sources go) */
     AC.on = 0;
 }
 
+/* the level's tiles and doors (the backend's, on a level's start and a door's change) to both ray codes */
 void uwaudio_acoustics(const UwaTile *t, int ceil_mat, const UwaDoor *d, int nd)
 {
     if (t) uwac_grid(t, ceil_mat, AC.tile_m > 0 ? AC.tile_m : 2.4f);
     uwac_doors(d, nd);
     if (HI.on) uwst_level(t, ceil_mat, d, nd, AC.tile_m);
 }
+/* the things standing in the level (furniture, pillars) as boxes, to both ray codes */
 void uwaudio_things(const UwaBox *b, int n)
 {
     uwac_things(b, n);
     uwst_things(b, n);
 }
+/* a sound row of the Esc menu changed: the settings read again and heard at once */
 void uwaudio_tune(const char *datadir)
 {
     if (on) {   /* (the positional sound's own rows: no acoustics needed) */
@@ -1144,6 +1362,7 @@ void uwaudio_tune(const char *datadir)
         step_vol = clampf(setting_float(datadir, "fx_step_volume", 80.0f) / 100.0f, 0, 2.0f);
         step_echo = clampf(setting_float(datadir, "fx_step_echo", 50.0f) / 100.0f, 0, 2.0f);
         step_plain = setting_get(datadir, "fx_step_plain", 0) != 0;
+        own_step_vol = clampf(setting_float(datadir, "fx_own_step_volume", 100.0f) / 100.0f, 0, 2.0f);
         for (int i = 0; i < NSRC; i++) A.alSourcef(src[i], AL_MAX_DISTANCE, (float)hear_range);
         if (!AC.on) tune_read(datadir);
     }
@@ -1156,7 +1375,14 @@ void uwaudio_tune(const char *datadir)
         float want = clampf(setting_float(datadir, "acoustics_echo_ms", 2000.0f) / 1000.0f, 0.25f, 6.0f);
         if (uwst_length(want)) hi_stop(), hi_start();
     }
-    if (HI.on) uwst_tile_m(AC.tile_m), A.alSourcei(HI.src, AL_DIRECT_CHANNELS_SOFT, TU.direct), A.alGetError();
+    if (HI.on) {
+        int err;
+        uwst_tile_m(AC.tile_m), A.alSourcei(HI.src, AL_DIRECT_CHANNELS_SOFT, TU.direct), err = A.alGetError();
+        if (err) {
+            static int said;
+            if (!said++) RLOG_W("audio", "the echo stream's setup: OpenAL error 0x%x (it may be placed by OpenAL as well)", (unsigned)err);
+        }
+    }
     ac_room();
     if (AC.have_room) ac_reverb_apply(1);
     for (int k = 0; k < NSRC; k++) {   /* the muffling's new strength at once */
@@ -1183,10 +1409,12 @@ float uwaudio_acoustic_decay(void) { return AC.on && AC.have_room ? AC.cur[0] : 
 /* the context made: the sources, the original's falloff */
 static int start(const char *datadir)
 {
-    if (!ctx || !A.alcMakeContextCurrent(ctx)) return 0;
+    int err;
+    if (!ctx) return 0;
+    if (!A.alcMakeContextCurrent(ctx)) { RLOG_E("audio", "OpenAL did not make its context current"); return 0; }
     A.alGetError();
     A.alGenSources(NSRC, src);
-    if (A.alGetError()) return 0;
+    if ((err = A.alGetError()) != 0) { RLOG_E("audio", "OpenAL gave no %d sources (error 0x%x)", NSRC, (unsigned)err); return 0; }
     A.alDistanceModel(AL_LINEAR_DISTANCE_CLAMPED);
     for (int i = 0; i < NSRC; i++) {
         A.alSourcef(src[i], AL_REFERENCE_DISTANCE, 1.0f);   /* full within a tile (play_effect's dist < 8) */
@@ -1198,9 +1426,8 @@ static int start(const char *datadir)
     snprintf(sfx_dir, sizeof sfx_dir, "%s" UWOS_SEP "sfx", datadir ? datadir : ".");
     memset(buf, 0, sizeof buf), memset(buf_state, 0, sizeof buf_state);
     memset(step_buf, 0, sizeof step_buf), memset(step_state, 0, sizeof step_state);
-    /* (2026-11-16, the review: a data\sfx\NNN.wav was found at the effect's first play and never told to the game,
-       so without the Roland's renderings, no ROMs or another device, the wav and the driver's own copy both played.
-       Looked for now, and the effects that have one are ours whatever the device: uwaudio_taken) */
+    /* (the data\sfx\NNN.wav files are looked for now and told to the game, uwaudio_taken: the effects that have one
+       are ours whatever the device, so the wav and the music driver's own copy never both play) */
     wav_mask = 0;
     for (int fx = 0; fx < 64; fx++) {
         char wp[MAX_PATH];
@@ -1221,6 +1448,7 @@ static int start(const char *datadir)
         step_vol = clampf(setting_float(datadir, "fx_step_volume", 80.0f) / 100.0f, 0, 2.0f);
         step_echo = clampf(setting_float(datadir, "fx_step_echo", 50.0f) / 100.0f, 0, 2.0f);
         step_plain = setting_get(datadir, "fx_step_plain", 0) != 0;
+        own_step_vol = clampf(setting_float(datadir, "fx_own_step_volume", 100.0f) / 100.0f, 0, 2.0f);
     }
     tune_read(datadir);
     A.alListenerf(AL_GAIN, listener_gain());   /* (again by hrtf_read, once the device says whether HRTF is on) */
@@ -1230,15 +1458,20 @@ static int start(const char *datadir)
     return 1;
 }
 
+/* the loopback WAV closed, its header written over the 44 zero bytes */
 static void lb_close(void)
 {
     if (lbfile) {   /* the header over the 44 zero bytes written at the start */
         unsigned n = lbframes * 4, h[11] = {0x46464952, 36 + n, 0x45564157, 0x20746d66, 16, 0x00020001, lbrate, lbrate * 4, 0x00100004, 0x61746164, n};
-        fseek(lbfile, 0, SEEK_SET), fwrite(h, 4, 11, lbfile), fclose(lbfile), lbfile = NULL;
-        fprintf(stderr, "fx: loopback: %u frames written\n", lbframes);
+        size_t wrote;
+        int closed;
+        fseek(lbfile, 0, SEEK_SET), wrote = fwrite(h, 4, 11, lbfile), closed = fclose(lbfile), lbfile = NULL;
+        if (wrote != 11 || closed != 0) RLOG_E("audio", "the loopback WAV's header not written: %s", rlog_errno());
+        RLOG_I("audio", "loopback: %u frames written", lbframes);
     }
 }
 
+/* everything stopped and released: Munt, the loopback file, the sources, the acoustics, the buffers, the context */
 static void stop_all(void)
 {
     mt_stop();
@@ -1267,6 +1500,7 @@ static void stop_all(void)
     ctx = dev = NULL, on = 0;
 }
 
+/* the module started on the sound card (a hidden run: only the checks' loopback or null device); 1 when it is on */
 int uwaudio_init(const char *bindir, const char *datadir)
 {
     if (on) return 1;
@@ -1281,10 +1515,36 @@ int uwaudio_init(const char *bindir, const char *datadir)
         const char *lb = getenv("UWPORT_FX_LOOPBACK");
         if (lb && *lb && uwaudio_init_loopback(bindir, datadir, 48000) && (lbfile = fopen(lb, "wb")) != NULL) {
             static const unsigned char zero[44];
-            fwrite(zero, 1, 44, lbfile), lbframes = 0, lbrate = 48000;
+            if (fwrite(zero, 1, 44, lbfile) != 44) RLOG_E("audio", "cannot write %s: %s", lb, rlog_errno());
+            lbframes = 0, lbrate = 48000;
             QueryPerformanceFrequency(&lbfreq), QueryPerformanceCounter(&lbtime);
             fprintf(stderr, "fx: audio on (OpenAL Soft loopback to %s)\n", lb);
             return 1;
+        }
+        if (lb && *lb && on && !lbfile) RLOG_E("audio", "cannot open %s: %s (no loopback WAV)", lb, rlog_errno());
+        /* UWPORT_FX_NULLDEV=1 with ALSOFT_DRIVERS=null: OpenAL Soft's "No Output"
+           device, which mixes in real time on its own thread and plays nothing, so a hidden run's sound runs as on a
+           sound card (the echoes' feed and simulation threads, their dry-outs) and nothing is heard. Anything else
+           named by OpenAL is closed again at once. */
+        {
+            const char *nd = getenv("UWPORT_FX_NULLDEV"), *drv = getenv("ALSOFT_DRIVERS"), *name;
+            if (nd && *nd == '1' && drv && !strcmp(drv, "null")) {
+                int attrs[16];
+                dev = A.alcOpenDevice(NULL);
+                name = dev ? A.alcGetString(dev, 0x1013 /* ALC_ALL_DEVICES_SPECIFIER: "OpenAL Soft on No Output" */) : NULL;
+                if (dev && (!name || !strstr(name, "No Output"))) {
+                    fprintf(stderr, "fx: audio off (UWPORT_FX_NULLDEV: OpenAL opened \"%s\", not its null device)\n", name ? name : "?");
+                    A.alcCloseDevice(dev), dev = NULL;
+                }
+                AC.rate = 0;
+                ctx = dev ? A.alcCreateContext(dev, context_attrs(datadir, NULL, attrs)) : NULL;
+                if (ctx && start(datadir)) {
+                    fprintf(stderr, "fx: audio on (OpenAL Soft's null device, real time, nothing heard)\n");
+                    hrtf_read();
+                    return 1;
+                }
+                stop_all();
+            }
         }
         if (on) stop_all();
         fprintf(stderr, "fx: audio off (a hidden run)\n");
@@ -1306,6 +1566,7 @@ int uwaudio_init(const char *bindir, const char *datadir)
     return 1;
 }
 
+/* the module started on OpenAL Soft's loopback device (the checks render it by hand: uwaudio_render) */
 int uwaudio_init_loopback(const char *bindir, const char *datadir, int rate)
 {
     PFopen lb;
@@ -1315,14 +1576,14 @@ int uwaudio_init_loopback(const char *bindir, const char *datadir, int rate)
         fprintf(stderr, "fx: audio off (no soft_oal.dll)\n");
         return 0;
     }
-    if (!A.alcIsExtensionPresent(NULL, "ALC_SOFT_loopback")) return 0;
+    if (!A.alcIsExtensionPresent(NULL, "ALC_SOFT_loopback")) { RLOG_W("audio", "no loopback device in this OpenAL (ALC_SOFT_loopback)"); return 0; }
     lb = (PFopen)A.alcGetProcAddress(NULL, "alcLoopbackOpenDeviceSOFT");
     A.render = (PFrender)A.alcGetProcAddress(NULL, "alcRenderSamplesSOFT");
-    if (!lb || !A.render) return 0;
+    if (!lb || !A.render) { RLOG_W("audio", "no loopback device in this OpenAL (its functions)"); return 0; }
     dev = lb(NULL);
     AC.rate = rate;
     ctx = dev ? A.alcCreateContext(dev, context_attrs(datadir, fmt, attrs)) : NULL;
-    if (!ctx || !start(datadir)) { stop_all(); return 0; }
+    if (!ctx || !start(datadir)) { RLOG_W("audio", "the loopback device did not start"); stop_all(); return 0; }
     hrtf_read();
     return 1;
 }
@@ -1335,7 +1596,9 @@ static void render_frames(short *stereo, int frames)
     while (frames > 0) {
         int k = frames > AC_SLICE ? AC_SLICE : frames;
         ac_step((float)k / (float)AC.rate);
+        double r0 = tm_on > 0 ? tm_now() : 0;
         A.render(dev, stereo, k);
+        if (tm_on > 0) tm_render += tm_now() - r0, tm_say((float)k / (float)AC.rate);
         stereo += 2 * k, frames -= k;
     }
 }
@@ -1360,6 +1623,7 @@ int uwaudio_playing(void)
     return n;
 }
 
+/* the listener (the camera) moved: OpenAL's, Steam Audio's and the acoustics' */
 void uwaudio_listener(float x, float y, float z, float yaw)
 {
     float o[6] = {sinf(yaw), 0, -cosf(yaw), 0, 1, 0};   /* at (north is -z in OpenAL's frame), up */
@@ -1379,11 +1643,22 @@ static int wav_load(const char *path, unsigned *out)
     FILE *f = fopen(path, "rb");
     unsigned char *d;
     long n;
-    int ok = 0, ch = 0, bits = 0, rate = 0;
-    if (!f) return 0;
+    int ok = 0, ch = 0, bits = 0, rate = 0, al_said = 0;
+    size_t got;
+    if (!f) {
+        if (errno != ENOENT) RLOG_W("audio", "cannot open %s: %s", path, rlog_errno());   /* (none: no sound of the user's) */
+        return 0;
+    }
     fseek(f, 0, SEEK_END), n = ftell(f), fseek(f, 0, SEEK_SET);
-    if (n < 44 || n > (64 << 20) || !(d = malloc((size_t)n))) { fclose(f); return 0; }
-    if (fread(d, 1, (size_t)n, f) == (size_t)n && !memcmp(d, "RIFF", 4) && !memcmp(d + 8, "WAVE", 4)) {
+    if (n < 44 || n > (64 << 20) || !(d = malloc((size_t)n))) {
+        if (n >= 44 && n <= (64 << 20)) RLOG_E("audio", "out of memory (%ld bytes) for %s", n, path);
+        else RLOG_W("audio", "%s: %ld bytes, not 44 bytes to 64 MB (not played)", path, n);
+        fclose(f);
+        return 0;
+    }
+    got = fread(d, 1, (size_t)n, f);
+    if (got != (size_t)n) RLOG_W("audio", "%s: read %zu of %ld bytes: %s", path, got, n, rlog_errno());
+    if (got == (size_t)n && !memcmp(d, "RIFF", 4) && !memcmp(d + 8, "WAVE", 4)) {
         long p = 12;
         while (p + 8 <= n) {
             unsigned len = rd32(d + p + 4);
@@ -1393,18 +1668,23 @@ static int wav_load(const char *path, unsigned *out)
                 ch = d[p + 10] | d[p + 11] << 8, rate = (int)rd32(d + p + 12), bits = d[p + 22] | d[p + 23] << 8;
             } else if (!memcmp(d + p, "data", 4) && ch && rate > 0 && (bits == 8 || bits == 16) && (ch == 1 || ch == 2)) {
                 int fmt = ch == 1 ? (bits == 8 ? AL_FORMAT_MONO8 : AL_FORMAT_MONO16) : (bits == 8 ? AL_FORMAT_STEREO8 : AL_FORMAT_STEREO16);
+                int err;
                 A.alGetError();
                 A.alGenBuffers(1, out);
                 A.alBufferData(*out, fmt, d + p + 8, (int)len, rate);
-                ok = A.alGetError() == 0;
+                err = A.alGetError(), ok = err == 0;
                 if (ok && ch == 1 && bits == 16) pcm_keep(*out, (const short *)(d + p + 8), (int)len / 2, rate, 1);
-                if (!ok) A.alDeleteBuffers(1, out);
-                if (ok && ch == 2) fprintf(stderr, "fx: %s is stereo: OpenAL plays it unplaced\n", path);
+                if (!ok) {
+                    A.alDeleteBuffers(1, out);
+                    RLOG_W("audio", "OpenAL did not take %s (error 0x%x)", path, (unsigned)err), al_said = 1;
+                }
+                if (ok && ch == 2) RLOG_I("audio", "%s is stereo: OpenAL plays it unplaced", path);
                 break;
             }
             p += 8 + len + (len & 1);
         }
     }
+    if (!ok && got == (size_t)n && !al_said) RLOG_W("audio", "%s: not a PCM WAVE of 8 or 16 bits, mono or stereo (not played)", path);
     free(d), fclose(f);
     return ok;
 }
@@ -1417,12 +1697,18 @@ static unsigned rend_buffer(Rend *r)
         A.alGetError();
         A.alGenBuffers(1, &r->albuf);
         A.alBufferData(r->albuf, AL_FORMAT_MONO16, r->pcm, r->frames * 2, (int)M.rate);
-        if (A.alGetError() != 0) A.alDeleteBuffers(1, &r->albuf), r->albuf = 0;
+        int err = A.alGetError();
+        if (err != 0) {
+            static int said;
+            if (!said++) RLOG_W("audio", "OpenAL did not take a Roland rendering (error 0x%x): the music driver's copy plays", (unsigned)err);
+            A.alDeleteBuffers(1, &r->albuf), r->albuf = 0;
+        }
         else pcm_keep(r->albuf, r->pcm, r->frames, (int)M.rate, 0);
     }
     return r->albuf;
 }
 
+/* the stereo copy of mono buffer al (made on first use, 64 at most); 0 when there is none */
 static unsigned plain_stereo(unsigned al)
 {
     for (int i = 0; i < nplain; i++) if (plain_of[i].mono == al) return plain_of[i].stereo;
@@ -1431,13 +1717,23 @@ static unsigned plain_stereo(unsigned al)
         if (pcm_of[i].al == al) {
             unsigned b = 0;
             short *st = malloc(sizeof *st * 2 * (size_t)pcm_of[i].frames);
-            if (!st) return 0;
+            if (!st) {
+                static int said;
+                if (!said++) RLOG_E("audio", "out of memory (%zu bytes): the plain step placed as usual", sizeof *st * 2 * (size_t)pcm_of[i].frames);
+                return 0;
+            }
             for (int k = 0; k < pcm_of[i].frames; k++) st[2 * k] = st[2 * k + 1] = pcm_of[i].pcm[k];
             A.alGetError();
             A.alGenBuffers(1, &b);
             A.alBufferData(b, AL_FORMAT_STEREO16, st, pcm_of[i].frames * 4, pcm_of[i].rate);
             free(st);
-            if (A.alGetError() != 0) { A.alDeleteBuffers(1, &b); return 0; }
+            int err = A.alGetError();
+            if (err != 0) {
+                static int said;
+                if (!said++) RLOG_W("audio", "OpenAL did not take a plain step's stereo copy (error 0x%x): placed as usual", (unsigned)err);
+                A.alDeleteBuffers(1, &b);
+                return 0;
+            }
             plain_of[nplain].mono = al, plain_of[nplain++].stereo = b;
             return b;
         }
@@ -1459,65 +1755,73 @@ int uwaudio_rendered(int fx, int vel)
     return on && fx >= 0 && fx < 64 && vel >= 0 && vel < 128 && rend[fx][vel].state == 2;
 }
 
-void uwaudio_event(int kind, float x, float y, float z, int fx, int vol)
+/* the game silenced effect fx (kill_effect): our copy stops too (the water, 25 s long). The game ends ONE of its four
+   slots, so only the copy started longest ago and still sounding goes; one that has rung out by itself is only
+   forgotten. */
+static void event_stop(int fx)
 {
-    char p[MAX_PATH];
-    int k = -1, st, base = -1, by_vel = 0, pan = (kind >> 16 & 0xFF) - 1;   /* (pan: play_effect_here's, -1 none) */
-    unsigned use = 0;
-    float g = 1.0f;
-    if (!on || fx < 0 || fx > 255) return;
-    if ((kind & 0xFF) == FX_STOP) {   /* the game silenced it (kill_effect): our copy stops too (the water, 25 s long) */
-        if (lbfile) fprintf(stderr, "fx: al stop %d at frame %u\n", fx, lbframes);   /* (the checks' window) */
-        /* (2026-11-16, the review: the game ends ONE of its four slots, and every copy of that effect we played was
-           stopped. The one started longest ago and still sounding goes, as the game's slots are given in turn; one
-           that has rung out by itself is only forgotten.) */
-        {
-            int old = -1;
-            for (int i = 0; i < NSRC; i++)
-                if (src_fx[i] == fx) {
-                    A.alGetSourcei(src[i], AL_SOURCE_STATE, &st);
-                    if (st != AL_PLAYING) src_fx[i] = -1;
-                    else if (old < 0 || src_used[i] < src_used[old]) old = i;
-                }
-            if (old >= 0) {
-                A.alSourceStop(src[old]);
-                src_fx[old] = -1;
-                if (HI.on && HI.voice[old] >= 0) uwst_end(HI.voice[old]), HI.voice[old] = -1;
+    int st;
+    if (lbfile) fprintf(stderr, "fx: al stop %d at frame %u\n", fx, lbframes);   /* (the checks' window) */
+    if (fx == 0) {   /* (the swimming's water sound, stopped by the game: out of the water, its 24 s restart) */
+        static int said;
+        if (said++ < 20) RLOG_I("audio", "the water sound (effect 0) stopped by the game");
+    }
+    {
+        int old = -1;
+        for (int i = 0; i < NSRC; i++)
+            if (src_fx[i] == fx) {
+                A.alGetSourcei(src[i], AL_SOURCE_STATE, &st);
+                if (st != AL_PLAYING) src_fx[i] = -1;
+                else if (old < 0 || src_used[i] < src_used[old]) old = i;
             }
-        }
-        return;
-    }
-    if (kind & FX_MUTED) return;
-    if (fx < M.nsounds) base = M.sounds[1 + fx * 5 + 2];
-    if (vol > 0x7F) vol = 0x7F;
-    if (x >= 0) {
-        /* play_effect's distance (2026-11-15, "I could hear the rat behind the door well before I got near it"):
-           nothing beyond six tiles (dist > 0x30, in eighths of a tile), and from one tile to six it is the NOTE'S
-           VELOCITY that falls (v * (0x30 - dist) / 0x28), fixed when the note starts. We had OpenAL fade the level
-           by that line instead, and the Roland's notes fall far faster than their velocity (effect 4: 72 -> 609,
-           0x7F -> 3603, about the cube): a rat's steps five tiles off came 10 dB under the player's own where the
-           original plays them at velocity 12 of 64. So: the rendering at the original's velocity (by_vel), and no
-           fall of OpenAL's on top. Without a velocity (no SOUNDS.DAT, vol -1 and no base) OpenAL's line as before. */
-        float dx = x - lis[0], dz = z - lis[2];
-        int dist = (int)(sqrtf(dx * dx + dz * dz) * 8.0f);
-        int far8 = hear_range * 8;   /* (6 tiles: the original's 0x30) */
-        if (dist > far8) return;
-        if (vol < 0 && base >= 0) vol = base;
-        if (vol >= 0) {
-            by_vel = 1;
-            if (dist >= 8) vol = vol * (far8 - dist) / (far8 - 8);
-            if (vol <= 0) return;   /* (a note at velocity 0 is no note) */
+        if (old >= 0) {
+            A.alSourceStop(src[old]);
+            src_fx[old] = -1;
+            if (HI.on && HI.voice[old] >= 0) uwst_end(HI.voice[old]), HI.voice[old] = -1;
         }
     }
-    /* a footstep, by the floor under the one who steps (Task 6) */
+}
+
+/* play_effect's distance, for an effect at a place (x >= 0): nothing beyond the hearing range (six tiles: dist > 0x30,
+   in eighths of a tile), and from one tile to the range it is the NOTE'S VELOCITY that falls (v * (0x30 - dist) /
+   0x28), fixed when the note starts. The Roland's notes fall far faster than their velocity (about its cube), so the
+   rendering at the original's velocity is used (*by_vel) and OpenAL adds no fall of its own. Without a velocity (no
+   SOUNDS.DAT, vol -1 and no base) OpenAL's line is used instead. 0: the effect is not heard at all. */
+static int event_distance(float x, float z, int base, int *vol, int *by_vel)
+{
+    float dx = x - lis[0], dz = z - lis[2];
+    int dist = (int)(sqrtf(dx * dx + dz * dz) * 8.0f);
+    int far8 = hear_range * 8;   /* (6 tiles: the original's 0x30) */
+    if (dist > far8) return 0;
+    if (*vol < 0 && base >= 0) *vol = base;
+    if (*vol >= 0) {
+        *by_vel = 1;
+        if (dist >= 8) *vol = *vol * (far8 - dist) / (far8 - 8);
+        if (*vol <= 0) return 0;   /* (a note at velocity 0 is no note) */
+    }
+    return 1;
+}
+
+/* a footstep (effects 1 and 2), by the floor under the one who steps: its material preset (*fmat), NULL when the
+   effect is no footstep, footsteps by floor are off, or the player's own step plays plain */
+static const UwaMaterial *event_floor(int fx, float x, float y, float z, int plain, int *fmat)
+{
     const UwaMaterial *floor = NULL;
-    int fmat = -1;
-    int plain = step_plain && (fx == 1 || fx == 2) && x < 0;   /* the player's own step, as the rendering is */
     if ((fx == 1 || fx == 2) && footsteps && !plain) {
         float at[3] = {x < 0 ? lis[0] : x, x < 0 ? lis[1] : y, x < 0 ? lis[2] : z};
-        fmat = uwac_floor_mat(at);
-        if (fmat >= 0 && fmat < STEP_PRESETS) floor = uwacmat_get(fmat);
+        *fmat = uwac_floor_mat(at);
+        if (*fmat >= 0 && *fmat < STEP_PRESETS) floor = uwacmat_get(*fmat);
     }
+    return floor;
+}
+
+/* the OpenAL buffer effect fx plays from, first found of: the user's wav for this floor, the user's NNN.wav, Munt's
+   rendering (for the floor's note, at the game's velocity, or the effect's own one); *g the gain that stands for a
+   velocity no rendering has yet. 0: nothing to play (the music driver's copy plays it). */
+static unsigned event_buffer(int fx, int vol, int base, const UwaMaterial *floor, int fmat, float *g)
+{
+    char p[MAX_PATH];
+    unsigned use = 0;
     if (floor) {   /* the user's own sound for that floor */
         int i = (fx - 1) * STEP_PRESETS + fmat;
         if (!step_state[i]) {
@@ -1531,10 +1835,10 @@ void uwaudio_event(int kind, float x, float y, float z, int fx, int vol)
         buf_state[fx] = wav_load(p, &buf[fx]) ? 1 : -1;
     }
     if (use) {   /* (the floor's own wav: the velocity as a gain by the same guess) */
-        if (vol >= 0 && base > 0 && vol != base) g = powf((float)vol / (float)base, VEL_GAIN);
+        if (vol >= 0 && base > 0 && vol != base) *g = powf((float)vol / (float)base, VEL_GAIN);
     } else if (buf_state[fx] == 1) {   /* a wav of the user's: the velocity as a gain by the guess below */
         use = buf[fx];
-        if (vol >= 0 && base > 0 && vol != base) g = powf((float)vol / (float)base, VEL_GAIN);
+        if (vol >= 0 && base > 0 && vol != base) *g = powf((float)vol / (float)base, VEL_GAIN);
     } else if (fx < 64 && base >= 0 && !stand_down && (InterlockedOr64(&M.ready, 0) >> fx & 1)) {   /* Munt's renderings */
         if (floor && floor->step) {   /* the note moved for this floor: its own rendering (until it is made, the usual one) */
             int v = vol >= 0 ? vol : base;
@@ -1546,13 +1850,19 @@ void uwaudio_event(int kind, float x, float y, float z, int fx, int vol)
         else
         if (vol >= 0 && vol != base) {   /* the game's velocity: its own rendering, or until that is made the base one scaled by a guess */
             use = rend_buffer(&rend[fx][vol]);
-            if (!use) rend_ask(fx, vol), g = powf((float)vol / (float)(base > 0 ? base : 1), VEL_GAIN);
+            if (!use) rend_ask(fx, vol), *g = powf((float)vol / (float)(base > 0 ? base : 1), VEL_GAIN);
         }
         if (!use) use = rend_buffer(&rend[fx][base]);
         if (use) buf_state[fx] = 2;
     }
-    if (!use) return;
-    /* a free source, else the one started longest ago */
+    return use;
+}
+
+/* a free source for effect fx, else the one started longest ago (stopped: a sound still playing cut short, which a
+   long one such as the swimming's water, effect 0, 25 s, often is) */
+static int event_source(int fx)
+{
+    int k = -1, st;
     for (int i = 0; i < NSRC && k < 0; i++) {
         A.alGetSourcei(src[i], AL_SOURCE_STATE, &st);
         if (st != AL_PLAYING) k = i;
@@ -1560,20 +1870,36 @@ void uwaudio_event(int kind, float x, float y, float z, int fx, int vol)
     if (k < 0) {
         k = 0;
         for (int i = 1; i < NSRC; i++) if (src_used[i] < src_used[k]) k = i;
+        {   /* (a sound cut short for a new one: in the log) */
+            static int said;
+            if (said++ < 20) RLOG_W("audio", "all %d sources busy: effect %d (still playing) cut short for effect %d", NSRC, src_fx[k], fx);
+        }
         A.alSourceStop(src[k]);
+    }
+    return k;
+}
+
+/* source k given effect fx's buffer, its level (the footsteps' own, the player's own steps' on top) and its place:
+   at the listener for play_effect_here (x < 0, turned a little to the side its pan says), else where the game
+   put it. Returns the gain given. */
+static float event_source_set(int k, int fx, float x, float y, float z, int pan, int vol, int by_vel, unsigned use, float g)
+{
+    if (fx == 0) {   /* (the swimming's water sound: its starts in the log, the stops in event_stop) */
+        static int said;
+        if (said++ < 20) RLOG_I("audio", "the water sound (effect 0) starts");
     }
     src_used[k] = ++src_clock, src_fx[k] = fx;
     if (lbfile) fprintf(stderr, "fx: al %d at frame %u (%.2f, %.2f) from (%.2f, %.2f) vol %d gain %.2f\n", fx, lbframes, x, z, lis[0], lis[2], vol, g);   /* (the checks' window) */
     A.alSourcei(src[k], AL_BUFFER, (int)use);
     A.alSourcei(src[k], AL_LOOPING, 0);
     if (fx == 1 || fx == 2) g *= step_vol;   /* (a footstep's own level) */
+    if ((fx == 1 || fx == 2) && x < 0) g *= own_step_vol;   /* (the player's own steps, play_effect_here's, on their own row) */
     A.alSourcef(src[k], AL_GAIN, g > 4.0f ? 4.0f : g);
     A.alSourcef(src[k], AL_ROLLOFF_FACTOR, by_vel ? 0.0f : 1.0f);   /* (the distance is in the velocity already) */
     if (x < 0) {   /* play_effect_here: at the listener */
-        /* its pan (2026-11-15, "not playing both feet sounds"): the player's two feet are play_effect_here(1, 0x48)
-           and (2, 0x38), a little right and a little left of the middle (0x40); ours had both dead centre, one
-           sound. The side is the pan's share of the way to a side, a little ahead (a direction is all OpenAL
-           needs; a relative source ignores the listener's turn). 0x40 and no pan: at the listener as before. */
+        /* its pan: the player's two feet are play_effect_here(1, 0x48) and (2, 0x38), a little right and a little
+           left of the middle (0x40). The side is the pan's share of the way to a side, a little ahead (a direction
+           is all OpenAL needs; a relative source ignores the listener's turn). 0x40 and no pan: at the listener. */
         float s = pan >= 0 ? ((float)pan - 64.0f) / 64.0f * feet_spread : 0;
         s = s < -1 ? -1 : s > 1 ? 1 : s;
         A.alSourcei(src[k], AL_SOURCE_RELATIVE, 1);
@@ -1583,12 +1909,23 @@ void uwaudio_event(int kind, float x, float y, float z, int fx, int vol)
         A.alSourcei(src[k], AL_SOURCE_RELATIVE, 0);
         A.alSource3f(src[k], AL_POSITION, x, y, -z);
     }
-    ac_source_start(k, x, y, z, x < 0);   /* (the acoustics: its own first filter, before it sounds) */
-    /* (a plain step: the source's samples straight to the two channels, no HRTF's placing, no filter, no reverb) */
+    return g;
+}
+
+/* after the acoustics' first filter: a plain step (fx_step_plain) gets the stereo copy of its samples straight to the
+   two channels (no HRTF, no filter, no reverb, no echoes); any other sound gets its Steam Audio voice (Acoustics
+   High: its echoes, and on headphones the sound itself, our OpenAL copy then silent) */
+static void event_plain_or_echoes(int k, int fx, float x, float y, float z, int pan, int plain, unsigned use, float g)
+{
     {
         unsigned st = plain ? plain_stereo(use) : 0;
         if (!st) plain = 0;
-        A.alSourcei(src[k], AL_DIRECT_CHANNELS_SOFT_, plain ? 1 : 0), A.alGetError();
+        int err;
+        A.alSourcei(src[k], AL_DIRECT_CHANNELS_SOFT_, plain ? 1 : 0), err = A.alGetError();
+        if (err) {
+            static int said;
+            if (!said++) RLOG_W("audio", "OpenAL error 0x%x while starting effect %d (it plays on)", (unsigned)err, fx);
+        }
         if (plain) {
             /* both channels whole: at the level a sound in the middle has without the HRTF (0.707 a side at the
                stereo makeup), whatever the makeup in force */
@@ -1612,9 +1949,35 @@ void uwaudio_event(int kind, float x, float y, float z, int fx, int vol)
         if (x < 0 && HI.on && HI.voice[k] >= 0) uwst_relative(HI.voice[k], sd * 0.33f, fw * 0.33f);
         if (took) A.alSourcef(src[k], AL_GAIN, 0);
     }
+}
+
+/* the game plays (or stops) effect fx (fxevent.c, from SOUND.C's play_effect / play_effect_here): x < 0 at the
+   listener, else at (x, y, z); vol the note's velocity (-1: the effect's own); kind's low byte FX_STOP or the
+   event's kind, FX_MUTED when the game's effects are off, bits 16-23 play_effect_here's pan plus one (0 none) */
+void uwaudio_event(int kind, float x, float y, float z, int fx, int vol)
+{
+    int k, base = -1, by_vel = 0, pan = (kind >> 16 & 0xFF) - 1;   /* (pan: play_effect_here's, -1 none) */
+    unsigned use;
+    float g = 1.0f;
+    if (!on || fx < 0 || fx > 255) return;
+    if ((kind & 0xFF) == FX_STOP) { event_stop(fx); return; }
+    if (kind & FX_MUTED) return;
+    if (fx < M.nsounds) base = M.sounds[1 + fx * 5 + 2];
+    if (vol > 0x7F) vol = 0x7F;
+    if (x >= 0 && !event_distance(x, z, base, &vol, &by_vel)) return;
+    int fmat = -1;
+    int plain = step_plain && (fx == 1 || fx == 2) && x < 0;   /* the player's own step, as the rendering is */
+    const UwaMaterial *floor = event_floor(fx, x, y, z, plain, &fmat);
+    use = event_buffer(fx, vol, base, floor, fmat, &g);
+    if (!use) return;
+    k = event_source(fx);
+    g = event_source_set(k, fx, x, y, z, pan, vol, by_vel, use, g);
+    ac_source_start(k, x, y, z, x < 0);   /* (the acoustics: its own first filter, before it sounds) */
+    event_plain_or_echoes(k, fx, x, y, z, pan, plain, use, g);
     A.alSourcePlay(src[k]);
 }
 
+/* everything stopped and soft_oal.dll let go */
 void uwaudio_shutdown(void)
 {
     stop_all();
@@ -1663,7 +2026,10 @@ void uwaudio_pump(void)
     while (frames) {
         unsigned k = frames > 4096 ? 4096 : frames;
         render_frames(blk, (int)k);
-        fwrite(blk, 4, k, lbfile);
+        if (fwrite(blk, 4, k, lbfile) != k) {
+            static int said;
+            if (!said++) RLOG_E("audio", "the loopback WAV: write failed: %s", rlog_errno());
+        }
         lbframes += k, frames -= k;
     }
 }

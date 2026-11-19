@@ -43,6 +43,7 @@ typedef unsigned long VisualID;
 #include <vulkan/vulkan_wayland.h>
 static bool lx_wayland(void) { const char *d = SDL_GetCurrentVideoDriver(); return d && !strcmp(d, "wayland"); }
 #endif
+#include "par.h"   /* (2026-11-18: upload_tex's copies on several threads) */
 
 /* present.hlsl as SPIR-V (buildview.cmd: DXC -spirv, b0 at binding 0, tN at 16 + N) */
 #include "present_ps_spv.h"
@@ -121,6 +122,10 @@ static struct {
     unsigned frame;
     char gpu[256], status[512];
 } V;
+/* (2026-11-18) the picture cards as render_set_sprites was given them, in the CPU's own memory: the ray tracing's
+ * corners (render_vk_rt.h's cards_as_build) are read from here. V.sprite_vb is host-visible and uncached (written
+ * fast, read slowly: every read goes over to the GPU's memory): reading the corners from it took 6.4 ms a frame. */
+static Vertex *sprite_cpu;
 
 static int g_vk_messages;          /* the validation layer's warnings and errors, this run */
 static bool g_ngx;                 /* the driver's NGX is loaded (DLSS): its extensions wanted (render_init) */
@@ -675,6 +680,30 @@ static bool start_present(void)
 /* ---------------------------------------------------------------- the scene (M2) */
 /* a texture from the CPU (bpt bytes a texel), copied in the command buffer now open; stage: its upload buffer, freed
    by the caller once the copy has run. The image is left for the shaders to read. */
+/* (2026-11-18) a large copy in 4 MB pieces on par_for's threads (the staging memory is write-combined: one thread
+   could not fill it as fast as several) */
+typedef struct {
+    u8 *dst;
+    const u8 *src;
+    size_t n;
+} CopyJob;
+#define COPY_PIECE ((size_t)4 << 20)
+static void copy_job(void *ctx, int i)
+{
+    CopyJob *c = ctx;
+    size_t at = (size_t)i * COPY_PIECE, n = c->n - at < COPY_PIECE ? c->n - at : COPY_PIECE;
+    memcpy(c->dst + at, c->src + at, n);
+}
+static void copy_par(void *dst, const void *src, size_t n)
+{
+    if (n < 2 * COPY_PIECE) {
+        memcpy(dst, src, n);
+        return;
+    }
+    CopyJob c = {dst, src, n};
+    par_for((int)((n + COPY_PIECE - 1) / COPY_PIECE), copy_job, &c);
+}
+
 static bool upload_tex(Img *m, int w, int h, VkFormat fmt, const u8 *px, int bpt, Buf *stage)
 {
     const VkMemoryPropertyFlags host = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
@@ -682,7 +711,7 @@ static bool upload_tex(Img *m, int w, int h, VkFormat fmt, const u8 *px, int bpt
     if (!make_img(m, w, h, fmt, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT) ||
         !make_buf(stage, n, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, host, 0))
         return logf_("render: out of GPU memory\n"), false;
-    memcpy(stage->ptr, px, n);
+    copy_par(stage->ptr, px, n);
     barrier(m->img, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     VkBufferImageCopy bc = {.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, .imageExtent = {(uint32_t)w, (uint32_t)h, 1}};
     vkCmdCopyBufferToImage(V.cmd, stage->buf, m->img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &bc);
@@ -928,6 +957,8 @@ void render_set_sprites(const Vertex *v, int n)
     if (!V.up) return;
     V.nsprites = MAX(0, MIN(n, RENDER_MAX_SPRITE_VERTS));
     memcpy(V.sprite_vb.ptr, v, sizeof(Vertex) * (size_t)V.nsprites);
+    if (!sprite_cpu) sprite_cpu = malloc(sizeof(Vertex) * RENDER_MAX_SPRITE_VERTS);
+    if (sprite_cpu) memcpy(sprite_cpu, v, sizeof(Vertex) * (size_t)V.nsprites);
 }
 
 /* the lights' fade by distance (render.c's twin; common.hlsli light_fade) */
@@ -1127,9 +1158,111 @@ void render_shutdown(void)
 }
 
 /* ---------------------------------------------------------------- a frame */
+/* UWVIEW_PERF=1 (2026-11-18, the speed's research): the GPU's time by the frame's stages, from timestamps, and the
+ * CPU's, every 120 frames to the log. Nothing is made or asked when it is off. */
+enum { PF_START, PF_UPLOAD, PF_RT, PF_FX, PF_VOL, PF_SCENE, PF_VOLDRAW, PF_DLSS, PF_END, PF_N };
+static const char *const PF_NAME[PF_N] = {"start", "uploads", "ray tracing structures and probes", "particles", "fog and smoke's step",
+                                          "scene", "fog and smoke drawn", "DLSS", "present pass and copy"};
+static struct {
+    int on, asked;
+    VkQueryPool pool;
+    float tick_ns;
+    PFN_vkCmdWriteTimestamp2 ts;
+    PFN_vkCmdResetQueryPool reset;
+    PFN_vkGetQueryPoolResults get;
+    bool marked[PF_N];
+    double cpu_at[PF_N], cpu[PF_N];
+    double gpu[PF_N], gpu_total, gpu_worst, cpu_acq, cpu_rec, cpu_wait, cpu_pres, cpu_worst;
+    int n;
+} PF;
+static double pf_ms(void)
+{
+#ifdef _WIN32
+    LARGE_INTEGER c, f;
+    QueryPerformanceCounter(&c), QueryPerformanceFrequency(&f);
+    return (double)c.QuadPart * 1000.0 / (double)f.QuadPart;
+#else
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return (double)t.tv_sec * 1000.0 + (double)t.tv_nsec / 1e6;
+#endif
+}
+static void pf_begin(void)
+{
+    if (!PF.asked) { PF.asked = 1;
+        const char *e = getenv("UWVIEW_PERF");
+        PF.on = e && *e && *e != '0';
+        if (PF.on) {
+            VkPhysicalDeviceProperties p;
+            vkGetPhysicalDeviceProperties(V.phys, &p);
+            PF.tick_ns = p.limits.timestampPeriod;
+            PF.ts = (PFN_vkCmdWriteTimestamp2)vkGetDeviceProcAddr(V.dev, "vkCmdWriteTimestamp2");
+            PF.reset = (PFN_vkCmdResetQueryPool)vkGetDeviceProcAddr(V.dev, "vkCmdResetQueryPool");
+            PF.get = (PFN_vkGetQueryPoolResults)vkGetDeviceProcAddr(V.dev, "vkGetQueryPoolResults");
+            PFN_vkCreateQueryPool mk = (PFN_vkCreateQueryPool)vkGetDeviceProcAddr(V.dev, "vkCreateQueryPool");
+            VkQueryPoolCreateInfo qi = {VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO, .queryType = VK_QUERY_TYPE_TIMESTAMP, .queryCount = PF_N};
+            if (!PF.ts || !PF.reset || !PF.get || !mk || mk(V.dev, &qi, NULL, &PF.pool) != VK_SUCCESS) PF.pool = VK_NULL_HANDLE;
+            logf_("render: UWVIEW_PERF: timestamps %s (%.2f ns a tick)\n", PF.pool ? "on" : "unavailable", PF.tick_ns);
+        }
+    }
+    if (!PF.on || !PF.pool) return;
+    memset(PF.marked, 0, sizeof PF.marked);
+    PF.reset(V.cmd, PF.pool, 0, PF_N);
+}
+static void pf_mark(int k)
+{
+    if (!PF.on || !PF.pool) return;
+    PF.ts(V.cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, PF.pool, (uint32_t)k);
+    PF.marked[k] = true;
+    PF.cpu_at[k] = pf_ms();
+}
+static void pf_end(double t_acq, double t_rec, double t_wait, double t_pres)
+{
+    if (!PF.on) return;
+    uint64_t q[PF_N] = {0};
+    double total = 0;
+    {
+        double lastc = PF.cpu_at[PF_START];
+        for (int k = 1; k < PF_N; k++)
+            if (PF.marked[k]) PF.cpu[k] += PF.cpu_at[k] - lastc, lastc = PF.cpu_at[k];
+    }
+    if (PF.pool && PF.get(V.dev, PF.pool, 0, PF_N, sizeof q, q, sizeof q[0], VK_QUERY_RESULT_64_BIT) == VK_SUCCESS) {
+        uint64_t last = q[PF_START];
+        for (int k = 1; k < PF_N; k++)
+            if (PF.marked[k]) {
+                PF.gpu[k] += (double)(q[k] - last) * PF.tick_ns / 1e6;
+                last = q[k];
+            }
+        total = (double)(q[PF_END] - q[PF_START]) * PF.tick_ns / 1e6;
+    }
+    PF.gpu_total += total;
+    if (total > PF.gpu_worst) PF.gpu_worst = total;
+    PF.cpu_acq += t_acq, PF.cpu_rec += t_rec, PF.cpu_wait += t_wait, PF.cpu_pres += t_pres;
+    double all = t_acq + t_rec + t_wait + t_pres;
+    if (all > PF.cpu_worst) PF.cpu_worst = all;
+    if (++PF.n < 120) return;
+    char line[1024];
+    int at = snprintf(line, sizeof line, "render: perf (%dx%d): GPU %.2f ms a frame (worst %.2f):", V.cfg.w, V.cfg.h, PF.gpu_total / PF.n, PF.gpu_worst);
+    for (int k = 1; k < PF_N && at < (int)sizeof line - 80; k++)
+        if (PF.gpu[k] > 0.005 * PF.n) at += snprintf(line + at, sizeof line - at, " %s %.2f,", PF_NAME[k], PF.gpu[k] / PF.n);
+    at = 0;
+    char cl[600];
+    cl[0] = 0;
+    for (int k = 1; k < PF_N && at < (int)sizeof cl - 80; k++)
+        if (PF.cpu[k] > 0.005 * PF.n) at += snprintf(cl + at, sizeof cl - at, " %s %.2f,", PF_NAME[k], PF.cpu[k] / PF.n);
+    logf_("render: perf: the CPU's recording by stage:%s\n", cl);
+    memset(PF.cpu, 0, sizeof PF.cpu);
+    logf_("%s CPU: acquire %.2f, recording %.2f, waiting for the GPU %.2f, present %.2f ms (worst frame %.2f)\n", line,
+          PF.cpu_acq / PF.n, PF.cpu_rec / PF.n, PF.cpu_wait / PF.n, PF.cpu_pres / PF.n, PF.cpu_worst);
+    memset(PF.gpu, 0, sizeof PF.gpu);
+    PF.gpu_total = PF.gpu_worst = PF.cpu_acq = PF.cpu_rec = PF.cpu_wait = PF.cpu_pres = PF.cpu_worst = 0;
+    PF.n = 0;
+}
+
 bool render_frame(const Camera *cam, const Look *look, bool reset)
 {
     if (!V.up || !cam || !look) return false;
+    const double pf_t0 = pf_ms();
     /* ---- the frame's constants and the lights: render.c's render_frame, its lines in its order (R. is V. here) ---- */
     bool dlss = DL.on && DL.ok;
     int rw = dlss ? DL.rw : V.cfg.w, rh = dlss ? DL.rh : V.cfg.h;
@@ -1276,6 +1409,9 @@ bool render_frame(const Camera *cam, const Look *look, bool reset)
 
     if (T.ok && T.level_ok && !T.off && V.level) rt_bind_frame((int)(V.frame & 1));   /* (before the frame's commands) */
     begin_cmd();
+    const double pf_t1 = pf_ms();
+    pf_begin();
+    pf_mark(PF_START);
     if (V.ui_dirty) {   /* this frame's interface */
         barrier(V.ui.img, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
         VkBufferImageCopy bc = {.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, .imageExtent = {(uint32_t)V.ui_w, (uint32_t)V.ui_h, 1}};
@@ -1288,6 +1424,7 @@ bool render_frame(const Camera *cam, const Look *look, bool reset)
         VkBufferImageCopy bc = {.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, .imageExtent = {ATLAS_SIZE, (uint32_t)V.atlas_rows, 1}};
         vkCmdCopyBufferToImage(V.cmd, V.atlas_up.buf, V.atlas.img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &bc);
         barrier(V.atlas.img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    pf_mark(PF_UPLOAD);
         V.atlas_rows = 0;
     }
     const bool parts = g_fx.particles && g_rp_ok, decals = g_fx.decals && g_rd_ok;
@@ -1296,6 +1433,7 @@ bool render_frame(const Camera *cam, const Look *look, bool reset)
         cards_as_build(cam->pos);
         probes_pass();
     }
+    pf_mark(PF_RT);
     if (parts) {   /* the particles moved (render_vk_fx.h), drawn after the level and its pictures: render.c's lines */
         float right[3] = {cosf(cam->yaw), 0, -sinf(cam->yaw)}, f3[3] = {fwd_of(cam, 0), fwd_of(cam, 1), fwd_of(cam, 2)};
         float up[3] = {f3[1] * right[2] - f3[2] * right[1], f3[2] * right[0] - f3[0] * right[2], f3[0] * right[1] - f3[1] * right[0]};
@@ -1303,8 +1441,10 @@ bool render_frame(const Camera *cam, const Look *look, bool reset)
         vfx_particles_frame(c->vp, cam->pos, V.cfg.exposure, right, up, torch, g_torch_rgb);
     }
     if (decals) vfx_decals_frame(c->vp);
+    pf_mark(PF_FX);
     /* the fog and smoke: the air's step and its light (render_vk_vol.h), drawn over the scene below */
     const bool vol = vvol_frame(cam, view, proj, jx * 2.0f / (float)rw, -jy * 2.0f / (float)rh, rt_live, g_hold, rw, rh);
+    pf_mark(PF_VOL);
     {   /* the scene: colour (cleared 0 0 0 1), motion (0), depth (the far plane); the level indexed, then the cards.
            The viewport's height is negative (y from the bottom up), so clip space is D3D12's (y up) and the picture,
            SV_Position, ddx / ddy and the motion vectors come out as render.c's without a shader switch */
@@ -1372,10 +1512,13 @@ bool render_frame(const Camera *cam, const Look *look, bool reset)
         barrier_a(V.depth.img, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         if (high)
             for (int g = 0; g < 3; g++) barrier(guides[g]->img, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        pf_mark(PF_SCENE);
         if (vol && V.level) vvol_draw(rw, rh);
+        pf_mark(PF_VOLDRAW);
     }
     /* DLSS (or Ray Reconstruction); the present pass shows its output, or the scene's colour */
     present_source(dlss && dlss_evaluate(high, jx, jy, rw, rh, reset) ? &DL.out : &V.scene);
+    pf_mark(PF_DLSS);
     /* the present pass into the output's picture: the 8-bit one, or with HDR on the FP16 one (the window's); a
        screenshot with HDR on: the same frame drawn again as SDR (the constants' copy, hdr.x 0) into the 8-bit one */
     const bool hdr = H.on && H.pipe && H.pic.img && si != UINT32_MAX;
@@ -1422,7 +1565,10 @@ bool render_frame(const Camera *cam, const Look *look, bool reset)
                        same ? VK_FILTER_NEAREST : VK_FILTER_LINEAR);
         barrier(img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
     }
+    pf_mark(PF_END);
+    const double pf_t2 = pf_ms();
     bool ok = submit_wait(si != UINT32_MAX ? V.sem_acq : VK_NULL_HANDLE, si != UINT32_MAX ? V.sem_done[si] : VK_NULL_HANDLE);
+    const double pf_t3 = pf_ms();
     if (ok && si != UINT32_MAX) {
         VkPresentInfoKHR pi = {VK_STRUCTURE_TYPE_PRESENT_INFO_KHR, .waitSemaphoreCount = 1, .pWaitSemaphores = &V.sem_done[si],
                                .swapchainCount = 1, .pSwapchains = &V.sc, .pImageIndices = &si};
@@ -1431,6 +1577,7 @@ bool render_frame(const Camera *cam, const Look *look, bool reset)
         else if (r < 0) logf_("render: Vulkan present failed (%d)\n", (int)r);
         vkQueueWaitIdle(V.queue);   /* (one frame at a time, as render.c: the present's semaphore free again) */
     }
+    pf_end(pf_t1 - pf_t0, pf_t2 - pf_t1, pf_t3 - pf_t2, pf_ms() - pf_t3);
     memcpy(V.prev_vp, c->vp_nojit, 64);
     V.have_prev = true;
     V.frame++;

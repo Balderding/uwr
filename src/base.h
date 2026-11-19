@@ -52,7 +52,9 @@ int file_memory_count(size_t *bytes);
 
 /* --- text ----------------------------------------------------------------------------------- */
 void logf_(const char *fmt, ...);           /* to stdout, unbuffered */
-void fatal(const char *fmt, ...);           /* prints and exits with code 1 */
+/* prints "fatal: <message>" on stdout; where the build links rlog.c, also logs "fatal at <file>:<line>: <message>" (error); exits with code 1 */
+void fatal_at(const char *file, int line, const char *fmt, ...);
+#define fatal(...) fatal_at(__FILE__, __LINE__, __VA_ARGS__)
 bool str_ieq(const char *a, const char *b); /* ASCII, case-insensitive */
 #define str_copy uwb_str_copy   /* (apart from the game's own str_copy, MODEX.ASM's: our menu is built into the port) */
 void str_copy(char *dst, size_t n, const char *src);
@@ -91,6 +93,7 @@ typedef struct {
 } Image;
 bool png_read(const char *path, Image *out);
 bool png_exists(const char *path);   /* file_exists, the disk asked once for a picture png_read keeps (the relief maps) */
+bool png_view(const char *path, Image *out, bool *copied);   /* (2026-11-18) png_read's answer, the pixels lent (png.c) */
 /* (2026-11-17) the pictures a build is about to ask for: those png_read keeps and has not yet are read and unpacked
  * at once by several threads; png_exists and png_read answer the same as without it, sooner */
 void png_prefetch(const char *const *paths, int n);

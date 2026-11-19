@@ -162,6 +162,8 @@ def port(cfg):
                                                        os.path.join(p.runtime_port, 'sys', 'pit.c')]
         # (2026-11-17) and sys\borland.c: a handle's text-mode mark ends with the handle (error D004 at start)
         p.runtime_exclude = list(p.runtime_exclude) + [os.path.join(p.runtime_port, 'sys', 'borland.c')]
+        # (2026-11-18) and sound\audio.c: the music's Roland gets more voices (Munt's partial count, the Esc menu)
+        p.runtime_exclude = list(p.runtime_exclude) + [os.path.join(p.runtime_port, 'sound', 'audio.c')]
     return p
 
 

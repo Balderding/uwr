@@ -25,6 +25,7 @@ int  uwst_on(void);
 /* the level (tiles NULL: the same tiles, the doors anew); taken at the next uwst_simulate */
 void uwst_level(const UwaTile t[64 * 64], int ceil_mat, const UwaDoor *d, int nd, float tile_m);
 void uwst_quality(int rays, int bounces);         /* a run's rays (256..8192) and bounces (1..64): the menu's Echo detail */
+void uwst_fast_rays(int on);                       /* (2026-11-18) Embree's rays and more threads (acoustics_embree), at uwst_init */
 void uwst_tile_m(float tile_m);                    /* the metres a tile changed alone: the scene made again */
 /* the dials (2026-11-16; settings.txt through uwaudio.c). uwst_length: the longest ring in seconds (0.25..6; 2 unless
    set), taken when Steam Audio starts: 1 when the running one has another, so the caller starts it again.

@@ -85,7 +85,7 @@ def test_audio():
     w = os.path.join(WORK, 'audio')
     os.makedirs(os.path.join(w, 'sfx'), exist_ok=True)
     exe = os.path.join(w, 'uwaudio_test.exe')
-    ok = clang(exe, [os.path.join(ROOT, 'tests', 'uwaudio_test.c')] + [os.path.join(ROOT, 'port', 'win32', f) for f in ('uwaudio.c', 'uwacoustic.c', 'uwacmat.c', 'uwsteam.c')])
+    ok = clang(exe, [os.path.join(ROOT, 'tests', 'uwaudio_test.c')] + [os.path.join(ROOT, 'port', 'win32', f) for f in ('uwaudio.c', 'uwacoustic.c', 'uwacmat.c', 'uwsteam.c', 'rlog.c')])
     check('audio: tests\\uwaudio_test.c builds', ok)
     if ok:
         # (DATA's parent, dist\UW1, holds mt32emu.dll and roms\: the Roland cases run too)
@@ -413,7 +413,7 @@ def test_materials():
     w = os.path.join(WORK, 'materials')
     os.makedirs(w, exist_ok=True)
     exe = os.path.join(w, 'uwacmat_test.exe')
-    ok = clang(exe, [os.path.join(ROOT, 'tests', 'uwacmat_test.c'), os.path.join(ROOT, 'port', 'win32', 'uwacmat.c')])
+    ok = clang(exe, [os.path.join(ROOT, 'tests', 'uwacmat_test.c'), os.path.join(ROOT, 'port', 'win32', 'uwacmat.c'), os.path.join(ROOT, 'port', 'win32', 'rlog.c')])
     check('materials: tests\\uwacmat_test.c builds', ok)
     if ok:
         r = subprocess.run([exe, w], capture_output=True, text=True)
@@ -521,7 +521,8 @@ def test_acoustics():
     # (the bounds sanitizer, trapping: a read outside the 64 x 64 grid stops the test. The plan's address sanitizer
     # has no runtime for our MinGW target.)
     ok = clang(exe, [os.path.join(ROOT, 'tests', 'uwacoustic_test.c'), os.path.join(ROOT, 'port', 'win32', 'uwacoustic.c'),
-                     os.path.join(ROOT, 'port', 'win32', 'uwacmat.c')], ['-fsanitize=bounds', '-fsanitize-trap=bounds'])
+                     os.path.join(ROOT, 'port', 'win32', 'uwacmat.c'),
+                     os.path.join(ROOT, 'port', 'win32', 'rlog.c')], ['-fsanitize=bounds', '-fsanitize-trap=bounds'])
     check('acoustics: tests\\uwacoustic_test.c builds', ok)
     if not ok: return
     dump = os.path.join(WORK, 'grid-dump.txt')   # (the grid check's: level 1 as the renderer gave it; timed when there)
@@ -601,7 +602,7 @@ def test_steam():
     w = os.path.join(WORK, 'steam')
     os.makedirs(w, exist_ok=True)
     exe = os.path.join(w, 'uwsteam_test.exe')
-    ok = clang(exe, [os.path.join(ROOT, 'tests', 'uwsteam_test.c')] + [os.path.join(ROOT, 'port', 'win32', f) for f in ('uwsteam.c', 'uwacoustic.c', 'uwacmat.c')])
+    ok = clang(exe, [os.path.join(ROOT, 'tests', 'uwsteam_test.c')] + [os.path.join(ROOT, 'port', 'win32', f) for f in ('uwsteam.c', 'uwacoustic.c', 'uwacmat.c', 'rlog.c')])
     check('steam: tests\\uwsteam_test.c builds', ok)
     if not ok: return
     r = subprocess.run([exe, PHONON_BIN, os.path.join(WORK, 'grid-dump.txt')], capture_output=True, text=True)

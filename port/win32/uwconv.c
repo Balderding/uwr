@@ -1,10 +1,13 @@
-/* uwconv.c: a conversation in our display (uwconv.h). The layout here; the drawing in the renderer's DLL
-   (src\uwconv_draw.c's uwv_conv), found by name in it so that this file needs no Windows header but the one
-   declaration below. */
+/* uwconv.c: lays out the original's full-screen pieces in our display (see uwconv.h): a conversation, the options
+   panel, the automap, typed text, and the cutscene windows. It works out the whole-number scale and where each piece
+   goes, hands the layer to the renderer DLL to draw (src\uwconv_draw.c's uwv_conv and friends, found by name so that
+   this file needs no Windows header), draws our text from the conversation record (uwconvrec.c) and our map from the game's map data (PlayersMap,
+   ATM_Strings) over it, and turns a window point back into the original's screen point for the mouse. */
 #include <stdint.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include "uwconv.h"
+#include "rlog.h"
 
 extern int16_t scrnum;          /* UWEDIT.C: 0 the 3D view, 1 the automap, 2 a conversation */
 #include "uwos.h"   /* GetProcAddress (kernel32's on Windows; dlsym elsewhere) */
@@ -18,7 +21,7 @@ static CutFn cut_fn;
 typedef int (*TextFn)(const unsigned *src, int sw, int sh, int x, int y, int w, int h, int dx, int dy, int scale,
                       const unsigned *erase, int nerase, const char *text, const unsigned *inks, int text_x,
                       int line_rows, int back, unsigned paper, int *rows, int rows_n);
-static TextFn text_fn;          /* the DLL's uwv_conv_text: our text in the conversation (step A2), or NULL */
+static TextFn text_fn;          /* the DLL's uwv_conv_text: our text in the conversation or NULL */
 typedef int (*MapFn)(const unsigned *src, int sw, int sh, int dx, int dy, int k, const unsigned char *pm,
                      const unsigned *pal, const char *notes, const short *nx, const short *ny, int n, const char *typing,
                      int tx, int ty, int mx, int my, int cursor_on, int cx, int cytop, int cw, int ch, int cpic);
@@ -32,12 +35,12 @@ static int P[NP][6] = {
 };
 static int K = 1, shown, lw, lh, wcw, wch;
 
-/* ---- our conversation text (docs\superpowers\plans\2026-11-13-conversation-and-map-screens.md, step A2) -----------
-   The original's screen layout and art stay (the user: its look and proportions, centred); the four places it writes
-   text are drawn by us from the conversation's record (uwconvrec.c): its letters erased there, ours drawn at the
-   window's resolution (settings.txt conv_font: smooth, or the original's font scaled), and the NPC's scroll keeps the
-   whole conversation, scrolled back with the wheel (uwc_wheel). The input is still the original's: our text sits
-   where the original's did, so a click on an answer is a click on the original's line. */
+/* ---- our conversation text ----
+   The original's screen layout and art stay, centred; the four places it writes text are drawn by us from the
+   conversation's record (uwconvrec.c): its letters erased there, ours drawn at the window's resolution (settings.txt
+   conv_font: smooth, or the original's font scaled), and the NPC's scroll keeps the whole conversation, scrolled back
+   with the wheel (uwc_wheel). The input is still the original's: our text sits where the original's did, so a click
+   on an answer is a click on the original's line. */
 #include "uwconvrec.h"
 unsigned plat_pal_rgb(int i);   /* plat_win32.c: palette colour i now, 0x00RRGGBB as the screen picture */
 static UwcrState *rec;          /* the record's last copy (taken when its serial changes) */
@@ -63,6 +66,7 @@ static int add_text(char *out, int len, const char *s)
     return len;
 }
 
+/* builds the two text streams (the NPC's scroll and the message scroll) from the conversation record */
 static void build_streams(void)
 {
     int nl = 0, nm = 0;
@@ -85,13 +89,18 @@ static void build_streams(void)
     npc_text[nl] = main_text[nm] = 0;
 }
 
-/* the original's places (its screen, y down: the scrolls' fields in SCROLLIO.C, y up there; the names'
-   string_to_screen in strt_converse) and the piece of P each is in */
+/* draws our text over the conversation layer: the NPC's scroll, the message scroll with the answer rows (and the
+   typing bar), and the two names. Places are the original's screen (y down; the scrolls' fields in SCROLLIO.C are y
+   up; the names' string_to_screen in strt_converse), each in its piece of P */
 static void draw_text(const unsigned *src, int sw, int sh)
 {
     if (!text_fn) return;
     if (!rec) rec = (UwcrState *)calloc(1, sizeof *rec);
-    if (!rec) return;
+    if (!rec) {
+        static int said;
+        if (!said) said = 1, RLOG_E("conv", "out of memory (%zu bytes)", sizeof *rec);
+        return;
+    }
     unsigned s = uwcr_serial();
     if (s != rec_serial) {
         int had = rec->total;
@@ -113,7 +122,7 @@ static void draw_text(const unsigned *src, int sw, int sh)
        line is in, when that starts "N. " (the menu's lines, conv_choice / conv_fmenu) */
     int rows[MAIN_ROWS];
     for (int r = 0; r < MAIN_ROWS; r++) rows[r] = -1;
-    /* babl_ask's typing (wdialog: its text so far, after its ">"): ours, with a bar at its cursor (step A3) */
+    /* babl_ask's typing (wdialog: its text so far, after its ">"): ours, with a bar at its cursor */
     const char *mt = main_text;
     static char ask_text[STREAM + 80];
     if (rec->asking) {
@@ -165,7 +174,7 @@ int uwc_answer_at(int cx, int cy)
     return main_answer[(int)(y - (199 - 0x1E)) / 6];
 }
 
-/* ---- our map (the plan's Part B; the user: the original's look, sharper, no zoom or pan, the original's font) ------
+/* ---- our map (the original's look, sharper, no zoom or pan, the original's font) ----
    The original draws its map as ever (its rand() calls stay the game's); the DLL draws it again over the map's part of
    the screen from the same data: PlayersMap, the notes (ATM_Strings), the note being typed (port_map_typing), the
    player's marker and the pointer (port_map_state, port_mouse_drawn: underworld-exhumed AUTOMAP.C, MOUSE.C, read only).
@@ -178,6 +187,7 @@ int port_mouse_drawn(int *x0, int *ytop, int *w, int *h, int *pic);
 static volatile long typing_seq;                   /* odd while port_map_typing writes */
 static char typing_text[52];
 static int typing_on, typing_x, typing_y;
+/* the game's thread gives the note being typed on the map (NULL: none); read by draw_map on the window's thread */
 void port_map_typing(const char *text, int x, int y)
 {
     __atomic_add_fetch(&typing_seq, 1, __ATOMIC_ACQ_REL);
@@ -191,6 +201,7 @@ void port_map_typing(const char *text, int x, int y)
     __atomic_add_fetch(&typing_seq, 1, __ATOMIC_ACQ_REL);
 }
 
+/* draws our map over the map screen's layer from the game's map data */
 static void draw_map(const unsigned *src, int sw, int sh, int dx, int dy, int k)
 {
     if (!map_fn) return;
@@ -246,8 +257,10 @@ static void layout_options(int uw, int uh)
     O[0][4] = (uw - O[0][2] * KO) / 2, O[0][5] = y0;
     O[1][4] = (uw - O[1][2] * KO) / 2, O[1][5] = y0 + (O[0][3] + GAP) * KO;
 }
+/* whether the original's options panel is up */
 int uwc_options(void) { return LeftPanel == 1; }
 
+/* whether the game is in a conversation */
 int uwc_talking(void) { return scrnum == 2; }
 /* the automap (scrnum 1, AUTOMAP.C): its whole screen (the map, its level buttons, the notes, the scroll), scaled up
    whole, centred over our view's last frame dimmed; the world stops as the original's map stops it */
@@ -261,11 +274,14 @@ static void layout_map(int uw, int uh)
     if (KM < 1) KM = 1;
     MP[0][4] = (uw - 320 * KM) / 2, MP[0][5] = (uh - 200 * KM) / 2;
 }
+/* whether the last frame showed one of our layers */
 int uwc_shown(void) { return shown; }
 #ifndef UWPORT_PLAIN
 int port_screen_is(int ps);     /* port/sys/screen.c: the screen the game says it shows */
 static int uwc_typing(void) { return port_screen_is(10 /* PS_TEXT, port/sys/screen.h */); }
 #endif
+/* finds the renderer DLL's drawing functions by name (the env vars UWPORT_ORIGCONV / UWPORT_ORIGMAP keep the
+   original's text or map) */
 void uwc_bind(void *dll)
 {
     conv_fn = dll ? (ConvFn)(void (*)(void))GetProcAddress(dll, "uwv_conv") : NULL;
@@ -288,6 +304,8 @@ static void layout(int uw, int uh)
     P[2][4] = (uw - P[2][2] * K) / 2, P[2][5] = y0 + (top_h + GAP) * K;
 }
 
+/* the layer for this frame (NULL: none), laid out for the screen the game shows: conversation, options panel, map or
+   typed text */
 const unsigned char *uwc_frame(const unsigned *src, int sw, int sh, int uw, int uh, int cw, int ch)
 {
     const unsigned char *layer = NULL;
@@ -341,6 +359,7 @@ int uwc_on_view_screen(void) { return scrnum == 0; }
 int port_screen_is(int ps);     /* port/sys/screen.c: the screen the game says it shows */
 int uwc_on_view_screen(void) { return port_screen_is(2 /* PS_GAME, port/sys/screen.h */); }
 #endif
+/* the 3D window alone, centred (a cutscene in the window) */
 const unsigned char *uwc_frame_window(const unsigned *src, int sw, int sh, int uw, int uh)
 {
     return uwc_frame_cut(src, sw, sh, uw, uh, 0);
@@ -356,11 +375,12 @@ const unsigned char *uwc_frame_cut(const unsigned *src, int sw, int sh, int uw, 
     k = k1 < k2 ? k1 : k2;
     if (k < 1) k = 1;
     R[4] = (uw - R[2] * k) / 2, R[5] = (uh - R[3] * k) / 2;
-    if (cut_fn)   /* only what the cutscene paints (the user: the skulls, no bits of the interface) */
+    if (cut_fn)   /* only what the cutscene paints (the skulls, none of the interface) */
         return cut_fn(src, sw, sh, uw, uh, R[0], R[1], R[2], R[3], R[4], R[5], k, dim);
-    return conv_fn(src, sw, sh, uw, uh, R, 1, k, dim);   /* over our view's last frame, dimmed (the user) */
+    return conv_fn(src, sw, sh, uw, uh, R, 1, k, dim);   /* over our view's last frame, dimmed */
 }
 
+/* a client point to the original's screen point (x, y); 0 when it is on none of the shown pieces */
 int uwc_point(int cx, int cy, float *x, float *y)
 {
     int i;

@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "rlog.h"
 #include "uwconvrec.h"
 
 extern uint16_t cnv_id;         /* CONVERSE.C: the conversation (its CNV.ARK slot; STRINGS.PAK block 0x0E00 + it) */
@@ -33,9 +34,8 @@ static void logtext(const char *what, int n, const char *s)
         else b[k++] = *s;
     }
     b[k] = 0;
-    if (n >= 0) fprintf(stderr, "conv: %s %d \"%s\"\n", what, n, b);
-    else fprintf(stderr, "conv: %s \"%s\"\n", what, b);
-    fflush(stderr);
+    if (n >= 0) RLOG_I("conv", "%s %d \"%s\"", what, n, b);
+    else RLOG_I("conv", "%s \"%s\"", what, b);
 }
 
 static void copyz(char *d, const char *s, size_t n)
@@ -59,7 +59,7 @@ void port_conv_player(const char *name, int head)
     R.nopts = R.chosen = R.waiting = R.asking = 0;
     R.serial++;
     unlock();
-    if (logging()) { fprintf(stderr, "conv: open %u player \"%s\" head %d\n", (unsigned)cnv_id, name ? name : "", head); fflush(stderr); }
+    if (logging()) RLOG_I("conv", "open %u player \"%s\" head %d", (unsigned)cnv_id, name ? name : "", head);
 }
 
 /* strt_converse: the NPC's portrait (the one gronk_gr loaded: CHARHEAD.GR, or GENHEAD.GR when that failed or the
@@ -71,7 +71,7 @@ void port_conv_npc(const char *name, int gr, int idx)
     R.npc_gr = gr, R.npc_idx = idx;
     R.serial++;
     unlock();
-    if (logging()) { fprintf(stderr, "conv: npc \"%s\" %s %d\n", name ? name : "", gr == 0 ? "charhead" : "genhead", idx); fflush(stderr); }
+    if (logging()) RLOG_I("conv", "npc \"%s\" %s %d", name ? name : "", gr == 0 ? "charhead" : "genhead", idx);
 }
 
 /* SCROLLIO.C scroll_print in the conversation screen: one piece of text into the scroll scroll_mode names */
@@ -99,7 +99,7 @@ void port_conv_clear(int mode)
         R.serial++;
         unlock();
     }
-    if (logging()) { fprintf(stderr, "conv: clear %s\n", mode == UWCR_NPC ? "npc" : mode == UWCR_PLAY ? "play" : "main"); fflush(stderr); }
+    if (logging()) RLOG_I("conv", "clear %s", mode == UWCR_NPC ? "npc" : mode == UWCR_PLAY ? "play" : "main");
 }
 
 /* scroll_wait in the conversation screen: on at its start, off at its end */
@@ -110,9 +110,8 @@ void port_conv_wait(int on, int ticks, int mouse)
     R.serial++;
     unlock();
     if (logging()) {
-        if (on) fprintf(stderr, "conv: wait %s%s\n", ticks ? "time" : "key", mouse ? " more" : "");
-        else fprintf(stderr, "conv: wait end\n");
-        fflush(stderr);
+        if (on) RLOG_I("conv", "wait %s%s", ticks ? "time" : "key", mouse ? " more" : "");
+        else RLOG_I("conv", "wait end");
     }
 }
 
@@ -132,7 +131,7 @@ void port_conv_menu(int n)
     R.nopts = n < 0 ? 0 : n > UWCR_OPTS ? UWCR_OPTS : n;
     R.serial++;
     unlock();
-    if (logging()) { fprintf(stderr, "conv: menu %d\n", n); fflush(stderr); }
+    if (logging()) RLOG_I("conv", "menu %d", n);
 }
 
 /* conv_play_menu: the answer taken (a key's number or the clicked row's); the menu is gone */
@@ -143,7 +142,7 @@ void port_conv_chosen(int i)
     R.nopts = 0;
     R.serial++;
     unlock();
-    if (logging()) { fprintf(stderr, "conv: chosen %d\n", i); fflush(stderr); }
+    if (logging()) RLOG_I("conv", "chosen %d", i);
 }
 
 /* babl_ask: wdialog taking the player's typed text (on), and what it gave (off). The original drew the typing with
@@ -156,7 +155,7 @@ void port_conv_ask(int on, const char *typed)
         R.asking = 1, R.typed[0] = 0, R.typed_pos = 0;
         R.serial++;
         unlock();
-        if (logging()) { fprintf(stderr, "conv: ask\n"); fflush(stderr); }
+        if (logging()) RLOG_I("conv", "ask");
         return;
     }
     lock();
@@ -183,8 +182,7 @@ void port_conv_typing(const char *text, int pos)
     if (logging()) {
         char b[80];
         copyz(b, text, sizeof b);
-        fprintf(stderr, "conv: typing %d \"%s\"\n", pos, b);
-        fflush(stderr);
+        RLOG_I("conv", "typing %d \"%s\"", pos, b);
     }
 }
 
@@ -196,7 +194,7 @@ void port_conv_close(void)
     R.nopts = R.waiting = R.asking = 0;
     R.serial++;
     unlock();
-    if (logging()) { fprintf(stderr, "conv: close\n"); fflush(stderr); }
+    if (logging()) RLOG_I("conv", "close");
 }
 
 void uwcr_snapshot(UwcrState *out)

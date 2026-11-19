@@ -1,6 +1,7 @@
-/* uwlog.c: the game's message scroll kept as text (uwlog.h), for our own message box over our display (src\uwview.c's
-   uwv_log): every line the main scroll is given (SCROLLIO.C's scroll_print, its port hook), its escapes taken out,
-   wrapped where the game wraps it (49 letters, at the last space). Written on the game's thread, read on the window's. */
+/* uwlog.c: keeps the game's message scroll as text (see uwlog.h) for our message box over our display (uwv_log in
+   src\uwview.c). Every line the main scroll is given (SCROLLIO.C's scroll_print calls port_scroll_note) is stored with
+   its escapes taken out, wrapped where the game wraps it (49 letters, at the last space). The game's thread writes,
+   the window's thread reads, under a small spin lock. */
 #include <stdatomic.h>
 #include <string.h>
 #include "uwlog.h"
@@ -18,6 +19,7 @@ static atomic_flag lock = ATOMIC_FLAG_INIT;
 static void take(void) { while (atomic_flag_test_and_set_explicit(&lock, memory_order_acquire)) ; }
 static void give(void) { atomic_flag_clear_explicit(&lock, memory_order_release); }
 
+/* ends the line being written and stores it in the ring */
 static void finish(void)
 {
     memcpy(lines[total % N], cur, UWLOG_W);
@@ -25,16 +27,17 @@ static void finish(void)
     curlen = 0, cur[0] = 0;
 }
 
-/* playing an instrument (the user, 2026-11-14: "when I play the mandolin I cannot get out of playing it"): SOUND.C's
-   play_instrument loops until it reads Esc (0x1B), and in our display Esc opened our menu instead. Its messages mark
-   it: string 0xFA "You play the instrument. (Use 0-9 to play, or ESC to return to game)" at the start, 0xFB "You put
+/* playing an instrument: SOUND.C's play_instrument loops until it reads Esc (0x1B), and in our display Esc would open
+   our menu instead, so the scroll's messages are used to know when it is on: string 0xFA
+   "You play the instrument. (Use 0-9 to play, or ESC to return to game)" at the start, 0xFB "You put
    the instrument down." at the end (not printed when the right tune brings up the cup: the backend clears it at the
    Esc it passes on). While on, the backend gives Esc to the game (plat_win32.c input_state's esc_menu). */
 static volatile int instrument;
 int uwlog_instrument(void) { return instrument; }
 void uwlog_instrument_clear(void) { instrument = 0; }
 
-/* SCROLLIO.C's scroll_print (the main scroll only), port only */
+/* called by SCROLLIO.C's scroll_print for the main scroll: stores the text, wrapped, and watches for the instrument
+   messages */
 void port_scroll_note(const char *s)
 {
     if (!s) return;
@@ -67,6 +70,8 @@ void port_scroll_note(const char *s)
     give();
 }
 
+/* copies up to max lines (oldest first, back lines before the newest) into out; returns how many were copied.
+   *all gets the lines held, *newest_ms the time the newest text came */
 int uwlog_get(char (*out)[UWLOG_W], int max, int back, unsigned long long *newest_ms, int *all)
 {
     int n = 0, have;

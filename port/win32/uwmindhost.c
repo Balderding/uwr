@@ -1,19 +1,21 @@
-/* uwmindhost.c: the language model in the game (LLM_NPC_AI.md, "Our own Strata"). uwmind.dll (src\uwmind.c, over
+/* uwmindhost.c: runs the language model that helps creatures decide (see LLM_NPC_AI.md). uwmind.dll (src\uwmind.c, over
  * llama.cpp) is loaded at run time from llm\bin beside the exe, with a model from llm\models; when either is missing,
  * or llm=0 in the settings, or UWPORT_LLM=0 (every off-screen check and proof), nothing is loaded and the rules
  * decide alone. One worker thread loads the model and answers the questions hunt.c puts in (port_mind_ask): up to
  * eight at a time in one pass (uwm_score: the instructions kept, each choice scored by its first token), the grammar
  * way (uwm_ask) when two choices begin alike or llm_mode=grammar. The answers come back through port_mind_take; the
- * game never waits. Status lines go to stdout ("AI: ..."), every question and answer to home\logs\ai-<date>.jsonl.
+ * game never waits. Status lines go to stdout ("AI: ...", which the check scripts read there), every question and
+ * answer to home\logs\ai-<date>.jsonl.
  *
  * Settings (uw1port.cfg): llm=0 off; llm_model=<file under llm\models, a subfolder allowed> the model (the Esc menu's
- * Language model row writes it; lfm the 1.2B as before; absent or not found: our trained LFM2.5-350M-UW, else Qwen3.5-2B, else the first found); llm_gpu=0 the CPU only; llm_mode=
- * grammar; llm_rate=N questions a second at most (default 20); llm_stale_ms=N answers older than that dropped
+ * Language model row writes it; lfm the 1.2B; absent or not found: our trained LFM2.5-350M-UW, else Qwen3.5-2B,
+ * else the first found); llm_gpu=0 the CPU only; llm_mode=grammar; llm_rate=N questions a second at most
+ * (default 20); llm_stale_ms=N answers older than that dropped
  * (default 3000); llm_idle_min=N minutes without a question and the model is let go (default 10; 0 never), loaded
- * again on the next. The model goes into the graphics card's memory (VRAM) unless llm_gpu=0 (2026-11-13, the user: no
- * first-run calibration any more; llm_calibrated is not read); the first start writes the default (LFM2.5-350M-UW since
- * 2026-11-14) as llm_model without asking. UWPORT_LLM_MODEL=FILE another model. */
-/* Linux (the user, 2026-11-16: "build it in"): the same code over uwos.h's Windows names. The library is
+ * again on the next. The model goes into the graphics card's memory (VRAM) unless llm_gpu=0 (there is no first-run
+ * calibration; llm_calibrated is not read); the first start writes the default (LFM2.5-350M-UW) as llm_model
+ * without asking. UWPORT_LLM_MODEL=FILE another model. */
+/* Linux: the same code over uwos.h's Windows names. The library is
  * llm/bin/libuwmind.so beside llama.cpp's Linux libraries (tools\buildmind_linux.py). The folder is the one Windows
  * uses, its names lower-cased by makedist.py and the settings' llm_model written by either system, so on Linux every
  * path this file builds (with '\', in the case the code names) is turned into the one on the disk where it meets
@@ -42,6 +44,7 @@
 #include <string.h>
 #include <time.h>
 #include "plat.h"
+#include "rlog.h"
 #ifndef _WIN32
 /* p as the disk has it: '\' made '/', then each name of the path looked up in its folder whatever its case (the name
    as given when nothing matches: a file to be made, or one that is not there) */
@@ -120,9 +123,9 @@ static int use_grammar, rate = 20, stale_ms = 3000, idle_min = 10;
 static DWORD last_ask;
 static FILE *jsonl;
 
-/* FORMAT 2 (2026-11-13, the user: the fine-tuned LFM2.5-350M-UW was trained on it; rule 8 rules v4 on
-   2026-11-14, its plan steps as the fine-tune folder's tools\hunter_policy.py answers them, model r5): the fine-tune folder's
-   O:\appsnotonc\finetune\mind_format.py SYSTEM, byte for byte (tools\mind_format.py the same copy) */
+/* The instructions the model is given before every question. The fine-tuned LFM2.5-350M-UW was trained on exactly
+   this text, so it must stay byte for byte the fine-tune folder's mind_format.py SYSTEM (tools\mind_format.py is the
+   same copy); rule 8 holds the hunter's plan steps as the fine-tune folder's tools\hunter_policy.py answers them */
 static const char *SYSTEM =
     "You decide what one creature in a dark dungeon does next. You know only what the creature itself saw and "
     "heard. Badly wounded means under a third of its health. Rules; the first that fits wins. 1. Badly wounded, "
@@ -159,19 +162,21 @@ static const char *SYSTEM =
     "dim-witted carry on (ignore), and a named one (offered only greet, warn, ignore) greets when within 4 "
     "squares. Answer only in the form goal=<choice>, with one of the choices offered.";
 
+/* a status line, "AI: ...", on stdout (the check scripts read it there) */
 static void say(const char *s)
 {
     printf("AI: %s\n", s);
     fflush(stdout);
 }
 
+/* an integer setting from the settings file, or def */
 static int cfg_int(const char *key, int def)
 {
     char v[32];
     return plat_home() && port_config_get(plat_home(), key, v, sizeof v) == 0 ? atoi(v) : def;
 }
 
-/* the Esc menu's model rows (2026-11-16: every setting of the model has its row). which: 0 llm_gpu (1 the graphics
+/* the Esc menu's model rows (every setting of the model has its row). which: 0 llm_gpu (1 the graphics
    card, 0 the processor; taken when the model is next loaded), 1 llm_mode (1 grammar, 0 scoring), 2 llm_rate
    (questions a second), 3 llm_stale_ms (0 never dropped), 4 llm_idle_min (0 never let go). v < 0 reads; else it is
    set, kept in the settings, and (1 to 4) taken at once: the worker reads these plain ints each pass */
@@ -218,6 +223,7 @@ static void grammar_choices(const char *g, char *out, int n)
     }
 }
 
+/* writes s as a JSON string */
 static void json_str(FILE *f, const char *s)
 {
     fputc('"', f);
@@ -227,6 +233,7 @@ static void json_str(FILE *f, const char *s)
     }
     fputc('"', f);
 }
+/* appends one question and its answer as a line of the day's ai-<date>.jsonl */
 static void log_jsonl(const struct Q *q, const char *how)
 {
     if (!jsonl) return;
@@ -251,6 +258,7 @@ enum { MAXM = 32 };
 static char mfile[MAXM][MAX_PATH], mrel[MAXM][MAX_PATH];
 static const char *mfile_p[MAXM], *mrel_p[MAXM];
 static int mn = -1;
+/* finds the folder of the program once */
 static void exe_dir_init(void)
 {
     if (exe_dir[0]) return;
@@ -268,11 +276,13 @@ static void exe_dir_init(void)
     if (s) *s = 0;
     snprintf(exe_dir, sizeof exe_dir, "%s", d);
 }
+/* whether the file name ends in .gguf */
 static int is_gguf(const char *n)
 {
     size_t l = strlen(n);
     return l > 5 && !_stricmp(n + l - 5, ".gguf");
 }
+/* adds a model file (in sub, or at the top of llm\models) to the list */
 static void model_add(const char *sub, const char *name)
 {
     if (mn >= MAXM) return;
@@ -381,8 +391,7 @@ static void model_resolve(char *out, size_t n)
         snprintf(out, n, "%s\\llm\\models\\%s", exe_dir, mv);
         if (GetFileAttributesA(out) != INVALID_FILE_ATTRIBUTES) return;
     }
-    /* the default (the user, 2026-11-14: "we want lfm to be the default"): the LFM2.5-350M-UW we trained, run 5's f16
-       (the file the user plays with); that file gone, Qwen3.5-2B (the default from 2026-11-11 until then) */
+    /* the default: the LFM2.5-350M-UW we trained, run 5's f16; that file gone, Qwen3.5-2B */
     snprintf(out, n, "%s\\llm\\models\\LFM2.5-350M-UW\\LFM2.5-350M-UW-r5-f16.gguf", exe_dir);
     if (GetFileAttributesA(out) != INVALID_FILE_ATTRIBUTES) return;
     snprintf(out, n, "%s\\llm\\models\\Qwen3.5-2B\\Qwen3.5-2B-Q4_K_M.gguf", exe_dir);
@@ -401,11 +410,13 @@ static void current_update(void)
     cur_rel[0] = 0;
     if (!_strnicmp(p, pre, strlen(pre))) snprintf(cur_rel, sizeof cur_rel, "%s", p + strlen(pre));
 }
+/* the model in use: its file name */
 const char *port_mind_current(void)
 {
     if (!cur_name[0]) current_update();
     return cur_name;
 }
+/* the model in use: its path under llm\models */
 const char *port_mind_current_path(void)
 {
     if (!cur_name[0]) current_update();
@@ -435,8 +446,8 @@ void port_mind_keep(void);
 /* the first start: 1 when the player should be asked which model (no llm_model yet, more than one model, llm not 0) */
 int port_mind_first_start(void)
 {
-    /* never now (the user, 11-13: no question; 11-14: our trained LFM2.5-350M-UW the default): no llm_model yet,
-       model_resolve's default is written as the choice; the Esc menu's Language model row still changes it */
+    /* never asks: with no llm_model yet, model_resolve's default is written as the choice; the Esc menu's Language
+       model row still changes it */
     port_mind_keep();
     return 0;
 }
@@ -449,7 +460,7 @@ void port_mind_keep(void)
     if (cur_rel[0]) port_config_set(plat_home(), "llm_model", cur_rel);
 }
 
-/* the model up (load + warm-up); the first time on a PC also the calibration. 1 when ready */
+/* the model up (load + warm-up). 1 when ready */
 static int bring_up(int first)
 {
     char info[256], msg[480];
@@ -458,14 +469,14 @@ static int bring_up(int first)
         if (st && atoi(st) > 0) Sleep((DWORD)atoi(st));
     }
     if (first) {
-        /* the model in the graphics card's memory (VRAM) always, unless llm_gpu=0 (the user, 11-13: no calibration that
-           could settle on the CPU; an llm_calibrated=cpu left by an older run is not read) */
+        /* the model in the graphics card's memory (VRAM) always, unless llm_gpu=0 (an llm_calibrated=cpu left by an
+           older run is not read) */
         int gpu_cfg = cfg_int("llm_gpu", 1);
         want_gpu = gpu_cfg;
         snprintf(msg, sizeof msg, "loading the language model %s (%s)", strrchr(model, '\\') ? strrchr(model, '\\') + 1 : model,
                  want_gpu ? "into VRAM" : "CPU");
         say(msg);
-        if (0) {                        /* (the old first-run calibration, the GPU against the CPU: kept, not run) */
+        if (0) {                        /* (the first-run calibration, the GPU against the CPU: switched off) */
             char cal[16] = "";
             const char *u[1] = {"Calibration. Choices: ready (be ready)."}, *c[1] = {"ready"};
             int pk, gpu_ms = -1, cpu_ms = -1;
@@ -481,7 +492,7 @@ static int bring_up(int first)
                 m_free();
             }
             want_gpu = gpu_ms >= 0 && (cpu_ms < 0 || gpu_ms <= cpu_ms);
-            if (gpu_ms >= 0 && cpu_ms >= 0 && !cal[0]) {   /* a verdict kept only on both timings (the third review's item 2) */
+            if (gpu_ms >= 0 && cpu_ms >= 0 && !cal[0]) {   /* a verdict kept only on both timings */
                 if (plat_home()) port_config_set(plat_home(), "llm_calibrated", want_gpu ? "gpu" : "cpu");
                 snprintf(msg, sizeof msg, "calibrated: GPU %d ms, CPU %d ms a question: the %s from now on (llm_calibrated in the settings)",
                          gpu_ms, cpu_ms, want_gpu ? "GPU" : "CPU");
@@ -500,12 +511,11 @@ static int bring_up(int first)
     snprintf(msg, sizeof msg, "language model ready: %s", info);
     say(msg);
     {   /* the GPU compiles its pipelines the first time each shape runs (~10 s on a new PC): one question, then
-           batches of 2, 4 and 8, all here and not on a creature's time (the second review: the first batch of three
-           took 13 s in the game and its answers went stale) */
+           batches of 2, 4 and 8, all here and not on a creature's time (else the first batch takes seconds in the
+           game and its answers go stale) */
         const char *u[BATCH], *c[BATCH];
         int pk[BATCH], total = 0;
-        /* as long as a real question (a few hundred tokens): short ones left the real batches' shapes uncompiled
-           (the first in-game batch of four, beside the renderer, still took 9 s) */
+        /* as long as a real question (a few hundred tokens): short ones leave the real batches' shapes uncompiled */
         static const char *LONG =
             "You are a goblin, wounded: health 12 of 27. You are of average wits. You hate the adventurer and want to "
             "kill them. You are good at ambushes. You were fighting the player, an armed adventurer, and lost sight of "
@@ -513,7 +523,7 @@ static int bring_up(int first)
             "the adventurer 12 seconds ago. 2 of your kin are within hearing, some of them fighting. Choices: hunt (go "
             "where you last saw them and search), ambush (hide in the dark near there and wait to strike), rally (call "
             "your kin and go there together), return (give up and go back to your post).";
-        /* the pipelines go by the tokens in a batch (the second review): 1, 2, 4, 8 of these (~150 tokens each), then
+        /* the pipelines go by the tokens in a batch: 1, 2, 4, 8 of these (~150 tokens each), then
            8 doubled (~2400 tokens, the most eight real questions hold) */
         static char LONG2[1400];
         snprintf(LONG2, sizeof LONG2, "%s %s", LONG, LONG);
@@ -536,6 +546,8 @@ static int bring_up(int first)
     return 1;
 }
 
+/* the worker thread: loads the library and the model, then answers the asked questions in batches until the program
+   ends; lets the model go when idle or when the Esc menu picks another */
 static DWORD WINAPI worker(void *arg)
 {
     (void)arg;
@@ -545,7 +557,7 @@ static DWORD WINAPI worker(void *arg)
     MIND_NATIVE(bin);                     /* (Linux: as the disk has it; the library is handed it) */
     char dll[MAX_PATH];
     snprintf(dll, sizeof dll, "%s" MIND_SEP MIND_LIB, bin);
-    model_resolve(model, sizeof model);   /* UWPORT_LLM_MODEL, llm_model, Qwen3.5-2B */
+    model_resolve(model, sizeof model);   /* UWPORT_LLM_MODEL, llm_model, else the default */
     MIND_NATIVE(model);
     HMODULE h = LoadLibraryExA(dll, NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
     if (h) {
@@ -572,6 +584,7 @@ static DWORD WINAPI worker(void *arg)
 #endif
         snprintf(path, sizeof path, "%s" MIND_SEP "logs" MIND_SEP "ai-%s.jsonl", plat_home(), day);
         jsonl = fopen(path, "a");
+        if (!jsonl) RLOG_W("mind", "cannot open %s: %s", path, rlog_errno());
     }
     if (!bring_up(1)) {
         InterlockedExchange(&state, 3);
@@ -696,7 +709,7 @@ void port_mind_stop(void)
     SetEvent(wake);
     if (WaitForSingleObject(thread, 5000) != WAIT_OBJECT_0) {
         /* the worker still inside a load or a decode (it cannot be interrupted): returning into the normal exit
-           would unload uwmind.dll and the ggml DLLs under it (the third review's item 1). The process ends here
+           would unload uwmind.dll and the ggml DLLs under it. The process ends here
            instead: no DLL_PROCESS_DETACH, no static destructors, nothing left racing. The game has saved what it
            saves before this (plat_run's loop has ended); the recording's end (main.c's port_blackbox_close after
            plat_run) is written here first. */

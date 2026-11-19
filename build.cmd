@@ -44,7 +44,7 @@ set UV_CACHE_DIR=O:\appsnotonc\sentinel\uv\cache
 uv run --no-project python -I tools\core.py || exit /b 1
 clang %CLANG_FLAGS% -O1 -w -o build\coretest.exe tests\coretest.c build\gen\core_tab.c build\gen\core_stubs.c build\core\core.a || echo (build\coretest.exe is in use by a proof: left as it was)
 clang %CF% -o build\check.exe src\check.c %COMMON% -lwinmm || exit /b 1
-clang %CF% -o build\%EXE% src\main.c src\render.c src\ngx.c src\game.c src\inventory.c src\ui.c src\smoothtext.c %COMMON% build\gen\core_stubs.c build\core\core.a -ld3d12 -ldxgi -ldxguid -luser32 -lgdi32 -ladvapi32 -lwinmm || exit /b 1
+clang %CF% -Iport\win32 -o build\%EXE% port\win32\rlog.c src\main.c src\render.c src\ngx.c src\game.c src\inventory.c src\ui.c src\smoothtext.c %COMMON% build\gen\core_stubs.c build\core\core.a -ld3d12 -ldxgi -ldxguid -luser32 -lgdi32 -ladvapi32 -lwinmm || exit /b 1
 rem the DLSS 5 bridge: its calls must return into it (no tail calls), see src\nrbridge.c
 if not "%1"=="new" clang %CF% -fno-optimize-sibling-calls -shared -o build\uw_nvngx.dll src\nrbridge.c || exit /b 1
 echo built

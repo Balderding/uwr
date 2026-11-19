@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "rlog.h"
 #include "uwacmat.h"
 #ifdef _WIN32                          /* (the path separator: Windows' as before; "/" for the Linux build) */
 #define ACMAT_SEP "\\"
@@ -180,13 +181,13 @@ static int text_read(char *text, const char *name)
         if ((h = strchr(s, '#'))) *h = 0;
         const char *why = line_read(s);
         if (why) {
-            fprintf(stderr, "fx: acoustics: %s line %d: %s\n", name, no, why);
+            RLOG_W("fx", "acoustics: %s line %d: %s", name, no, why);
             clear();
             return 0;
         }
         s = next;
     }
-    if (!npresets) { fprintf(stderr, "fx: acoustics: %s defines no preset\n", name); return 0; }
+    if (!npresets) { RLOG_W("fx", "acoustics: %s defines no preset", name); return 0; }
     return 1;
 }
 
@@ -197,12 +198,12 @@ int uwacmat_load(const char *datadir)
     clear();
     snprintf(path, sizeof path, "%s" ACMAT_SEP "acoustics.txt", datadir ? datadir : ".");
     FILE *f = fopen(path, "rb");
-    if (!f) { fprintf(stderr, "fx: acoustics: no %s\n", path); return 0; }
+    if (!f) { RLOG_W("fx", "acoustics: no %s", path); return 0; }
     size_t len = fread(text, 1, sizeof text - 1, f);
     int whole = feof(f);
     fclose(f);
     text[len] = 0;
-    if (!whole) { fprintf(stderr, "fx: acoustics: %s is longer than %d bytes\n", path, (int)sizeof text - 1); return 0; }
+    if (!whole) { RLOG_W("fx", "acoustics: %s is longer than %d bytes", path, (int)sizeof text - 1); return 0; }
     return text_read(text, path);
 }
 
@@ -219,7 +220,7 @@ int uwacmat_write_default(const char *datadir)
     snprintf(path, sizeof path, "%s" ACMAT_SEP "acoustics.txt", datadir ? datadir : ".");
     FILE *f = fopen(path, "rb");
     if (f) { fclose(f); return 0; }
-    if (!(f = fopen(path, "wb"))) { fprintf(stderr, "fx: acoustics: cannot write %s\n", path); return -1; }
+    if (!(f = fopen(path, "wb"))) { RLOG_E("fx", "acoustics: cannot write %s: %s", path, rlog_errno()); return -1; }
     size_t n = strlen(DEFAULT_TEXT), w = fwrite(DEFAULT_TEXT, 1, n, f);
     return fclose(f) == 0 && w == n ? 1 : -1;
 }

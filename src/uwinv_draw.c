@@ -1,11 +1,11 @@
-/* uwinv_draw.c: our inventory panel (Tab in our full-screen display), the original's right-hand panel made tall (the
-   user's picture, work\tabpanel_ref.jpg): its top is the original's own panel as the game draws it now (the figure, the
-   worn armour, the shoulder, hand and ring holes with what is in them, their numbers, the weight stone), copied from the
-   original's screen; below it, instead of the original's eight holes, our inventory in the original's art, Bagnon-like:
-   the pack's eight holes, then every bag the player has opened in our grid, its contents in rows of four of the
-   original's round holes, then the bag bar (every bag carried; a right click opens or closes one in the grid), the
-   name of what the pointer is on in gold, and the character sheet's check box. The hole art and the leather are the
-   original's main screen's (data\ui\screens\MAIN.png): one row of its pack holes is repeated for every row.
+/* uwinv_draw.c: our inventory panel (Tab in our full-screen display), the original's right-hand panel made tall: its
+   top is the original's own panel as the game draws it now (the figure, the worn armour, the shoulder, hand and ring
+   holes with what is in them, their numbers, the weight stone), copied from the original's screen; below it, instead
+   of the original's eight holes, our inventory in the original's art, Bagnon-like: the pack's eight holes, then every
+   bag the player has opened in our grid, its contents in rows of four of the original's round holes, then the bag bar
+   (every bag carried; a right click opens or closes one in the grid), the name of what the pointer is on in gold, and
+   the character sheet's check box. The hole art and the leather are the original's main screen's
+   (data\ui\screens\MAIN.png): one row of its pack holes is repeated for every row.
 
    What it shows is the original's own data (port\win32\uwinv.c's snapshot). The clicks are the backend's: this returns
    what the pointer is on: a display position of the original's panel (1..11 the body's holes, from the top), a thing
@@ -30,6 +30,7 @@ extern int uwv_sheet_full;               /* uwview.c, settings.txt char_sheet: 1
 #define SW 83                                                   /* the original's statistics page */
 #define SH (66 + 20 * (ui_font_height(FONT_SMALL) + 2) + 3 + 18)
 
+/* copies s into d with its first letter in capitals */
 static void capital(char *d, const char *s, size_t n)
 {
     snprintf(d, n, "%s", s);
@@ -51,12 +52,13 @@ static void thing_in(const UwiThing *t, int x, int y, int w, int h)
     }
 }
 
-/* the old version's tooltip (inventory.c's tip_build / tip_draw): lines on the parchment, each its own colour, beside
+/* the item tooltip: lines on the parchment, each its own colour, beside
    the pointer (to its left: the panel is at the right); with what it would replace in its body slot (worn: the thing
    worn there now), "If you equip this:" and the differences, green up and red down */
 typedef struct { char text[64]; u8 r, g, b; } TipLine;
 static int tip_n;
 static TipLine tip_l[16];
+/* adds a coloured line to the tooltip (at most 16) */
 static void tip_add(u8 r, u8 g, u8 b, const char *fmt, ...)
 {
     va_list ap;
@@ -66,6 +68,7 @@ static void tip_add(u8 r, u8 g, u8 b, const char *fmt, ...)
     va_end(ap);
     tip_l[tip_n].r = r, tip_l[tip_n].g = g, tip_l[tip_n].b = b, tip_n++;
 }
+/* builds and draws the tooltip of thing t near the pointer */
 static void tip_of(const UwiThing *t, const UwiThing *worn, int body, int mx, int my)   /* body: it is worn now */
 {
     static const char *const KIND[3] = {"slash", "bash", "stab"};
@@ -92,7 +95,7 @@ static void tip_of(const UwiThing *t, const UwiThing *worn, int body, int mx, in
     } else if (!body && t->kind && t->wear > 0 && (!worn || worn->item < 0)) tip_add(20, 110, 20, "Can be worn: the slot is free");
     for (k = 0; k < tip_n; k++)
         if (ui_text_width(FONT_NORMAL, tip_l[k].text) > w) w = ui_text_width(FONT_NORMAL, tip_l[k].text);
-    w += 4, h = tip_n * lh + 4;   /* (margins of one overlay pixel inside the frame: the user, 2026-11-14) */
+    w += 4, h = tip_n * lh + 4;   /* (margins of one overlay pixel inside the frame) */
     x = mx - w - 8, y = my - h / 2;
     if (x < 2) x = mx + 12;
     if (y < 2) y = 2;
@@ -100,7 +103,7 @@ static void tip_of(const UwiThing *t, const UwiThing *worn, int body, int mx, in
     ui_parchment(x, y, w, h);
     for (k = 0; k < tip_n; k++) ui_text(FONT_NORMAL, tip_l[k].text, x + 2, y + 2 + k * lh, tip_l[k].r, tip_l[k].g, tip_l[k].b);
 }
-/* an empty body hole's name, on the hover (the user: only then, nothing written in the holes) */
+/* an empty body hole's name, shown on the hover only (nothing is written in the holes) */
 static const char *slot_name(int d)
 {
     static const char *const N[12] = {"", "Legs", "Head", "Chest", "Hands", "Feet", "Right shoulder", "Left shoulder",
@@ -108,7 +111,7 @@ static const char *slot_name(int d)
     return d >= 1 && d <= 11 ? N[d] : "";
 }
 
-/* the character sheet on the original's own statistics page (PANELS.GR picture 2, data\ui\panels\002.png, 83 x 114):
+/* draws the character sheet on the original's own statistics page (PANELS.GR picture 2, data\ui\panels\002.png, 83 x 114):
    its top as it is (the leather and its STR DEX INT VIT MANA EXP, labels at rows 21, 28 ... 56) with the name and class
    above and the values beside the labels; its dark skills box (rows 63..104) made tall enough for all twenty skills,
    its middle rows (66..90) repeated; its bottom edge (rows 110..113) under it */
@@ -153,9 +156,21 @@ static void sheet_draw(const UwiSnap *s, int x, int y)
     }
 }
 
-/* the character sheet's tooltips, as our previous version had them (game.c's sheet_tip): what the stat or skill under
-   the pointer does by the original's rules, with this character's numbers, and how it grows */
-static void sheet_tip_k(const UwiSnap *s, int k, int mx, int my)
+/* the character sheet's tooltips: what the stat or skill under the pointer does by the original's rules, with this
+   character's numbers, and how it grows */
+typedef struct { char title[64]; char body[1200]; int n; } SheetTip;
+/* adds text to the tooltip's body (cut at its size) */
+static void tt_add(SheetTip *x, const char *fmt, ...)
+{
+    va_list ap;
+    int room = (int)sizeof x->body - (x->n < (int)sizeof x->body ? x->n : (int)sizeof x->body - 1);
+    va_start(ap, fmt);
+    x->n += vsnprintf(x->body + x->n, (size_t)room, fmt, ap);
+    va_end(ap);
+    x->n = x->n < (int)sizeof x->body ? x->n : (int)sizeof x->body - 1;
+}
+/* the tip of skill k (0..19) */
+static void sheet_tip_skill(const UwiSnap *s, int k, SheetTip *x)
 {
     static const char *const WHAT[20] = {
         "Fighting with any weapon: half of it is added to every attack score.",
@@ -183,138 +198,145 @@ static void sheet_tip_k(const UwiSnap *s, int k, int mx, int my)
         "In water, every tick a Swimming check against thy load (carried / most x 32): failures tire thee; too tired and "
         "thou dost drown.",
     };
+    static const char *const AT[3] = {"Strength", "Intelligence", "Dexterity"};
+    int str = s->attr[0], dex = s->attr[1], intl = s->attr[2];
+    int ai = k < 7 ? 0 : k < 10 ? 1 : 2, av = ai == 0 ? str : ai == 1 ? intl : dex;
+    char nm[24];
+    capital(nm, s->skn[k], sizeof nm);
+    snprintf(x->title, sizeof x->title, "%s %d", nm, s->skill[k]);
+    tt_add(x, "%s\n", WHAT[k]);
+    if (k == 0) tt_add(x, "Thy attack score now: %d (with fists).\n", s->skill[0] / 2 + s->skill[2] + dex / 7);
+    if (k >= 2 && k <= 5) tt_add(x, "Thy attack score with it: %d.\n", s->skill[0] / 2 + s->skill[k] + dex / 7);
+    if (k == 7) tt_add(x, "Thy most mana now: %d.\n", (s->skill[7] + 1) * intl / 8);
+    tt_add(x, "Raised at a shrine by chanting its mantra (a skill point): two tries, each +1, +1 more ");
+    if (ai) tt_add(x, "while below half thy %s, +1 more ", AT[ai]);
+    tt_add(x, "by chance (likelier the further below %s it is). It stops at 30, or once above twice thy %s (%d).", AT[ai], AT[ai], 2 * av);
+}
+/* the tip of a stat or a line of the sheet (k below 0); 0 if k names nothing */
+static int sheet_tip_stat(const UwiSnap *s, int k, SheetTip *x)
+{
     static const unsigned char NEXT[16] = {0, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192};
     static const char *const SKN[7] = {"", "", "Unarmed", "Sword", "Axe", "Mace", "Missile"};
-    int n = 0;
     int str = s->attr[0], dex = s->attr[1], intl = s->attr[2];
-    char t[64] = "", b[1200];
-#define ADD(...) (n += snprintf(b + n, sizeof b - (size_t)(n < (int)sizeof b ? n : (int)sizeof b - 1), __VA_ARGS__), n = n < (int)sizeof b ? n : (int)sizeof b - 1)
-    b[0] = 0;
-    (void)SKN;
-    if (k >= 0 && k < 20) {
-        static const char *const AT[3] = {"Strength", "Intelligence", "Dexterity"};
-        int ai = k < 7 ? 0 : k < 10 ? 1 : 2, av = ai == 0 ? str : ai == 1 ? intl : dex;
-        char nm[24];
-        capital(nm, s->skn[k], sizeof nm);
-        snprintf(t, sizeof t, "%s %d", nm, s->skill[k]);
-        ADD("%s\n", WHAT[k]);
-        if (k == 0) ADD("Thy attack score now: %d (with fists).\n", s->skill[0] / 2 + s->skill[2] + dex / 7);
-        if (k >= 2 && k <= 5) ADD("Thy attack score with it: %d.\n", s->skill[0] / 2 + s->skill[k] + dex / 7);
-        if (k == 7) ADD("Thy most mana now: %d.\n", (s->skill[7] + 1) * intl / 8);
-        ADD("Raised at a shrine by chanting its mantra (a skill point): two tries, each +1, +1 more ");
-        if (ai) ADD("while below half thy %s, +1 more ", AT[ai]);
-        ADD("by chance (likelier the further below %s it is). It stops at 30, or once above twice thy %s (%d).", AT[ai], AT[ai], 2 * av);
-    } else switch (k) {
+    switch (k) {
     case -1:
-        snprintf(t, sizeof t, "%s", s->name);
-        ADD("Thy class gave thy starting attributes and the skills chosen at the start.");
+        snprintf(x->title, sizeof x->title, "%s", s->name);
+        tt_add(x, "Thy class gave thy starting attributes and the skills chosen at the start.");
         break;
     case -2:
-        snprintf(t, sizeof t, "Level %d", s->level);
-        ADD("Each level adds a skill point and raises thy most vitality (30 + level x Strength / 5).\n");
-        ADD("Spells up to circle (level + 1) / 2 can be cast: circle %d now.\n", (s->level + 1) / 2);
-        if (s->level >= 0 && s->level < 16) ADD("Next level at %d experience.", NEXT[s->level] * 50);
-        else ADD("The highest level.");
+        snprintf(x->title, sizeof x->title, "Level %d", s->level);
+        tt_add(x, "Each level adds a skill point and raises thy most vitality (30 + level x Strength / 5).\n");
+        tt_add(x, "Spells up to circle (level + 1) / 2 can be cast: circle %d now.\n", (s->level + 1) / 2);
+        if (s->level >= 0 && s->level < 16) tt_add(x, "Next level at %d experience.", NEXT[s->level] * 50);
+        else tt_add(x, "The highest level.");
         break;
     case -10:
-        snprintf(t, sizeof t, "Strength %d", str);
-        ADD("Most vitality: 30 + level x Strength / 5 (%d).\n", 30 + s->level * str / 5);
-        ADD("Damage: + Strength / 9 to weapon blows (+%d); fists + Strength / 6.\n", str / 9);
-        ADD("Carry limit: Strength x 2 stones (%d).\n", str * 2);
-        ADD("Every 24 ticks (about 8 minutes) a Strength check against 15 heals a point.\n");
-        ADD("Governs Attack, Defense, Unarmed, Sword, Axe, Mace and Missile.");
+        snprintf(x->title, sizeof x->title, "Strength %d", str);
+        tt_add(x, "Most vitality: 30 + level x Strength / 5 (%d).\n", 30 + s->level * str / 5);
+        tt_add(x, "Damage: + Strength / 9 to weapon blows (+%d); fists + Strength / 6.\n", str / 9);
+        tt_add(x, "Carry limit: Strength x 2 stones (%d).\n", str * 2);
+        tt_add(x, "Every 24 ticks (about 8 minutes) a Strength check against 15 heals a point.\n");
+        tt_add(x, "Governs Attack, Defense, Unarmed, Sword, Axe, Mace and Missile.");
         break;
     case -11:
-        snprintf(t, sizeof t, "Dexterity %d", dex);
-        ADD("Attack score: + Dexterity / 7 (+%d).\n", dex / 7);
-        ADD("Governs Traps, Search, Track, Sneak, Repair, Charm, Picklock, Acrobat, Appraise and Swimming.");
+        snprintf(x->title, sizeof x->title, "Dexterity %d", dex);
+        tt_add(x, "Attack score: + Dexterity / 7 (+%d).\n", dex / 7);
+        tt_add(x, "Governs Traps, Search, Track, Sneak, Repair, Charm, Picklock, Acrobat, Appraise and Swimming.");
         break;
     case -12:
-        snprintf(t, sizeof t, "Intelligence %d", intl);
-        ADD("Most mana: (Mana skill + 1) x Intelligence / 8 (%d).\n", (s->skill[7] + 1) * intl / 8);
-        ADD("Governs Mana, Lore and Casting.");
+        snprintf(x->title, sizeof x->title, "Intelligence %d", intl);
+        tt_add(x, "Most mana: (Mana skill + 1) x Intelligence / 8 (%d).\n", (s->skill[7] + 1) * intl / 8);
+        tt_add(x, "Governs Mana, Lore and Casting.");
         break;
     case -13:
-        snprintf(t, sizeof t, "Vitality %d of %d", s->health, s->maxhealth);
-        ADD("Thy life: at nothing thou art dead. Most: 30 + level x Strength / 5.\n");
-        ADD("Heals a point on a Strength check against 15 every 24 ticks (about 8 minutes), and by sixteenths of the most "
+        snprintf(x->title, sizeof x->title, "Vitality %d of %d", s->health, s->maxhealth);
+        tt_add(x, "Thy life: at nothing thou art dead. Most: 30 + level x Strength / 5.\n");
+        tt_add(x, "Heals a point on a Strength check against 15 every 24 ticks (about 8 minutes), and by sixteenths of the most "
             "while sleeping. Poison takes its strength every 3 ticks.");
         break;
     case -14:
-        snprintf(t, sizeof t, "Mana %d of %d", s->mana, s->maxmana);
-        ADD("Spent casting: 3 x the spell's circle.\nMost: (Mana skill + 1) x Intelligence / 8.\n");
-        ADD("Every 3 ticks (about a minute) a Mana skill check against 10 gives back 1 or 2; sleeping gives back sixteenths "
+        snprintf(x->title, sizeof x->title, "Mana %d of %d", s->mana, s->maxmana);
+        tt_add(x, "Spent casting: 3 x the spell's circle.\nMost: (Mana skill + 1) x Intelligence / 8.\n");
+        tt_add(x, "Every 3 ticks (about a minute) a Mana skill check against 10 gives back 1 or 2; sleeping gives back sixteenths "
             "of the most.");
         break;
     case -15:
-        snprintf(t, sizeof t, "Experience %d", s->exp);
-        ADD("Gained by slaying creatures: 0.4 x the creature's worth + 2 dice of it, tenths; a powerful one 1.5 to 3 times "
+        snprintf(x->title, sizeof x->title, "Experience %d", s->exp);
+        tt_add(x, "Gained by slaying creatures: 0.4 x the creature's worth + 2 dice of it, tenths; a powerful one 1.5 to 3 times "
             "that. Death takes an eighth.\nHalved when thy level is above twice the dungeon level + 2.\n");
-        ADD("Every 300 gives a skill point.");
-        if (s->level >= 0 && s->level < 16) ADD(" Next level at %d.", NEXT[s->level] * 50);
+        tt_add(x, "Every 300 gives a skill point.");
+        if (s->level >= 0 && s->level < 16) tt_add(x, " Next level at %d.", NEXT[s->level] * 50);
         break;
     /* the full sheet's own rows */
     case -20:
-        snprintf(t, sizeof t, "Skill points %d", s->skill_points);
-        ADD("Spent at a shrine: use the shrine and chant a skill's mantra to raise that skill.\n");
-        ADD("One for every level and for every 300 experience.");
+        snprintf(x->title, sizeof x->title, "Skill points %d", s->skill_points);
+        tt_add(x, "Spent at a shrine: use the shrine and chant a skill's mantra to raise that skill.\n");
+        tt_add(x, "One for every level and for every 300 experience.");
         break;
     case -21:
-        snprintf(t, sizeof t, "Hunger %d, fatigue %d", s->hunger, s->fatigue);
-        ADD("The game's own words for them (a click on the compass prints the same).\n");
-        ADD("Eat to keep hunger up; sleep to rest. Starving or exhausted, thou dost weaken.");
-        if (s->poison) ADD("\nPoisoned: strength %d. Poison takes vitality every 3 ticks until it wears off or is cured.", s->poison);
+        snprintf(x->title, sizeof x->title, "Hunger %d, fatigue %d", s->hunger, s->fatigue);
+        tt_add(x, "The game's own words for them (a click on the compass prints the same).\n");
+        tt_add(x, "Eat to keep hunger up; sleep to rest. Starving or exhausted, thou dost weaken.");
+        if (s->poison) tt_add(x, "\nPoisoned: strength %d. Poison takes vitality every 3 ticks until it wears off or is cured.", s->poison);
         break;
     case -22:
-        snprintf(t, sizeof t, "Carrying %d.%d of %d.%d stones", s->weight / 10, s->weight % 10, s->max_weight / 10, s->max_weight % 10);
-        ADD("The most thou canst carry: Strength x 2 stones.\nThe load also makes swimming harder.");
+        snprintf(x->title, sizeof x->title, "Carrying %d.%d of %d.%d stones", s->weight / 10, s->weight % 10, s->max_weight / 10, s->max_weight % 10);
+        tt_add(x, "The most thou canst carry: Strength x 2 stones.\nThe load also makes swimming harder.");
         break;
     case -23:
-        snprintf(t, sizeof t, "Armour");
-        ADD("By where a blow lands: body %d, arms %d, legs %d, head %d.\n", s->armour[0], s->armour[1], s->armour[2], s->armour[3]);
-        ADD("Each piece worn gives its protection x its condition / 64 + 1; a shield counts on body and arms. "
+        snprintf(x->title, sizeof x->title, "Armour");
+        tt_add(x, "By where a blow lands: body %d, arms %d, legs %d, head %d.\n", s->armour[0], s->armour[1], s->armour[2], s->armour[3]);
+        tt_add(x, "Each piece worn gives its protection x its condition / 64 + 1; a shield counts on body and arms. "
             "Protection spells add to all four.");
         break;
     case -24:
         if (s->attack < 0) {
-            snprintf(t, sizeof t, "Missile %d", s->skill[6]);
-            ADD("A missile weapon: its shots fly at Missile x 8 + 192; a Missile check makes a shot faster or slower, and "
+            snprintf(x->title, sizeof x->title, "Missile %d", s->skill[6]);
+            tt_add(x, "A missile weapon: its shots fly at Missile x 8 + 192; a Missile check makes a shot faster or slower, and "
                 "its damage grows with its speed.\nThe launcher's damage: %d.", s->dmg[0]);
         } else {
-            snprintf(t, sizeof t, "Attack score %d", s->attack);
-            ADD("Each blow is a check of this against the creature's defence.\n");
-            ADD("Attack / 2 (%d) + %s (%d) + Dexterity / 7 (%d)%s.", s->skill[0] / 2, SKN[s->atk_skill], s->skill[s->atk_skill],
+            snprintf(x->title, sizeof x->title, "Attack score %d", s->attack);
+            tt_add(x, "Each blow is a check of this against the creature's defence.\n");
+            tt_add(x, "Attack / 2 (%d) + %s (%d) + Dexterity / 7 (%d)%s.", s->skill[0] / 2, SKN[s->atk_skill], s->skill[s->atk_skill],
                 dex / 7, s->easy ? " + 7 (easy)" : "");
         }
         break;
     case -25:
-        snprintf(t, sizeof t, "Defense %d", s->defence);
-        ADD("A creature's blow is a check of its attack score against this: the higher, the more it misses.\n");
-        ADD("The Defense skill (%d), with half the skill of the weapon in hand added.", s->skill[1]);
+        snprintf(x->title, sizeof x->title, "Defense %d", s->defence);
+        tt_add(x, "A creature's blow is a check of its attack score against this: the higher, the more it misses.\n");
+        tt_add(x, "The Defense skill (%d), with half the skill of the weapon in hand added.", s->skill[1]);
         break;
     case -26:
-        snprintf(t, sizeof t, "Damage");
-        if (s->attack < 0) ADD("The launcher's damage: %d.", s->dmg[0]);
-        else if (s->atk_skill == 2) ADD("Fists: Unarmed x 2/5 + Strength / 6 + 4 = %d, by the blow's charge.", s->dmg[0]);
-        else ADD("A slash %d, a bash %d, a stab %d: the weapon's own, + Strength / 9 (%d). The charge of the blow scales it.",
-                 s->dmg[0], s->dmg[1], s->dmg[2], str / 9);
+        snprintf(x->title, sizeof x->title, "Damage");
+        if (s->attack < 0) tt_add(x, "The launcher's damage: %d.", s->dmg[0]);
+        else if (s->atk_skill == 2) tt_add(x, "Fists: Unarmed x 2/5 + Strength / 6 + 4 = %d, by the blow's charge.", s->dmg[0]);
+        else tt_add(x, "A slash %d, a bash %d, a stab %d: the weapon's own, + Strength / 9 (%d). The charge of the blow scales it.",
+                    s->dmg[0], s->dmg[1], s->dmg[2], str / 9);
         break;
     case -27:
-        snprintf(t, sizeof t, "%s", s->drawn ? "Fight mode" : "Weapon put away");
-        ADD("C (or a click on the weapon hand) draws the weapon or puts it away.");
+        snprintf(x->title, sizeof x->title, "%s", s->drawn ? "Fight mode" : "Weapon put away");
+        tt_add(x, "C (or a click on the weapon hand) draws the weapon or puts it away.");
         break;
     case -28:
-        snprintf(t, sizeof t, "Where and when");
-        ADD("The level of the Abyss thou art on, the day of thy imprisonment and the time of day, as the game says them "
+        snprintf(x->title, sizeof x->title, "Where and when");
+        tt_add(x, "The level of the Abyss thou art on, the day of thy imprisonment and the time of day, as the game says them "
             "when the compass is clicked.");
         break;
-    default: return;
+    default: return 0;
     }
-#undef ADD
-    ui_tip(mx, my, t, b, 230);
+    return 1;
+}
+/* shows the tooltip for key k (a skill 0..19, or a negative stat key) near the pointer (mx, my) */
+static void sheet_tip_k(const UwiSnap *s, int k, int mx, int my)
+{
+    SheetTip x;
+    x.title[0] = 0, x.body[0] = 0, x.n = 0;
+    if (k >= 0 && k < 20) sheet_tip_skill(s, k, &x);
+    else if (!sheet_tip_stat(s, k, &x)) return;
+    ui_tip(mx, my, x.title, x.body, 230);
 }
 
-/* the game's page: what its rows are at the pointer */
+/* the game's page: the tooltip for the row under the pointer */
 static void sheet_tip(const UwiSnap *s, int x, int y, int mx, int my)
 {
     int lh = ui_font_height(FONT_SMALL) + 2, k = -100;
@@ -326,12 +348,12 @@ static void sheet_tip(const UwiSnap *s, int x, int y, int mx, int my)
     if (k != -100) sheet_tip_k(s, k, mx, my);
 }
 
-/* the full sheet (the user, 2026-11-14: our first engine's character panel, src\game.c sheet_draw, "it had way more
-   information"; the game's page stays the Esc menu's other choice): parchment, the numbers the rules use in the
+/* the full sheet (the game's page stays the Esc menu's other choice): parchment, the numbers the rules use in the
    game's words, each piece with its tooltip. FW wide; its height from the rows */
-#define FW 120   /* (half the width it was: the user, 2026-11-14, "the character panel could be half the size it is now") */
+#define FW 120
 static int full_hot;              /* what the pointer is on (sheet_tip_k's key), -100 nothing */
 static int fmx, fmy;              /* the pointer, overlay pixels */
+/* the full sheet's height */
 static int full_h(void) { int lh = ui_font_height(FONT_NORMAL) + 1; return 11 * lh + 10 * lh + 7; }   /* (tight: less wasted room) */
 /* a piece of text; under the pointer a darker paper behind it and its key kept for the tooltip */
 static void seg(int *x, int y, const char *txt, u8 r, u8 g, u8 b, int key)
@@ -341,6 +363,7 @@ static void seg(int *x, int y, const char *txt, u8 r, u8 g, u8 b, int key)
     ui_text(FONT_NORMAL, txt, *x, y, r, g, b);
     *x += w + 4;
 }
+/* draws the full sheet at (x, y); (mx, my) is the pointer, to find the piece it is on */
 static void sheet_full_draw(const UwiSnap *s, int x, int y, int mx, int my)
 {
     static const char *const SKN[7] = {"", "", "fists", "Sword", "Axe", "Mace", "Missile"};
@@ -399,6 +422,7 @@ static void sheet_full_draw(const UwiSnap *s, int x, int y, int mx, int my)
 }
 
 /* ---- the art: rows of the main screen's picture (MAIN.png) or of the original's live screen, onto the overlay ---- */
+/* copies a rectangle of a picture onto the overlay, opaque */
 static void blit_pic(const Pic *p, int sx, int sy, int w, int h, int dx, int dy)
 {
     Overlay *o = ui_overlay();
@@ -414,6 +438,7 @@ static void blit_pic(const Pic *p, int sx, int sy, int w, int h, int dx, int dy)
         }
     }
 }
+/* copies a rectangle of the original's 320 x 200 screen onto the overlay */
 static void blit_screen(const unsigned *scr, int sx, int sy, int w, int h, int dx, int dy)
 {
     Overlay *o = ui_overlay();
@@ -431,12 +456,13 @@ static void blit_screen(const unsigned *scr, int sx, int sy, int w, int h, int d
 }
 
 /* the top as the original last drew it on the inventory page: kept, so that the character stays shown while the
-   original's panel is on the rune page (which our own panel beside it shows instead, the user's) */
+   original's panel is on the rune page (which our own panel beside it shows instead) */
 static unsigned topc[OW * 200];
 static int topc_ok, topc_h;
 #define TOPN 8
 static unsigned topr[TOPN][OW * 200];   /* the last TOPN tops as drawn; topc the one 6 frames old */
 static int topr_n;
+/* remembers the top as drawn on the overlay (keeping the last TOPN) */
 static void top_keep(int h, int dx, int dy)
 {
     Overlay *o = ui_overlay();
@@ -453,6 +479,7 @@ static void top_keep(int h, int dx, int dy)
 #define RUNE_H 114          /* our rune page: the original's page art, its rune grid and the shelf strip */
 #define RUNE_X0 6           /* the grid's first cell in the page (ShowRune: x 0xF4 on the screen, the page at 0xED) */
 #define RUNE_Y0 4
+/* draws the kept top back */
 static void blit_cache(int h, int dx, int dy)
 {
     Overlay *o = ui_overlay();
@@ -489,13 +516,14 @@ static struct {
     Row row[40];
     int nrows;
     int name_y, check_x, check_y;
-    /* the open bags' rows scrolled when they do not all fit (the user, 2026-11-15: "a slider on the right side like
-       the esc menu", the wheel over the panel): bar on, the track's place, the thumb's */
+    /* the open bags' rows scrolled when they do not all fit (the wheel over the panel): bar on, the track's place,
+       the thumb's */
     int bar, tx, ty, tw, th, thumb_y, thumb_h;
 } L;
 /* the bags' rows: the first shown (bag_top), how many there are and how many fit; the thumb dragged */
 static int bag_top, bag_rows, bag_vis, bag_drag, bag_drag_dy;
 
+/* 1 if the bag object obj has its rows open in the grid */
 static int bag_open(const UwiSnap *s, int obj)
 {
     for (int i = 0; i < s->nopen; i++)
@@ -503,6 +531,8 @@ static int bag_open(const UwiSnap *s, int obj)
     return 0;
 }
 
+/* works out the panel: the original's top, the pack's two rows, each open bag's rows (scrolled), the name line and the
+   check box, into L */
 static void layout(const UwiSnap *s)
 {
     const Overlay *o = ui_overlay();
@@ -580,7 +610,7 @@ static void layout(const UwiSnap *s)
             L.thumb_y = L.ty + (bag_rows > bag_vis ? (L.th - L.thumb_h) * bag_top / (bag_rows - bag_vis) : 0);
         } else L.bar = 0;
     }
-    /* (no bag bar: a right click on a bag in the grid opens or closes its rows, the user's) */
+    /* (no bag bar: a right click on a bag in the grid opens or closes its rows) */
     /* the name line and the check box */
     L.row[L.nrows++] = (Row){R_PLAIN, y};
     L.name_y = y + 3;
@@ -630,7 +660,7 @@ int uwi_panel(const UwiSnap *s, int mx, int my, int sheet, int draw, float *fx, 
         if (!draw) return UWI_HIT_SCROLL;
         hit = UWI_HIT_SCROLL;
     }
-    sx = 2, sy = L.py;   /* the character sheet at the screen's left edge (the user) */
+    sx = 2, sy = L.py;   /* the character sheet at the screen's left edge */
     if (hit == UWI_HIT_SCROLL) ;
     else if (x >= L.px && x < L.px + OW && y >= L.py && y < L.py + L.ph) hit = 0;
     else if (sheet && x >= sx && x < sx + (uwv_sheet_full ? FW : SW) && y >= sy && y < sy + (uwv_sheet_full ? full_h() : SH)) hit = 0;

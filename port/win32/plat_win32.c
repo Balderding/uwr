@@ -10,7 +10,11 @@
    palette and presents it (GDI's StretchDIBits for now, paced by the compositor's DwmFlush). Keys:
    a window's key messages carry the PC's set-1 scan code (lParam bits 16-23, the E0 prefix as bit
    24), which go to the game as the keyboard sent them. A captured pointer's motion comes from raw
-   input (WM_INPUT), as SDL's relative mode reads it. */
+   input (WM_INPUT), as SDL's relative mode reads it.
+
+   Log tag: win32 (rlog). Left as plain fprintf on purpose: log_start's own lines and the "==== uwr started ===="
+   banner (they run while stderr is being sent to the log file), and the VEH: lines of a fault (written from inside
+   the exception handler, with as little work as can be, never dropped by the log's level). */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <windowsx.h>
@@ -25,11 +29,12 @@
 #include "plat.h"
 #include "ui/settings.h"
 #include "uwfront.h"
+#include "rlog.h"
 void port_crash_handlers(void);         /* sys/crash.c */
 
-static HWND g_win;
-static volatile LONG game_done;
-static int game_status;
+static HWND g_win;                      /* the one window (NULL in a hidden run, live.hidden) */
+static volatile LONG game_done;         /* 1 once the game's thread has ended: the loop then ends too */
+static int game_status;                 /* the game's exit code, plat_run's answer */
 static int focus_test_msg;             /* UWPORT_FOCUSTEST's own WM_KILLFOCUS / WM_SETFOCUS being handled (its log tag) */
 static int cursor_hidden;              /* the host's cursor hidden (uwp_cursor_hide; ShowCursor's count is ours) */
 static uint64_t ms_now(void) { return GetTickCount64(); }
@@ -60,7 +65,8 @@ static int special_key(int vk, int down)
 
 /* ---- the game's thread, time, threads ---- */
 
-static void *targ[2];
+static void *targ[2];                   /* the game's function and its argument, for game_thread */
+/* the game's own thread: the crash handlers set up, the game run to its end, its exit code kept for plat_run */
 static DWORD WINAPI game_thread(LPVOID p)
 {
     void **a = p;
@@ -73,6 +79,7 @@ static DWORD WINAPI game_thread(LPVOID p)
     return (DWORD)st;
 }
 
+/* the game asks to end (on its own thread): the loop is told, and this thread waits for the process to close */
 void plat_game_exit(int status)
 {
     game_status = status;
@@ -80,8 +87,9 @@ void plat_game_exit(int status)
     for (;;) Sleep(1000);
 }
 
-void plat_game_park(void) { for (;;) Sleep(1000); }
+void plat_game_park(void) { for (;;) Sleep(1000); }   /* the game's thread held for good (the process ends elsewhere) */
 
+/* the high-resolution counter and its ticks a second */
 uint64_t plat_counter(void) { LARGE_INTEGER c; QueryPerformanceCounter(&c); return (uint64_t)c.QuadPart; }
 uint64_t plat_counter_hz(void) { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return (uint64_t)f.QuadPart; }
 
@@ -105,6 +113,7 @@ void plat_sleep_ns(uint64_t ns)
 }
 
 struct thread_arg { int (*fn)(void *); void *arg; };
+/* a runtime thread's start: its function and argument taken from the block plat_thread_start made, the block freed */
 static DWORD WINAPI thread_start(LPVOID p)
 {
     struct thread_arg a = *(struct thread_arg *)p;
@@ -124,6 +133,7 @@ void uwp_music_room(int ms, int high)
     if (high >= 0) InterlockedExchange(&music_high, high != 0);
     if (pit_thread_h) SetThreadPriority(pit_thread_h, music_high ? THREAD_PRIORITY_HIGHEST : THREAD_PRIORITY_NORMAL);
 }
+/* one of the runtime's threads started (1 MB of stack reserved); -1 when it cannot be */
 int plat_thread_start(const char *name, int (*fn)(void *), void *arg)
 {
     struct thread_arg *a = malloc(sizeof *a);
@@ -166,6 +176,7 @@ static void audio_pull(int16_t *out, int frames)
     if (hold > 0) { hold--; memset(out, 0, (size_t)frames * 4); return; }
     audio_fill(out, frames);
 }
+/* the sound's own thread: each block the device has played is filled again and handed back */
 static DWORD WINAPI audio_thread(LPVOID p)
 {
     int i;
@@ -183,6 +194,8 @@ static DWORD WINAPI audio_thread(LPVOID p)
     return 0;
 }
 
+/* the sound device opened: 16-bit stereo at rate, four blocks of 512 frames queued, the refill thread started;
+   -1 when the device cannot be opened (the game then runs silent) */
 int plat_audio_open(int rate, void (*fill)(int16_t *, int))
 {
     WAVEFORMATEX f;
@@ -218,6 +231,7 @@ int plat_audio_open(int rate, void (*fill)(int16_t *, int))
 
 /* ---- the window ---- */
 
+/* the window made as large as needed for a client area (the inside, without frame and title) of w x h */
 static void resize_client(int w, int h)
 {
     RECT r = { 0, 0, w, h };
@@ -226,6 +240,7 @@ static void resize_client(int w, int h)
     SetWindowPos(g_win, NULL, 0, 0, r.right - r.left, r.bottom - r.top, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
+/* the pointer captured (held inside the window, the cursor hidden) or let go; never in a hidden run */
 static void set_capture(int on)
 {
     if (!g_win || uwf_offscreen()) return;
@@ -253,7 +268,7 @@ static void set_capture(int on)
         GetClipCursor(&c);
         GetClientRect(g_win, &r);
         MapWindowPoints(g_win, NULL, (POINT *)&r, 2);
-        fprintf(stderr, PLAT_NAME ": clip: set %d: clip %ld,%ld,%ld,%ld client %ld,%ld,%ld,%ld screen %d,%d,%d,%d cursor %d at %lu ms\n",
+        RLOG_I("win32", "clip: set %d: clip %ld,%ld,%ld,%ld client %ld,%ld,%ld,%ld screen %d,%d,%d,%d cursor %d at %lu ms",
                 on, c.left, c.top, c.right, c.bottom, r.left, r.top, r.right, r.bottom,
                 GetSystemMetrics(SM_XVIRTUALSCREEN), GetSystemMetrics(SM_YVIRTUALSCREEN),
                 GetSystemMetrics(SM_XVIRTUALSCREEN) + GetSystemMetrics(SM_CXVIRTUALSCREEN),
@@ -262,6 +277,8 @@ static void set_capture(int on)
     }
 }
 
+/* a key message to the game as the keyboard's set-1 scan code (Ctrl+F10 lets a locked pointer go; Print Screen and
+   Pause send their own sequences); 1: handled here */
 static int key_msg(WPARAM vk, LPARAM lp, int down)
 {
     if (uwf_no_input()) return 1;
@@ -278,6 +295,7 @@ static int key_msg(WPARAM vk, LPARAM lp, int down)
     return 1;
 }
 
+/* the window's messages: close, keys, pointer and wheel, raw mouse motion, focus, size, dropped files, painting */
 static LRESULT CALLBACK wnd_proc(HWND w, UINT m, WPARAM wp, LPARAM lp)
 {
     switch (m) {
@@ -334,7 +352,7 @@ static LRESULT CALLBACK wnd_proc(HWND w, UINT m, WPARAM wp, LPARAM lp)
             DWORD pid = 0;
             char cls[64] = "";
             if (fg) GetWindowThreadProcessId(fg, &pid), GetClassNameA(fg, cls, sizeof cls);
-            fprintf(stderr, PLAT_NAME ": focus: lost to window %p; the foreground window %p (pid %lu, class %s) at %lu ms%s\n",
+            RLOG_I("win32", "focus: lost to window %p; the foreground window %p (pid %lu, class %s) at %lu ms%s",
                     (void *)to, (void *)fg, (unsigned long)pid, cls, (unsigned long)(ms_now() - L.start),
                     focus_test_msg ? " (focus test)" : "");
         }
@@ -376,6 +394,7 @@ static LRESULT CALLBACK wnd_proc(HWND w, UINT m, WPARAM wp, LPARAM lp)
 
 /* ---- the settings screen's live options ---- */
 
+/* the largest whole scale (1 to 8) of the 320 x 200 picture (240 high with aspect) whose window fits the work area */
 int plat_max_scale(int aspect)
 {
     RECT wa;
@@ -389,7 +408,8 @@ int plat_max_scale(int aspect)
     return s;
 }
 
-static WINDOWPLACEMENT g_wpprev = { sizeof g_wpprev };
+static WINDOWPLACEMENT g_wpprev = { sizeof g_wpprev };   /* where the window was before full screen */
+/* full screen: the frame taken off and the window over the whole monitor; off: the frame and the old place back */
 static void set_fullscreen(int on)
 {
     if (uwf_offscreen()) return;
@@ -436,6 +456,7 @@ static void big_window_size(void)
     big_w = w, big_h = h;
 }
 
+/* the settings screen's display options taken: full screen, the scale (kept within what fits), 4:3, whole-number scaling */
 void plat_set_display(int fullscreen, int scale, int aspect, int integer_scale)
 {
     int most = plat_max_scale(aspect);
@@ -452,6 +473,7 @@ void plat_set_display(int fullscreen, int scale, int aspect, int integer_scale)
     }
 }
 
+/* a left click at a point of the window, sent as the window's own messages (release: the button let go too) */
 void plat_window_click(float x, float y, int release)
 {
     LPARAM lp = MAKELPARAM((int)x, (int)y);
@@ -465,6 +487,7 @@ void plat_window_click(float x, float y, int release)
 static volatile LONG pick_state;       /* 0 none, 1 a folder in pick_path, 2 cancelled */
 static char pick_path[1024];
 
+/* Windows' folder picker: 0 and the chosen folder in out, -1 when none was chosen */
 static int browse_folder(HWND owner, const char *title, char *out, size_t outsz)
 {
     BROWSEINFOA bi;
@@ -484,6 +507,7 @@ static int browse_folder(HWND owner, const char *title, char *out, size_t outsz)
     return ok ? 0 : -1;
 }
 
+/* the settings screen's "choose a folder": the picker shown, its answer left in pick_state for the loop */
 static int start_pick(const char *start)
 {
     (void)start;
@@ -559,7 +583,7 @@ static void present(HDC dc)
             for (i = 0; i < cw * ch; i++)
                 rgbp[i * 3] = bgra[i * 4 + 2], rgbp[i * 3 + 1] = bgra[i * 4 + 1], rgbp[i * 3 + 2] = bgra[i * 4];
             if (plat_write_png_rgb(live.window_shot_path, rgbp, cw, ch) == 0)
-                fprintf(stderr, PLAT_NAME ": wrote %s (%dx%d, the window)\n", live.window_shot_path, cw, ch);
+                RLOG_I("win32", "wrote %s (%dx%d, the window)", live.window_shot_path, cw, ch);
         }
         free(bgra), free(rgbp);
         if (bm) DeleteObject(bm);
@@ -568,33 +592,53 @@ static void present(HDC dc)
     }
 }
 
+/* (2026-11-18, the speed's research) UWPORT_TIMING=1: a step of the loop longer than 50 ms is named in the log with
+   the time of each of its parts, to find what holds the window's thread */
+static double loop_ms(void) { LARGE_INTEGER c, f; QueryPerformanceCounter(&c), QueryPerformanceFrequency(&f); return (double)c.QuadPart * 1000.0 / (double)f.QuadPart; }
+/* one pass of the main thread's loop: the checks' timed events, the window's messages, the input, the game's
+   picture, then the frame shown; 1 when the program is to end */
 static int loop_step(void)
 {
     MSG msg;
+    static int timing = -1;
+    if (timing < 0) { const char *e = getenv("UWPORT_TIMING"); timing = e && *e && *e != '0'; }
+    double t[8];
+    t[0] = loop_ms();
     uwf_tick_begin();   /* (the game's mouse-look turned on or off: the capture follows it now) */
     uwf_tick_tests();   /* (the checks' UWPORT_FOCUSTEST and UWPORT_MOUSETEST: uwfront.c) */
+    t[1] = loop_ms();
     while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) {
         if (msg.message == WM_QUIT) L.quit = 1;
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
+    t[2] = loop_ms();
     uwf_tick_input();   /* (the runtime's tick, the settings screen, the input's step, our taps' breaks) */
     {
         LONG ps = InterlockedExchange(&pick_state, 0);
         if (ps) settings_folder_chosen(ps == 1 ? pick_path : NULL);
     }
+    t[3] = loop_ms();
     uwf_tick_scan();    /* (the game's picture, the screenshots, a timed run's end) */
+    t[4] = loop_ms();
     if (game_done) L.quit = 1;
     if (!g_win || L.hidden_win) {
         Sleep(16);
+        t[5] = t[6] = loop_ms();
     } else {
         HDC dc = GetDC(g_win);
         present(dc);
         ReleaseDC(g_win, dc);
         L.presents++;
+        t[5] = loop_ms();
         if (!uwf_view_ok() && FAILED(DwmFlush())) Sleep(10);  /* the compositor's frame: the loop's pace (the renderer's
                                                        present waits for the display itself) */
+        t[6] = loop_ms();
     }
+    if (timing && t[6] - t[0] > 50)
+        RLOG_I("win32", "a slow loop step at %lu ms: %.0f ms (tests %.0f, messages %.0f, input %.0f, the game's picture %.0f, "
+                "the frame %.0f, the compositor %.0f)", (unsigned long)(ms_now() - L.start), t[6] - t[0], t[1] - t[0], t[2] - t[1],
+                t[3] - t[2], t[4] - t[3], t[5] - t[4], t[6] - t[5]);
     return L.quit;
 }
 
@@ -608,6 +652,7 @@ static int loop_step(void)
    maker's. At the program's end what is left is copied before it goes. */
 static HANDLE term_out = INVALID_HANDLE_VALUE, term_file = INVALID_HANDLE_VALUE;
 static CRITICAL_SECTION term_lock;
+/* what the log file has gained since the last time, copied to the terminal */
 static void term_copy(void)
 {
     char buf[4096];
@@ -622,6 +667,7 @@ static DWORD WINAPI term_thread(LPVOID arg)
     for (;;) term_copy(), Sleep(50);
 }
 static void term_last(void) { fflush(stdout), fflush(stderr), term_copy(); }
+/* the terminal copy started: the log file read from byte from on, by a thread every 50 ms, and once more at exit */
 static void term_start(const char *path, HANDLE out, LONGLONG from)
 {
     LARGE_INTEGER at;
@@ -635,6 +681,8 @@ static void term_start(const char *path, HANDLE out, LONGLONG from)
     atexit(term_last);
     if ((th = CreateThread(NULL, 0, term_thread, NULL, 0, NULL)) != NULL) CloseHandle(th);
 }
+/* stderr and stdout sent to home\logs\uwr.log (the old log moved to uwr.1.log past 5 MB), unless they already go to
+   a file or a pipe, or the run is hidden. Its lines stay plain fprintf: stderr is being redirected while they run */
 static void log_start(void)
 {
     HANDLE e = GetStdHandle(STD_ERROR_HANDLE);
@@ -698,6 +746,8 @@ static void start_note(void)
     GdiFlush();
 }
 
+/* The backend's main: the log, the window (made, shown unless hidden, our renderer and sound started), the input,
+   the game's thread started, then the loop till the end; the game's exit code */
 int plat_run(const PlatConfig *cfg0, const PlatHooks *h, int (*game)(void *), void *arg)
 {
     int scale = cfg0->scale > 0 ? cfg0->scale : 3;
@@ -705,7 +755,7 @@ int plat_run(const PlatConfig *cfg0, const PlatHooks *h, int (*game)(void *), vo
     hooks = h;
     live = *cfg0;
     if (!live.hidden) log_start();
-    fprintf(stderr, PLAT_NAME ": mouse: %s\n", live.mouse_lock ? "lock" : "follow");
+    RLOG_I("win32", "mouse: %s", live.mouse_lock ? "lock" : "follow");
     settings_pick_folder = start_pick;
     SetProcessDPIAware();
     timeBeginPeriod(1);
@@ -731,14 +781,14 @@ int plat_run(const PlatConfig *cfg0, const PlatHooks *h, int (*game)(void *), vo
         if (big_w) {
             r.right = big_w, r.bottom = big_h;
             live.integer_scale = 0;               /* the picture fills the height, scaled freely */
-            fprintf(stderr, PLAT_NAME ": the window at %dx%d for our renderer\n", big_w, big_h);
+            RLOG_I("win32", "the window at %dx%d for our renderer", big_w, big_h);
         }
         AdjustWindowRectEx(&r, WS_OVERLAPPEDWINDOW, FALSE, 0);
         MultiByteToWideChar(CP_UTF8, 0, live.title ? live.title : PLAT_TITLE, -1, title, 256);
         g_win = CreateWindowExW(0, wc.lpszClassName, title, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
                                 r.right - r.left, r.bottom - r.top, NULL, NULL, inst, NULL);
         if (!g_win) {
-            fprintf(stderr, PLAT_NAME ": no window (%lu)\n", (unsigned long)GetLastError());
+            RLOG_E("win32", "no window: error %lu", (unsigned long)GetLastError());
             return 1;
         }
         DragAcceptFiles(g_win, TRUE);
@@ -758,7 +808,7 @@ int plat_run(const PlatConfig *cfg0, const PlatHooks *h, int (*game)(void *), vo
         { const char *e = getenv("UWPV_VEH"); if (!e || *e != '0') AddVectoredExceptionHandler(1, veh_where); }
         uwf_view_start();
         uwf_fx_audio_start();   /* fx_audio 1: OpenAL Soft (bin\soft_oal.dll); else nothing */
-        fprintf(stderr, PLAT_NAME ": Win32 window, %s\n", uwf_view_loaded() ? "our renderer (Vulkan or D3D12: the line below)" : "GDI, paced by the compositor");
+        RLOG_I("win32", "Win32 window, %s", uwf_view_loaded() ? "our renderer (Vulkan or D3D12: the line below)" : "GDI, paced by the compositor");
     }
     uwf_input_init();                  /* the window's input (uwinput.c) */
     targ[0] = (void *)game;
@@ -769,7 +819,7 @@ int plat_run(const PlatConfig *cfg0, const PlatHooks *h, int (*game)(void *), vo
     /* the game's thread gets a large stack: host frames are bigger than DOS's */
     gt = CreateThread(NULL, 16 << 20, game_thread, targ, STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);
     if (!gt) {
-        fprintf(stderr, PLAT_NAME ": no game thread (%lu)\n", (unsigned long)GetLastError());
+        RLOG_E("win32", "no game thread: error %lu", (unsigned long)GetLastError());
         return 1;
     }
     CloseHandle(gt);
@@ -783,19 +833,22 @@ int plat_run(const PlatConfig *cfg0, const PlatHooks *h, int (*game)(void *), vo
 
 /* ---- dialogs, before plat_run ---- */
 
+/* a message box (an error's, or for information), its text also in the log */
 void plat_message(int error, const char *title, const char *text)
 {
-    fprintf(stderr, PLAT_NAME ": %s\n%s\n", title, text);
+    rlog(error ? RLOG_ERROR : RLOG_INFO, "win32", "%s\n%s", title, text);
     MessageBoxA(NULL, text, title, MB_OK | (error ? MB_ICONERROR : MB_ICONINFORMATION));
 }
 
+/* the text asked first (OK or Cancel), then the folder picker: 0 and the folder in out, -1 none chosen */
 int plat_choose_folder(const char *title, const char *text, char *out, size_t outsz)
 {
-    fprintf(stderr, PLAT_NAME ": %s\n%s\n", title, text);
+    RLOG_I("win32", "%s\n%s", title, text);
     if (MessageBoxA(NULL, text, title, MB_OKCANCEL | MB_ICONINFORMATION) != IDOK) return -1;
     return browse_folder(NULL, title, out, outsz);
 }
 
+/* the exe's own folder, ending in '\'; NULL when Windows cannot say */
 const char *plat_base_dir(void)
 {
     static char dir[MAX_PATH];

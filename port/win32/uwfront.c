@@ -1,10 +1,12 @@
-/* uwfront.c: our front end over the platform backend (plat_win32.c; its seam: uwfront.h). Everything of ours that is
-   not the window system: the screen the game shows, our keys' and the pointer's routing through uwinput.c (the
-   settings screen, our Esc menu, our inventory panel, the world's clicks, a centred piece, the game), mouse-look's
-   want and capture, the attack's flick and the throw's momentum, the hotkeys, our renderer's function table
-   (uwview.dll) and the picture it is given each pass, our effects' audio. Moved out of plat_win32.c (2026-11-15,
-   the Linux / SDL plan's step 2) with no change in behaviour: the same statements in the same order on the same
-   thread; the window's own calls became the uwp_* services. No windows.h here. */
+/* uwfront.c: our front end over the platform backend (plat_win32.c or plat_sdl3.c; the seam between them is
+   uwfront.h). Everything of ours that is not the window system: which screen the game shows, the routing of keys and
+   pointer through uwinput.c (the settings screen, our Esc menu, our inventory panel, the world's clicks, a centred
+   piece of the original's, the game), mouse-look's want and capture, the attack's flick and the throw's momentum,
+   the hotkeys, the renderer DLL's function table (uwview.dll) and the picture it is given each pass, and our
+   effects' audio. The window is reached only through the uwp_* services; no windows.h here. Log tag: front.
+   Not through rlog, on purpose: the in: trace lines and the fx: lines (check scripts match them by their exact
+   start), and the AI: lines on stdout (the AI's own log stream). */
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,6 +24,7 @@
 #include "sys/enhance.h"
 #include "uwinput.h"
 #include "uwfront.h"
+#include "rlog.h"
 #define UWF_PATH 260                   /* (Win32's MAX_PATH: the paths' buffers as they were) */
 /* the MS C runtime's _stricmp for ASCII (the C locale's tolower): 0 when the two are the same but for case */
 static int uwf_stricmp(const char *a, const char *b)
@@ -39,14 +42,14 @@ int port_config_get(const char *home, const char *key, char *out, size_t outsz);
 int port_config_set(const char *home, const char *key, const char *value);
 int port_hunter_setting(int v);   /* the game's hunter.c: llm_hunters read (v < 0) or set, taken at once */
 int port_hunter_usable(void);    /* 0 smart hunting off, 1 ready, 2 no language model */
-/* the creatures' AI levels (the game's cunning.c, 2026-11-16): 0 Original, 1 Devious, 2 Monstrous; Monstrous's parts
+/* the creatures' AI levels (the game's cunning.c): 0 Original, 1 Devious, 2 Monstrous; Monstrous's parts
    (0 hit and run, 1 calls, 2 pack courage, 3 fall back, 4 strike together, 5 calls passed on, 6 the messages); part
    7 the friendly creatures (Devious and Monstrous); who decides (0 the rules, 1 the language model). v < 0 reads,
    else sets, taken at once and kept */
 int port_ai_level(int v);
 int port_ai_part(int part, int v);
 int port_ai_by_model(int v);
-/* (2026-11-17) the parts 8 to 17 are the rows MO_AIX0 to MO_AIX9: 8 hears you run, 9 searches the ways out, 10 more
+/* the parts 8 to 17 are the rows MO_AIX0 to MO_AIX9: 8 hears you run, 9 searches the ways out, 10 more
    ambushers, 11 wary after a fight (Devious); 12 fetches kin, 13 the lure, 14 the cut-off, 15 fighting roles, 16 the
    alarm, 17 hunters bring the pack (Monstrous). A part's row is shown from its own level up: cun_part_level */
 int cun_part_level(int part);
@@ -54,7 +57,8 @@ enum { MO_AIX0 = 150, MO_AIX1, MO_AIX2, MO_AIX3, MO_AIX4, MO_AIX5, MO_AIX6, MO_A
        /* the third round, the parts 18 to 24: takes cover, picks its ground, runs out of sight, learns how you fight
           (Devious); won't be drawn out, death cry, surround (Monstrous) */
        MO_AIX10, MO_AIX11, MO_AIX12, MO_AIX13, MO_AIX14, MO_AIX15, MO_AIX16, MO_AIXEND = MO_AIX16,
-       MO_AILOGFILE };                  /* ai_log_file: the AI's lines always into the log file */
+       MO_AILOGFILE = 129 };            /* ai_log_file: the AI's lines always into the log file (its own id: after
+                                           MO_AIXEND it would be 167, the first enhancement's) */
 unsigned cun_fired_count(int part);     /* how often the part was used this session */
 int port_ai_logfile(int v);
 /* a part's row value: On / Off, and how often it was used this session once it was */
@@ -88,8 +92,7 @@ static int fight_mode, display_mode = -1;
 static int full_play(void);
 static void game_key(int c, int down);
 static void send_key(uint8_t make);
-/* the rune shelf and the active spells for our HUD (the user, 2026-11-13: they were missing): PANELS.C's set_runes and
-   active_spells hand them here on the game thread (port_hud_runes / _spells); the DLL's uwv_hud_magic draws them */
+/* the rune shelf and the active spells for our HUD: PANELS.C's set_runes and active_spells hand them here on the game thread (port_hud_runes / _spells); the DLL's uwv_hud_magic draws them */
 static volatile unsigned char hud_runes[3] = {0x18, 0x18, 0x18}, hud_spells[3] = {0xFF, 0xFF, 0xFF};
 static void (*hud_magic_fn)(const unsigned char *runes, const unsigned char *spells);
 static void (*hud_combat_fn)(int eyes, int pow);   /* uwv_hud_combat: our gargoyle's glow and the swing indicator */
@@ -183,6 +186,7 @@ static int input_trace(void)
     return v;
 }
 static unsigned key_bytes_sent;        /* (a count: "the focus lost: ... let go" when a release sent any) */
+/* a byte to the game's keyboard (the trace line stays raw: inputcheck.py matches it whole, ^in: ...$) */
 static void key_byte(uint8_t b)
 {
     if (input_trace()) fprintf(stderr, "in: key %02X\n", b);
@@ -198,6 +202,7 @@ static void game_key(int c, int down)
     key_byte((uint8_t)((c & 0x7F) | (down ? 0 : 0x80)));
 }
 
+/* the settings screen's key for a set-1 code, -1 none */
 static int set_key_of(int c)
 {
     switch (c) {
@@ -212,6 +217,7 @@ static int set_key_of(int c)
     }
 }
 
+/* a pointer event to the game (its trace line raw, as key_byte's) */
 static void to_game(const PlatPointer *p)
 {
     if (input_trace()) fprintf(stderr, "in: ptr %d %.2f %.2f %u\n", p->type, p->x, p->y, p->button);
@@ -270,9 +276,10 @@ static void handle_key(int c, int down, int repeat)
 struct loop L = { .w = 320, .hgt = 200 };
 
 static uint64_t ms_now(void) { return uwp_ms(); }
+/* a "what N at MS ms" line under UWPORT_LOOKDBG (the checks read them) */
 static void dbg_ms(const char *what, int v)
 {
-    if (getenv("UWPORT_LOOKDBG")) fprintf(stderr, PLAT_NAME ": %s %d at %lu ms\n", what, v, (unsigned long)(ms_now() - L.start));
+    if (getenv("UWPORT_LOOKDBG")) RLOG_I("front", "%s %d at %lu ms", what, v, (unsigned long)(ms_now() - L.start));
 }
 
 static int view_w, view_h;   /* the renderer's pixels while it runs (V.cw, V.ch; set by view_size) */
@@ -314,6 +321,7 @@ static int offscreen(void)
     if (v < 0) { const char *e = getenv("UWPORT_OFFSCREEN"); v = e && *e && *e != '0'; }
     return v;
 }
+/* the window's title with the mouse's state (captured: how to let it go) */
 static void mouse_title(int is_locked)
 {
     char t[256];
@@ -322,12 +330,14 @@ static void mouse_title(int is_locked)
     uwp_title(t);
 }
 
+/* a client point into the game's 320 x 200 picture */
 static void to_picture(int cx, int cy, float *x, float *y)
 {
     *x = (float)(cx - L.dst.left) * (float)L.w / (float)(L.dst.right - L.dst.left);
     *y = (float)(cy - L.dst.top) * (float)L.hgt / (float)(L.dst.bottom - L.dst.top);
 }
 
+/* a client point to the settings screen's pointer (its SET_W x SET_H) */
 static void settings_at(int cx, int cy, int down)
 {
     settings_pointer((cx - L.dst.left) * SET_W / (L.dst.right - L.dst.left),
@@ -383,7 +393,7 @@ static void pointer_game(int type, int cx, int cy, unsigned button)
            pointer may be another answer's */
         int answer = type == PLAT_POINTER_DOWN && button == PLAT_BUTTON_LEFT ? uwc_answer_at(cx, cy) : 0;
         if (answer > 0) {
-            if (getenv("UWPORT_CONVLOG")) fprintf(stderr, PLAT_NAME ": conv: our answer %d clicked\n", answer);
+            if (getenv("UWPORT_CONVLOG")) RLOG_I("front", "conv: our answer %d clicked", answer);
             send_key((uint8_t)(1 + answer));   /* scan codes 02..0A: the keys 1..9 */
             L.swallow |= button;
             return;
@@ -419,6 +429,7 @@ static void pointer_game(int type, int cx, int cy, unsigned button)
 /* an input script's pointer event (plat_pointer_event) on its way through uwinput: the game's own (its 320 x 200
    point, its motion) as before, or our menu's and the settings screen's */
 static const PlatPointer *script_ev;
+/* a script's pointer event to the game as it is, with the buttons kept */
 static void script_to_game(const PlatPointer *ev)
 {
     PlatPointer p = *ev;
@@ -457,10 +468,11 @@ static void raw_motion(long dx, long dy)
 
 static void menu_wheel_pass(int notches);   /* the wheel to our menu (after the renderer's table, V) */
 
+/* the pointer lock option set: the capture and the window's title follow */
 void plat_set_mouse_lock(int on)
 {
     live.mouse_lock = on != 0;
-    fprintf(stderr, PLAT_NAME ": mouse: %s\n", on ? "lock" : "follow");
+    RLOG_I("front", "mouse: %s", on ? "lock" : "follow");
     if (!uwp_window()) return;
     if (!on && locked) {
         locked = 0;
@@ -472,6 +484,7 @@ void plat_set_mouse_lock(int on)
 
 /* ---- input from an input script (inscript.c) ---- */
 
+/* an input script's key byte (set-1, after an E0 prefix byte) to its owner */
 void plat_key_byte(uint8_t b)
 {
     static int e0;
@@ -541,22 +554,23 @@ static struct view {
     void (*inv_wheel)(int notches);           /* the open bags' rows scrolled (the wheel over our panel: up positive) */
     int (*inv_click)(int mx, int my, int down); /* a left press / release on their slider: 1 taken */
     int (*menu_rows)(const char *title, const char *const *labels, const char *const *values, int n, int sel, int mx, int my);
-    /* the same with a line a row saying what it does, shown at the menu's foot (2026-11-14; NULL in an older DLL) */
+    /* the same with a line a row saying what it does, shown at the menu's foot (NULL in an older DLL) */
     int (*menu_rows2)(const char *title, const char *const *labels, const char *const *values, const char *const *hints, int n, int sel, int mx, int my);
     void (*menu_wheel)(int notches);          /* the menu's list scrolled (the wheel: up positive) */
     int (*menu_click)(int mx, int my, int down); /* a left press / release on the menu's scrollbar: 1 taken */
-    /* the Fog and smoke page (2026-11-17; all NULL in an older DLL: no page): the rows' sliders drawn and under the
+    /* the Fog and smoke page (all NULL in an older DLL: no page): the rows' sliders drawn and under the
        pointer (uwv_menu_sliders, uwv_menu_slider), and the rows themselves (src\volfog.inc's uwv_vol_*) */
     void (*menu_sliders)(const float *frac, int n);
     int (*menu_slider)(int mx, int my, int row, float *frac);
     int (*vol_rows)(void);
+    int (*heat_spots)(float *out, int max);   /* (the sound's heat shimmer; optional) */
     int (*vol_row)(int i, const char **label, const char **hint, int *kind, float *frac);
     int (*vol_value)(int i, int step, char *value, int n);
     int (*vol_set)(int i, const char *text);
     int (*vol_set_frac)(int i, float frac);
     const char *(*vol_preset_name)(int i);    /* the Fog and smoke tab's presets (uwv_vol_preset_name, uwv_vol_preset) */
     int (*vol_preset)(int set);
-    /* the menu's tabs (2026-11-17; NULL in an older DLL: no strip, the tabs by the keys alone): their names and the
+    /* the menu's tabs (NULL in an older DLL: no strip, the tabs by the keys alone): their names and the
        open one before the rows, and the tab under the pointer (uwv_menu_tabs, uwv_menu_tab_at) */
     void (*menu_tabs)(const char *const *names, int n, int open);
     int (*menu_tab_at)(int mx, int my);
@@ -576,7 +590,7 @@ static struct view {
     void (*fx_event)(int kind, float x, float y, float z, int fx, int mob);   /* the effects (uwv_fx_event) */
     int (*ac_grid)(UwvAcTile out[64 * 64], int *ceil_tex);   /* the level for the sound (uwv_acoustic_*) */
     int (*ac_doors)(UwvAcDoor *out, int cap);
-    int (*ac_things)(UwvAcBox *out, int cap);   /* (optional: a renderer built before 2026-11-16 has none) */
+    int (*ac_things)(UwvAcBox *out, int cap);   /* (optional: an older renderer has none) */
     unsigned (*ac_epoch)(void);
     int ok, cw, ch;                     /* started, at this client size */
     int failed;                         /* frames that did not go: the renderer is given up for GDI */
@@ -585,9 +599,8 @@ static struct view {
 } V;
 
 /* the renderer chosen (docs\superpowers\plans\2026-11-15-vulkan-renderer.md): UWPORT_RENDERER, else the port's settings
-   ("renderer", the Esc menu's Renderer row, at the next start), else Vulkan (the user, 2026-11-16: Vulkan the default,
-   "we are going to stay with it for everything"; it was Direct3D 12). 1 Vulkan (uwview_vk.dll), 0 only when d3d12 is
-   asked for by name */
+   ("renderer", the Esc menu's Renderer row, at the next start), else Vulkan, the default. 1 Vulkan (uwview_vk.dll),
+   0 only when d3d12 is asked for by name */
 static int view_vk;             /* the renderer loaded is the Vulkan one */
 static int renderer_wanted(void)
 {
@@ -598,10 +611,11 @@ static int renderer_wanted(void)
     return uwf_stricmp(v, "d3d12") != 0;
 }
 static void view_open(const char *dll);
+/* the renderer DLL loaded: Vulkan when wanted, Direct3D 12 the fallback on Windows; none when GDI is asked for */
 static void view_start(void)
 {
     /* UWPORT_GDI: a check's only (the original's own picture to compare ours with), taken with EXHUME_TEST_CHEATS=1.
-       A player's ways back to the original's picture are two (the user, 2026-11-15): the Esc menu's Display row,
+       A player's ways back to the original's picture are two: the Esc menu's Display row,
        and the renderer not starting (view_size) */
     const char *gdi = getenv("EXHUME_TEST_CHEATS") ? getenv("UWPORT_GDI") : NULL;
     if ((gdi && *gdi && *gdi != '0') || !plat_base_dir()) return;
@@ -614,16 +628,17 @@ static void view_start(void)
        cannot start (view_size), the original's picture */
     view_open("libuwview.so");
     view_vk = V.dll != NULL;
-    if (!V.dll) fprintf(stderr, PLAT_NAME ": the Vulkan renderer (libuwview.so) is not here or did not load: the original's picture\n");
+    if (!V.dll) RLOG_W("front", "the Vulkan renderer (libuwview.so) is not here or did not load: the original's picture");
 #else
     if (renderer_wanted()) {
         view_open("uwview_vk.dll");
         if (V.dll) { view_vk = 1; return; }
-        fprintf(stderr, PLAT_NAME ": the Vulkan renderer (uwview_vk.dll) is not here or did not load: Direct3D 12\n");
+        RLOG_W("front", "the Vulkan renderer (uwview_vk.dll) is not here or did not load: Direct3D 12");
     }
     view_open("uwview.dll");
 #endif
 }
+/* the DLL beside the program opened and its functions looked up into V; V cleared when one it needs is missing */
 static void view_open(const char *dll)
 {
     char path[UWF_PATH];
@@ -660,6 +675,7 @@ static void view_open(const char *dll)
     V.menu_sliders = (void (*)(const float *, int))uwp_lib_sym(V.dll, "uwv_menu_sliders");
     V.menu_slider = (int (*)(int, int, int, float *))uwp_lib_sym(V.dll, "uwv_menu_slider");
     V.vol_rows = (int (*)(void))uwp_lib_sym(V.dll, "uwv_vol_rows");
+    V.heat_spots = (int (*)(float *, int))uwp_lib_sym(V.dll, "uwv_heat_spots");
     V.vol_row = (int (*)(int, const char **, const char **, int *, float *))uwp_lib_sym(V.dll, "uwv_vol_row");
     V.vol_value = (int (*)(int, int, char *, int))uwp_lib_sym(V.dll, "uwv_vol_value");
     V.vol_set = (int (*)(int, const char *))uwp_lib_sym(V.dll, "uwv_vol_set");
@@ -672,13 +688,13 @@ static void view_open(const char *dll)
     V.inv_hit = (int (*)(const UwiSnap *, int, int, int, float *, float *))uwp_lib_sym(V.dll, "uwv_inv_hit");
     V.inv_wheel = (void (*)(int))uwp_lib_sym(V.dll, "uwv_inv_wheel");
     V.inv_click = (int (*)(int, int, int))uwp_lib_sym(V.dll, "uwv_inv_click");
-    {   /* the panel only with a DLL of this exe's build: the same UwiSnap (2026-11-14: a DLL with a larger one read past
-           the exe's snapshot, its words from the exe's mouse, and the game crashed) */
+    {   /* the panel only with a DLL of this exe's build: the same UwiSnap (a DLL with a larger one reads past the
+           exe's snapshot, its words from the exe's mouse, and the game crashes) */
         int (*snap_size)(void) = (int (*)(void))uwp_lib_sym(V.dll, "uwv_snap_size");
         int ds = snap_size ? snap_size() : -1;
         if (ds != (int)sizeof(UwiSnap)) {
-            fprintf(stderr, PLAT_NAME ": uwview.dll is of another build (its inventory snapshot %d bytes, ours %d): our "
-                    "inventory panel off, the original's interface instead\n", ds, (int)sizeof(UwiSnap));
+            RLOG_W("front", "uwview.dll is of another build (its inventory snapshot %d bytes, ours %d): our "
+                   "inventory panel off, the original's interface instead", ds, (int)sizeof(UwiSnap));
             V.inventory = NULL, V.inv_hit = NULL;
         }
     }
@@ -705,8 +721,8 @@ static void view_open(const char *dll)
         if (game_dir) game_dir(plat_data_root());   /* the game's files, for the renderer's data */
     }
     if (!V.init || !V.ui_size || !V.frame || !V.shutdown) { uwp_lib_close(V.dll); memset(&V, 0, sizeof V); return; }
-    /* a conversation's pieces (uwconv.c), centred over our dimmed last frame (on since 2026-11-11: talking, answering and
-       leaving checked; UWPORT_NOCONV=1 shows the original's whole screen instead, for a comparison) */
+    /* a conversation's pieces (uwconv.c), centred over our dimmed last frame (UWPORT_NOCONV=1 shows the original's
+       whole screen instead, for a comparison) */
     uwc_bind(getenv("UWPORT_NOCONV") ? NULL : V.dll);
 }
 /* a backend's own drawing of our menu (plat_sdl3.c's uwmenu.c over src\menu_draw.c), for when our renderer is not up
@@ -716,6 +732,7 @@ void uwf_soft_menu(const UwfMenuFns *f) { soft_menu = f; }
 static int soft_menu_up(void) { return !V.ok && soft_menu != NULL; }
 /* the soft menu can open: the game's 3D screen in play, nothing of the original's centred over it */
 static int soft_live(void) { return soft_menu_up() && screen_now() == PS_GAME && !uwc_shown(); }
+/* the wheel to our menu: the renderer's, or the soft menu's */
 static void menu_wheel_pass(int notches)
 {
     if (V.menu_wheel) V.menu_wheel(notches);
@@ -728,6 +745,37 @@ static int menu_click_pass(int x, int y, int down)
     return soft_menu_up() ? soft_menu->click(x, y, down) : 0;
 }
 
+/* The Esc menu's Log detail row (Game tab): how much goes into uwr.log, rlog's levels 0 Errors only to 3
+   Everything; default Normal (2). Kept in uw1port.cfg (log_detail). The exe and the renderer DLL each have their own
+   copy of rlog.c and so their own level: the row sets both, here with rlog_set_level and in the DLL through
+   uwv_option OPT_LOG_DETAIL (step = the level + 1). When UWR_LOGLEVEL is set it wins at the start: the saved value
+   is then not applied (the row still changes the level for the rest of the run). */
+enum { OPT_LOG_DETAIL = 105 };
+static const char *const LOG_DETAIL[4] = {"Errors only", "Warnings", "Normal", "Everything"};
+static int log_detail_saved = -2;   /* -2: not read yet; -1: nothing to apply (nothing saved, or UWR_LOGLEVEL set) */
+/* the saved level read once from uw1port.cfg and put in force in the exe (not when UWR_LOGLEVEL is set) */
+static void log_detail_load(void)
+{
+    char v[16];
+    const char *env = getenv("UWR_LOGLEVEL");
+    if (log_detail_saved != -2) return;
+    log_detail_saved = -1;
+    if (env && env[0]) return;
+    if (!plat_home() || port_config_get(plat_home(), "log_detail", v, sizeof v) != 0) return;
+    if (v[0] < '0' || v[0] > '3' || v[1]) {
+        RLOG_W("front", "uw1port.cfg log_detail %s is not 0 to 3: left at %s", v, LOG_DETAIL[rlog_level()]);
+        return;
+    }
+    log_detail_saved = v[0] - '0';
+    rlog_set_level(log_detail_saved);
+}
+/* a level handed to the renderer DLL's own logger */
+static void log_detail_to_view(int level)
+{
+    char v[32];
+    if (V.option) V.option(OPT_LOG_DETAIL, level + 1, v, sizeof v);
+}
+
 /* (re)started at the window's client size; 0: GDI from now on */
 static int view_size(void)
 {
@@ -737,12 +785,12 @@ static int view_size(void)
     view_w = view_h = 0;
     client_size(&cw, &ch);
     if (cw < 64 || ch < 64) return V.ok;
-    fprintf(stderr, PLAT_NAME ": starting the renderer (%s) at %dx%d\n", view_vk ? "Vulkan" : "Direct3D 12", cw, ch);
+    RLOG_I("front", "starting the renderer (%s) at %dx%d", view_vk ? "Vulkan" : "Direct3D 12", cw, ch);
     V.ok = V.init(uwp_window(), cw, ch);
     V.cw = cw, V.ch = ch;
 #ifdef _WIN32
     if (!V.ok && view_vk) {   /* Vulkan did not start here: Direct3D 12 instead (the log says why) */
-        fprintf(stderr, PLAT_NAME ": the Vulkan renderer did not start: Direct3D 12\n");
+        RLOG_W("front", "the Vulkan renderer did not start: Direct3D 12");
         V.shutdown();
         uwp_lib_close(V.dll);
         memset(&V, 0, sizeof V);
@@ -754,7 +802,7 @@ static int view_size(void)
     }
 #endif
     if (!V.ok) {
-        fprintf(stderr, PLAT_NAME ": the %s renderer did not start: %s\n", view_vk ? "Vulkan" : "D3D12",
+        rlog(RLOG_WARN, "front", "the %s renderer did not start: %s", view_vk ? "Vulkan" : "D3D12",   /* (rlog, not RLOG_W: #ifdef in the arguments) */
 #ifdef _WIN32
                 "GDI");
 #else
@@ -773,9 +821,15 @@ static int view_size(void)
 #endif
     free(V.ui);
     V.ui = calloc((size_t)V.uw * (size_t)V.uh, 4);
-    if (!V.ui) { V.ok = 0; return 0; }
-    fprintf(stderr, PLAT_NAME ": %s renderer at %dx%d, interface layer %dx%d (%s)\n", view_vk ? "Vulkan" : "D3D12", cw, ch, V.uw, V.uh,
-            V.status ? V.status() : "");
+    if (!V.ui) {
+        RLOG_E("front", "out of memory (%zu bytes) for the %dx%d interface layer", (size_t)V.uw * (size_t)V.uh * 4, V.uw, V.uh);
+        V.ok = 0;
+        return 0;
+    }
+    RLOG_I("front", "%s renderer at %dx%d, interface layer %dx%d (%s)", view_vk ? "Vulkan" : "D3D12", cw, ch, V.uw, V.uh,
+           V.status ? V.status() : "");
+    log_detail_load();   /* the saved Log detail, to the DLL's logger too */
+    if (log_detail_saved >= 0) log_detail_to_view(rlog_level());
     return 1;
 }
 
@@ -815,13 +869,14 @@ static int display_orig(void)
     return plat_home() && port_config_get(plat_home(), "display", v, sizeof v) == 0 && !strcmp(v, "original");
 #endif
 }
+/* the display chosen (display_mode) applied: the enhancements, wide pitch, the door helpers, mouse-look's speed */
 static void display_apply(void)
 {
 #ifdef UWPORT_PLAIN
     display_mode = 1;   /* uw-original.exe: the original's display; the enhancements as the command line has them */
     return;
 #else
-    /* wide-pitch (the user: "the ability to look up and down needs to be much larger"): the original's 0x1000 (22.5
+    /* wide-pitch (a much larger look up and down): the original's 0x1000 (22.5
        degrees) either way becomes 0x38E3, 80 degrees, in our display; the original's renderer draws what is behind
        for the steep looks (VIEW3D.C's back pass) and ours follows the eye's pitch (get_eye's cPlayer->pitch) */
     uint32_t ours = (1u << ENH_MOUSE_LOOK) | (1u << ENH_MODERN_KEYS) | (1u << ENH_RUNE_KEYS) | (1u << ENH_COMBINED_MOVES)
@@ -830,10 +885,9 @@ static void display_apply(void)
     port_interact_take = display_mode != 1;   /* e takes what can be taken (port/ui/keys.c), as the old version's e */
     door_step(-1), door_pick(-1);             /* and the two door helpers */
     door_cue(-1);                             /* the door's message line as the config has it (EFFECT.C's port_door_cue_on) */
-    /* The one switch (the user, 2026-11-17: the original "changes everything back to it and turns off our
-       enhancements and the key binding changes to the old way too", ours "changes to everything we've done"). The
-       original's: every enhancement off (creature AI, hunters and friends with them: smart-hunting is the flag their
-       hooks test), the game's own 3D picture (view_present), its own sound (fx_audio_start), its half-second fades,
+    /* The one switch: the original's display turns everything of ours off (the enhancements, the key bindings),
+       ours turns it all back on. The original's: every enhancement off (creature AI, hunters and friends with
+       them: smart-hunting is the flag their hooks test), the game's own 3D picture (view_present), its own sound (fx_audio_start), its half-second fades,
        its door rules (door_step, door_pick, door_cue). What was on is kept here and comes back with ours; nothing
        of it is written to the settings. A replay keeps its enhancements (they are the recording's). */
     static uint32_t enh_kept;
@@ -862,7 +916,7 @@ static void display_apply(void)
 #endif
 }
 static int full_live;                 /* the 3D view live at the last frame */
-/* a stack's count asked in our message box (the user, 2026-11-16: Shift + a left click on a stack in our panel asks
+/* a stack's count asked in our message box (Shift + a left click on a stack in our panel asks
    "how many" in the message box we have, not in the original's own typed dialog; the number typed and Enter puts that
    many on the pointer, carried). Digits (the top row or the number pad), Backspace, Enter takes, Esc or a click
    anywhere gives it up. The split itself is uwinv.c's take (UWI_OP_PICK with the count), the game's own bookkeeping. */
@@ -889,7 +943,7 @@ static int ask_key(int c, int down, int repeat)
     return 1;
 }
 /* our message box: the scroll's last lines, opaque while new, fading out from 10 s to 12 s after the newest message
-   (or the wheel's last turn); at full while the Tab panel is open (the user's) */
+   (or the wheel's last turn); at full while the Tab panel is open */
 static void log_draw(void)
 {
     static char lines[UWLOG_ROWS][UWLOG_W];
@@ -949,6 +1003,7 @@ static uint64_t inv_hold_t;                  /* a pick or take was asked (uwi_cm
 #define UWI_PACK_LAST 19                     /* INVPANEL.C display positions: the pack's last hole (12..19), the open bag's picture */
 #define UWI_BAG 20
 
+/* a pointer event at a point of the original's screen to the game (our panel's) */
 static void inv_send(int type, float x, float y, unsigned button)
 {
     PlatPointer p;
@@ -968,8 +1023,8 @@ static void inv_send(int type, float x, float y, unsigned button)
 }
 static void key_later_pump(void);
 
-/* ---- the left button on things (the user, 2026-11-10: "left click on items in the world should pick it up and let you
-   drag them with it held down, also to throw them out into the world"), on the original's own routines (uw-new's
+/* ---- the left button on things in the world (a click looks, held or dragged it carries, let go it throws), on the
+   original's own routines (uw-new's
    port/ui/keys.c port_key_grab: n takes as the get mode's click, player_3dget; o puts the object on the cursor into the
    world as its right click in the 3D view, DoSpecialActions(DISP_WORLD) -> MISSILE.C's ReturnObject; u puts it in the
    first empty pack hole). The throw is the original's: ReturnObject throws (missile_fire, class 0xF) when the pointer
@@ -987,10 +1042,10 @@ static void key_later_pump(void);
 static struct { uint64_t t; float dx, dy; } mot[64];
 static unsigned mot_n;
 static struct { int on, grab, stack, panel, thr_x, thr_y, thr_speed, drag; uint64_t t0, t_end; float moved; } carry;
-/* the left button down on a thing in the world (the user's: a click looks, a drag carries, a right click takes): it goes
+/* the left button down on a thing in the world (a click looks, a drag carries, a right click takes): it goes
    onto the cursor once the mouse moves this far with the button held */
 static struct { int on, stack; float moved; uint64_t t0; } wdrag;
-#define HOLD_PICK_MS 250   /* a press held this long picks up (the user's: a click looks) */
+#define HOLD_PICK_MS 250   /* a press held this long picks up (a shorter one looks) */
 #define DRAG_START 10.0f
 static void carry_begin(int grab, int stack, int panel);
 static void grab_key(int how);   /* the left button holds a thing */
@@ -1037,7 +1092,7 @@ static void throw_point(int base_x, int *sx, int *sy, int *speed)
     y = y > 0x70 ? 0x70 : y;
     *sx = 0x34 + x, *sy = 0x43 + y;
     *speed = THROW_SLOW + (int)(strength * (float)(0xF - THROW_SLOW) + 0.5f);
-    if (getenv("UWPORT_GRABDBG")) fprintf(stderr, PLAT_NAME ": throw: momentum %.2f right %.2f up -> view %d,%d (screen %d,%d) speed %d\n", vx, vy, x, y, *sx, *sy, *speed);
+    if (getenv("UWPORT_GRABDBG")) RLOG_I("front", "throw: momentum %.2f right %.2f up -> view %d,%d (screen %d,%d) speed %d", vx, vy, x, y, *sx, *sy, *speed);
 }
 /* n (0), o (1), u (2): the port's keys for the take, the throw and the putting away, armed first */
 static void grab_key(int how)
@@ -1048,11 +1103,12 @@ static void grab_key(int how)
     if (how == 1) port_throw_x = carry.thr_x, port_throw_y = carry.thr_y, port_throw_speed = carry.thr_speed;
     port_grab_armed[how]++;
     send_key(make[how]);
-    if (getenv("UWPORT_GRABDBG")) fprintf(stderr, PLAT_NAME ": grab key %c at %lu ms\n", "nou"[how], (unsigned long)(ms_now() - L.start));
+    if (getenv("UWPORT_GRABDBG")) RLOG_I("front", "grab key %c at %lu ms", "nou"[how], (unsigned long)(ms_now() - L.start));
 #else
     (void)how;
 #endif
 }
+/* the left button holds a thing from now on (grab: just taken; panel: in our panel) */
 static void carry_begin(int grab, int stack, int panel)
 {
     carry.on = 1, carry.grab = grab, carry.stack = stack, carry.panel = panel, carry.t0 = ms_now(), carry.moved = 0, carry.drag = 0;
@@ -1076,7 +1132,7 @@ static void carry_release(int over_world, int let_go_x)
     else grab_key(1);
 }
 
-/* a left press on a thing in our panel: a look when let go soon, onto the pointer once held or dragged (the user's).
+/* a left press on a thing in our panel: a look when let go soon, onto the pointer once held or dragged.
    Picked up by this press (lift), it is put where the button comes up: another hole, or the world (thrown); on its own
    hole it stays on the pointer */
 static struct { int on, hit, obj, cx, cy, qty; uint64_t t0; } inv_lp;   /* qty: the stack's count (1: a single thing) */
@@ -1084,11 +1140,12 @@ static struct { int on, cx, cy; } lift;   /* something came onto the pointer by 
 static void inv_pick(void)
 {
     inv_lp.on = 0;
-    /* (held or dragged: the whole stack, with Shift too; Shift + a click is the only way to split: the user, 2026-11-16) */
+    /* (held or dragged: the whole stack, with Shift too; Shift + a click is the only way to split) */
     if (!uwi_cmd(UWI_OP_PICK, inv_lp.obj, 0, 0)) return;
     inv_hold_t = ms_now();
     lift.on = 1, lift.cx = inv_lp.cx, lift.cy = inv_lp.cy;
 }
+/* a press held long enough picks up: the world's, our panel's */
 static void hold_pump(void)
 {
     if (wdrag.on && ms_now() - wdrag.t0 >= HOLD_PICK_MS) {   /* the world: held, onto the cursor */
@@ -1098,11 +1155,13 @@ static void hold_pump(void)
     }
     if (inv_lp.on && ms_now() - inv_lp.t0 >= HOLD_PICK_MS) inv_pick();
 }
+/* each picture: the holds and the late key */
 static void inv_pump(void)
 {
     hold_pump();
     key_later_pump();
 }
+/* our panel opened or closed (the original's interface when the renderer has no panel) */
 static void inv_toggle(void)
 {
     if (!V.inventory || !V.inv_hit) { interface_toggle(); return; }   /* no renderer: the original's interface */
@@ -1128,7 +1187,7 @@ static void inv_toggle(void)
 static float view_tan(int zoom);
 /* our grid (uwinv_draw.c): its bags open in the grid (objects; kept while the game runs) */
 static int inv_open_bags[16], inv_nopen;
-/* the open bags kept in the port's settings ("open_bags", the objects' numbers: they are the save's own, so the same
+/* the open bags written to the port's settings ("open_bags", the objects' numbers: they are the save's own, so the same
    bags open after a restore), read once */
 static void inv_bags_save(void)
 {
@@ -1137,6 +1196,7 @@ static void inv_bags_save(void)
     for (i = 0; i < inv_nopen && n < (int)sizeof v - 8; i++) n += snprintf(v + n, sizeof v - (size_t)n, "%s%d", i ? "," : "", inv_open_bags[i]);
     if (plat_home()) port_config_set(plat_home(), "open_bags", v);
 }
+/* the open bags read from the settings, once */
 static void inv_bags_load(void)
 {
     static int done;
@@ -1152,9 +1212,9 @@ static void inv_bags_load(void)
         if (*p == ',') p++;
     }
 }
-/* the list keeps the order the bags were opened in, the oldest first; when it is full the oldest goes to make room (the
-   user, 2026-11-13: "cannot open more than one bag": the 16 places were filled by the numbers of bags from older saves
-   and games, which nothing ever took off, so a new bag was not added and did not open) */
+/* a bag opened or closed in our grid. The list keeps the order the bags were opened in, the oldest first; when it is
+   full the oldest goes to make room (else the bags of older saves, which nothing takes off, fill it and no new bag
+   opens) */
 static void inv_bag_toggle(int obj)
 {
     int i;
@@ -1184,13 +1244,13 @@ static int inv_map(int cx, int cy, int *gx, int *gy, int *hit)
         float tv = ((float)cy / (float)V.ch * 2.0f - 1.0f) * ty;
         float tx = view_tan(zoom), tyo = tx * (float)h / (float)w * 1.2f;
         float px = (th / tx + 1.0f) * 0.5f * (float)w, py = (tv / tyo + 1.0f) * 0.5f * (float)h;
-        if (getenv("UWPORT_INVDBG")) fprintf(stderr, PLAT_NAME ": world map zoom %d view %dx%d tan %g,%g -> %g,%g\n", zoom, w, h, th, tv, px, py);
+        if (getenv("UWPORT_INVDBG")) RLOG_I("front", "world map zoom %d view %dx%d tan %g,%g -> %g,%g", zoom, w, h, th, tv, px, py);
         if (px < 1 || py < 1 || px >= (float)w - 1 || py >= (float)h - 1) return 0;
         *gx = UWG_VIEW_X + (int)px, *gy = UWG_VIEW_Y + (int)py;
         return 1;
     }
 }
-/* ---- a pointer event of the window while the panel is open (the user's clicks): a left click on a thing looks at it,
+/* ---- a pointer event of the window while the panel is open: a left click on a thing looks at it,
    held or dragged it comes onto the pointer and is put down where the button comes up (another hole, or thrown into
    the world); a right click uses it (a bag: its rows in our grid; armour or a weapon in the pack: worn or wielded; on
    the body: off, into the pack; Shift: out into the world, or out of a bag into the pack). With something on the pointer
@@ -1230,6 +1290,7 @@ static void inv_throw(int gx)   /* the held thing let go over the world: thrown 
     throw_point(gx - 0x34, &ux, &uy, &sp);
     uwi_cmd(UWI_OP_DROP, ux, uy, sp);
 }
+/* a pointer event over our open panel, made into commands for the game (as the block above says): 1 taken */
 static int inv_pointer(int type, int cx, int cy, unsigned button)
 {
     int gx = 0, gy = 0, hit, m, obj, n;
@@ -1316,9 +1377,9 @@ static int inv_pointer(int type, int cx, int cy, unsigned button)
             if (shift_ours() && n >= 0 && inv_snap.node[n].parent >= 0) {   /* Shift, in a bag: out of it into the pack */
                 uwi_cmd(UWI_OP_PICK, obj, 0, 0), uwi_cmd(UWI_OP_PACK, 0, 0, 0);
             } else if (shift_ours()) {   /* Shift: down in the world near the player (let go low in the view: put in front) */
-                /* (a drop the game refuses, "There is no space to drop that.", left the thing on the pointer, where
-                   every right click and E was then dead: the user's "lock", 2026-11-16. Back into the pack then: PACK
-                   does nothing when the drop went through) */
+                /* (a drop the game refuses, "There is no space to drop that.", would leave the thing on the pointer,
+                   where every right click and E is then dead: back into the pack then; PACK does nothing when the drop
+                   went through) */
                 uwi_cmd(UWI_OP_PICK, obj, 0, 0), uwi_cmd(UWI_OP_DROP, 0x34 + 0x56, 0x43 + 8, 0), uwi_cmd(UWI_OP_PACK, 0, 0, 0);
             } else if (n >= 0 && t->wear >= 1 && t->wear <= 11) {
                 /* armour, a weapon, a shield, a ring in the pack or a bag: on, where it goes; what was there back here */
@@ -1342,7 +1403,7 @@ static int inv_pointer(int type, int cx, int cy, unsigned button)
         }
         if (button == PLAT_BUTTON_LEFT && lift.on) {
             /* on the pointer since the press: let go where it has been dragged to (a hole: put there; the world: thrown);
-               let go where it was pressed it stays on the pointer (the user's) */
+               let go where it was pressed it stays on the pointer */
             lift.on = 0, inv_swallow &= ~button;
             if (abs(cx - lift.cx) + abs(cy - lift.cy) < 8) return 1;
             if (hit == -1 && m) inv_throw(gx);
@@ -1363,6 +1424,7 @@ static int inv_pointer(int type, int cx, int cy, unsigned button)
     }
     return 1;
 }
+/* our panel drawn from the game's latest snapshot, with our open bags */
 static void inv_draw(void)
 {
     inv_bags_load();
@@ -1386,9 +1448,10 @@ const char *port_mind_current_path(void);
 int port_mind_first_start(void);
 void port_mind_keep(void);
 static int pick_prompt;               /* the first start's model picker is the menu that is open */
-/* the message box's fade (the user's option): seconds after the newest message, 0 never */
+/* the message box's fade (the Esc menu's option): seconds after the newest message, 0 never */
 static const int FADES[] = {2, 3, 5, 8, 10, 15, 30, 0};
 static int fade_i = -1;
+/* the message fade in seconds, read from the settings once */
 static int fade_secs(void)
 {
     if (fade_i < 0) {
@@ -1399,9 +1462,6 @@ static int fade_secs(void)
     }
     return FADES[fade_i];
 }
-/* the message line when a closing door turns round because the player is in its way (EFFECT.C's port_door_cue_on: the
-   rule is the original's, the line is ours): the config's door_blocked_message, on unless 0; v 0 or 1 sets and keeps
-   it. Never in a replay (a line more in the scroll). */
 /* a door the player shuts while he stands just inside its space shuts all the same (USEITEMS.C's port_door_step_on: it
    DEPARTS from the original's rule, Off is the original): the config's door_shut_close, on unless 0. Never in a replay. */
 extern int port_door_step_on;
@@ -1435,6 +1495,9 @@ static int door_pick(int v)
     return on;
 }
 extern int port_door_cue_on;
+/* the message line when a closing door turns round because the player is in its way (EFFECT.C's port_door_cue_on: the
+   rule is the original's, the line is ours): the config's door_blocked_message, on unless 0; v 0 or 1 sets and keeps
+   it. Never in a replay (a line more in the scroll). */
 static int door_cue(int v)
 {
     static int on = -1;
@@ -1474,13 +1537,12 @@ static void volume_step(int *v, int step, const char *key)
     snprintf(b, sizeof b, "%d", *v);
     if (plat_home()) port_config_set(plat_home(), key, b);
 }
-static int menu_ids[160], menu_n;   /* (160: MENU_MAX, below; 64 until 2026-11-15, when the HDR rows filled it; 96 until 2026-11-16, the sound's dials) */
-/* our save and load pages (the user: no more of the original's panel in our display): 0 the options, 1 save, 2 load;
+static int menu_ids[160], menu_n;   /* (160: MENU_MAX, below) */
+/* our save and load pages (our display shows none of the original's panel): 0 the options, 1 save, 2 load;
    a page's rows are the four slots (MO_SLOT + 1..4) and Back. The save goes through the game's own DoSaveRest on its
    thread (uwinv.c's UWI_OP_SAVE / UWI_OP_LOAD), the description written for the player: the level and the time */
 enum { MO_BACK = 99, MO_SLOT = 100 };
-/* the Fog and smoke tab (2026-11-17, the user: fog and smoke with "esc menu sliders and inputs"; a page until the
-   menu had tabs): MO_VOLPAGE stands in MENU_ROWS where the renderer's own rows go (uwv_vol_row: MO_VOL + its number
+/* the Fog and smoke tab (its rows are sliders and typed numbers): MO_VOLPAGE stands in MENU_ROWS where the renderer's own rows go (uwv_vol_row: MO_VOL + its number
    there), none named here. MO_PRESET and MO_DEFAULTS: the two rows at the top of a tab (its presets, its defaults) */
 enum { MO_VOLPAGE = 105, MO_PRESET = 106, MO_DEFAULTS = 107, MO_VOL = 400 };
 /* the Keys tab (key_rows_build): MO_KEYPAGE stands in MENU_ROWS where uwinput.c's commands go (MO_KEY + its number
@@ -1492,6 +1554,7 @@ enum { MO_SPRPAGE = 110, MO_SPR = 3000 };
 static int menu_page;
 static char slot_desc[4][48], slot_time[4][24];
 static int slot_used[4];
+/* the four save slots' names and times, read from SAVEn/DESC */
 static void slots_read(void)
 {
     const char *home = plat_home();
@@ -1509,8 +1572,12 @@ static void slots_read(void)
             if (plat_resolve(dos, PLAT_READ, path, sizeof path) != 0) continue;
         }
 #endif
-        if ((f = fopen(path, "rb")) == NULL) continue;
+        if ((f = fopen(path, "rb")) == NULL) {   /* (no file: an empty slot; any other reason is said) */
+            if (errno != ENOENT) RLOG_W("front", "cannot open %s: %s (the slot shown empty)", path, rlog_errno());
+            continue;
+        }
         size_t n = fread(slot_desc[i], 1, sizeof slot_desc[i] - 1, f);
+        if (ferror(f)) RLOG_W("front", "cannot read %s", path);
         fclose(f);
         slot_desc[i][n] = 0;
         for (size_t k = 0; k < n; k++) if ((unsigned char)slot_desc[i][k] < 32) slot_desc[i][k] = ' ';
@@ -1521,6 +1588,7 @@ static void slots_read(void)
         }
     }
 }
+/* our menu opened on a page (0 the options, 1 save, 2 load), the game paused */
 static void menu_open_page(int page)
 {
     menu_open = 1, menu_page = page, menu_sel = 0;
@@ -1528,24 +1596,29 @@ static void menu_open_page(int page)
     port_pause(1);
 }
 static int quit_armed;               /* Quit chosen once: the next choice quits */
+/* a Ctrl shortcut of the game's (Ctrl down, the key, both up) */
 static void ctrl_key(int c)
 {
     /* the game reads Ctrl's state as it takes the key: give it a tick (55 ms) between the events */
     game_key(0x1D, 1), uwp_sleep_ms(70), game_key(c, 1), uwp_sleep_ms(70), game_key(c, 0), uwp_sleep_ms(70), game_key(0x1D, 0);
 }
-/* The rows in the order shown, under their headings (2026-11-14, the user: the menu made legible; every setting a
-   row). opt: the renderer's option (uwv_option) or -1 ours; hint: what the row does, shown at the menu's foot. A
+/* The rows in the order shown, under their headings (every setting a row). opt: the renderer's option (uwv_option) or -1 ours; hint: what the row does, shown at the menu's foot. A
    renderer's row is there once the renderer has the option. */
 #define MENU_MAX 160
-/* The sound's dials (2026-11-16, the user: "make every option for the sound system an option in the Esc menu ...
-   so we can fine tune the reverb, time to hear the sound etc"): every number that was fixed in uwaudio.c, uwsteam.c
+/* The sound's dials, to tune the reverb and the rest by ear: every number that was fixed in uwaudio.c, uwsteam.c
    and uwacoustic.c is a key of settings.txt (uwaudio.c's TU has the list) with a row here, under "Sound tuning".
    Ours, not the renderer's: read once from settings.txt, written there at each step, heard at once
    (fx_acoustics_tune). dflt is the number as it was in the code; a row is shown when its part of the sound runs
    (need). MO_ROOMINFO is the read-only row of what the rays measure where the player stands. */
 enum { MO_CARDMUSIC = 196, MO_CARDSPEECH = 197, MO_ROOMINFO = 199, MO_DIAL = 200 };
-/* The game's own sound devices (the user, 2026-11-16: "options in the esc menu to change the sound system from
-   roland to soundblaster etc."): DATA\UW.CFG's two cards in the home folder, as the settings screen's Sound tab
+/* rows for the options that had none (the Esc menu audit, work\escaudit): the renderer's (uwv_option 90-104),
+   the enhancements and fixes (MO_ENH + the flag's ENH_ number: uw1port.cfg enhance=, the ones the Display switch
+   does not set), Quick fades, and the port's own settings screen (F11) */
+enum { MO_RVSYNC = 111, MO_REXPOSE, MO_RGAMMA, MO_RINVERT, MO_RHAND, MO_RSHEEN, MO_RBOUNCES, MO_RRAYLEN, MO_RSPRN, MO_RSPRAO,
+       MO_RSPRH, MO_RD5TONE, MO_RD5SAT, MO_RCAMPSW, MO_RFLAMESW, MO_QFADES = 126, MO_SETSCREEN = 127, MO_LOGDETAIL = 128,
+       MO_ENH = 167 };
+_Static_assert(MO_ENH + ENH_COUNT <= MO_CARDMUSIC, "the enhancements' rows run into the sound cards'");
+/* The game's own sound devices (the Roland, a Sound Blaster, ...): DATA\UW.CFG's two cards in the home folder, as the settings screen's Sound tab
    writes them (the port's uwcfg.c and settab.c: the same numbers and names). The game loads its drivers at its
    start, so a change holds from the next start; cards_run is what this run started with. With a music card that
    is not the Roland our own Roland renderings of the effects stand down (uwaudio_stand_down): the effects are
@@ -1555,18 +1628,21 @@ int write_uw_cfg(const char *spec);
 static const char *const CARD_MUSIC[7] = {"None", "PC speaker", "Ad Lib", "Sound Blaster", "Sound Blaster Pro", "Pro Audio Spectrum", "Roland MT-32"};
 static const char *const CARD_SPEECH[4] = {"None", "Sound Blaster", "Sound Blaster Pro", "Pro Audio Spectrum"};
 static int cards[2] = {-2, -2}, cards_run[2];
+/* the two sound cards read from UW.CFG, once */
 static void cards_load(void)
 {
     if (cards[0] != -2) return;
     read_uw_cfg(&cards[0], &cards[1]);
     cards_run[0] = cards[0], cards_run[1] = cards[1];
 }
+/* a sound card's row value */
 static void card_text(int which, char *out, size_t n)
 {
     cards_load();
     int v = cards[which], most = which ? 3 : 6;
     snprintf(out, n, "%s%s", v < 0 || v > most ? "Chosen by the game" : which ? CARD_SPEECH[v] : CARD_MUSIC[v], v != cards_run[which] ? " (from the next start)" : "");
 }
+/* the next or the previous sound card, written to UW.CFG (heard from the next start) */
 static void card_step(int which, int step)
 {
     char spec[16];
@@ -1616,11 +1692,28 @@ static const struct { const char *key; int dflt, lo, hi, step, kind, need; const
     /* 32 */ {"acoustics_path_level", 100, 0, 400, 10, DK_NUM, DN_HIGH, "%"},
     /* 33 */ {"acoustics_things", 1, 0, 1, 1, DK_ONOFF, DN_AC, ""},
     /* 34 */ {"fx_roland_reverb", 2, 0, 2, 1, DK_AUTO, DN_AUDIO, ""},
+    /* 35 */ {"acoustics_embree", 1, 0, 1, 1, DK_ONOFF, DN_HIGH, ""},   /* (Steam Audio started again, below) */
+    /* 36 */ {"music_roland_voices", 256, 32, 256, 32, DK_NUM, DN_ALWAYS, " voices"},
+    /* 37 */ {"music_clean_volume", 1, 0, 1, 1, DK_ONOFF, DN_ALWAYS, ""},   /* (SOUND.C mus_clean, audio.c music_gain) */
+    /* 38 */ {"fx_limiter", 1, 0, 1, 1, DK_ONOFF, DN_AUDIO, ""},   /* (OpenAL Soft's output limiter, uwaudio.c context_attrs; the sound started again) */
+    /* 39 */ {"fx_heat_shimmer", 100, 0, 300, 10, DK_NUM, DN_AC, "%"},   /* (uwaudio.c heat_step, volfog.inc uwv_heat_spots) */
+    /* 40 */ {"fx_own_step_volume", 100, 0, 200, 10, DK_NUM, DN_AUDIO, "%"},   /* (uwaudio.c own_step_vol, on top of Footstep volume) */
 };
 #define SOUND_NDIALS ((int)(sizeof SOUND_DIALS / sizeof SOUND_DIALS[0]))
 static int dial_val[sizeof SOUND_DIALS / sizeof SOUND_DIALS[0]], dials_read;
+static void dials_load(void);
+/* the Roland voices row, for the music's Munt as it opens (our copy of the runtime's sound\audio.c): the value of
+   this start; a change in the menu is heard from the next start */
+static int roland_voices_run = -1;
+int port_roland_voices(void)
+{
+    dials_load();
+    if (roland_voices_run < 0) roland_voices_run = dials_read ? dial_val[36] : SOUND_DIALS[36].dflt;
+    return roland_voices_run;
+}
 void uwf_our_data(char *out, size_t n);
 static void fx_acoustics_tune(void);
+/* the dials read from settings.txt once, each kept inside its range */
 static void dials_load(void)
 {
     char data[UWF_PATH];
@@ -1632,7 +1725,7 @@ static void dials_load(void)
     }
     dials_read = 1;
 }
-/* key's line of our settings.txt written (or added): the file read, the one line changed, written again, as the
+/* a dial's key line of our settings.txt written (or added): the file read, the one line changed, written again, as the
    renderer does for its own rows (src\uwview.c settings_save) */
 static void fx_setting_save(const char *key, int value)
 {
@@ -1644,25 +1737,32 @@ static void fx_setting_save(const char *key, int value)
     if (!plat_base_dir()) return;
     uwf_our_data(data, sizeof data);
     snprintf(p, sizeof p, "%s/settings.txt", data);
-    if ((f = fopen(p, "r")) != NULL) {
+    if ((f = fopen(p, "r")) == NULL && errno != ENOENT)   /* (the file written below then holds this key alone) */
+        RLOG_E("front", "cannot open %s: %s", p, rlog_errno());
+    if (f != NULL) {
         while (fgets(line, sizeof line, f)) {
             if (!done && !strncmp(line, key, kl) && (line[kl] == ' ' || line[kl] == '\t')) {
                 n += (size_t)snprintf(out + n, sizeof out - n, "%s %d\n", key, value), done = 1;
                 continue;
             }
             n += (size_t)snprintf(out + n, sizeof out - n, "%s", line);
-            if (n >= sizeof out - 600) break;
+            if (n >= sizeof out - 600) { RLOG_E("front", "%s is too long (over %zu bytes): its rest is dropped", p, sizeof out - 600); break; }
         }
         fclose(f);
     }
     if (!done) n += (size_t)snprintf(out + n, sizeof out - n, "%s %d\n", key, value);
-    if ((f = fopen(p, "w")) != NULL) fwrite(out, 1, n, f), fclose(f);
+    if ((f = fopen(p, "w")) != NULL) {
+        if (fwrite(out, 1, n, f) != n) RLOG_E("front", "cannot write %s: %s", p, rlog_errno());
+        if (fclose(f) != 0) RLOG_E("front", "cannot write %s: %s", p, rlog_errno());
+    } else RLOG_E("front", "cannot open %s: %s", p, rlog_errno());
 }
+/* a dial's row is shown: its part of the sound runs */
 static int dial_shown(int i)
 {
     int ac = uwaudio_acoustics_on(), need = SOUND_DIALS[i].need;
     return need == DN_ALWAYS ? 1 : need == DN_AUDIO ? uwaudio_on() : need == DN_AC ? ac >= 1 : need == DN_HIGH ? ac == 2 : ac == 1;
 }
+/* a dial's row value */
 static void dial_text(int i, char *out, size_t n)
 {
     int v;
@@ -1675,14 +1775,18 @@ static void dial_text(int i, char *out, size_t n)
     case DK_AUTO: snprintf(out, n, "%s", v == 2 ? "Automatic" : v ? "On" : "Off"); break;
     default: snprintf(out, n, "%d%s", v, SOUND_DIALS[i].unit); break;
     }
+    if (i == 36) {   /* the Roland voices: 32 is the real unit; a change is heard from the next start */
+        size_t l = strlen(out);
+        if (v == 32 && l < n) snprintf(out + l, n - l, " (original)"), l = strlen(out);
+        if (roland_voices_run >= 0 && v != roland_voices_run && l < n) snprintf(out + l, n - l, " (from the next start)");
+    }
 }
 static void fx_audio_start(int again);
-/* 2026-11-17: a row's change that needs the positional sound started again asks for it here; fx_pump does it once,
-   a third of a second after the last asking. A preset steps its rows one after the other (Positional sound,
-   Acoustics, Headphone 3D sound), and each step started everything again at once: OpenAL, Steam Audio and the
-   level's sound paths five times for one preset, ten in the user's log of that day. */
+/* a row's change that needs the positional sound started again asks for it here; fx_pump does it once, a third of a
+   second after the last asking (a preset steps several such rows one after the other: one restart, not one each) */
 static uint64_t fx_restart_at;
 static void fx_restart_soon(void) { fx_restart_at = ms_now() + 300; }
+/* a dial stepped, kept in settings.txt and heard at once (or the sound started again) */
 static void dial_step(int i, int step)
 {
     int v;
@@ -1695,7 +1799,9 @@ static void dial_step(int i, int step)
     if (v == dial_val[i]) return;
     dial_val[i] = v;
     fx_setting_save(SOUND_DIALS[i].key, v);
-    if (i == 34) { fx_restart_soon(); return; }   /* (the Roland's own reverb is in the renderings: made again) */
+    if (i == 34 || i == 35 || i == 38) { fx_restart_soon(); return; }   /* (the Roland's own reverb is in the renderings: made again;
+                                                               the limiter is the device's: opened again;
+                                                               the echoes' ray tracer is chosen as Steam Audio starts) */
     fx_acoustics_tune();   /* heard at once */
 }
 static const struct { int id; const char *label; int opt; const char *hint; } MENU_ROWS[] = {
@@ -1704,6 +1810,9 @@ static const struct { int id; const char *label; int opt; const char *hint; } ME
     {MO_SAVE, "Save game (F5)", -1, "Opens the save page: pick one of four slots. A slot already used is overwritten."},
     {MO_LOAD, "Load game (F9)", -1, "Opens the load page: pick one of your four saved games. Anything not saved is lost."},
     {MO_NEW, "New game (title screen)", -1, "Back to the title screen to start a new character. Anything not saved is lost."},
+    {MO_SETSCREEN, "Start-up settings (F11)", -1, "Opens the settings screen the game has at its start: mouse capture, mouse-look speed, master volume, the window and its scaling, the folders, recording sessions. F11 closes it."},
+    {MO_QFADES, "Quick fades", -1, "On: the map and the game's screens fade in at once. Off: the original's half-second fades. Default On."},
+    {MO_LOGDETAIL, "Log detail", -1, "How much the game writes to uwr.log. Normal is enough unless you are chasing a problem."},
     {MO_QUIT, "Quit the game", -1, "Closes the game at once, without asking. Anything not saved is lost."},
     {MO_HEAD, "#Display", -1, ""},
     {MO_DISPLAY, "Display", -1, "Ours: the new 3D view with everything we added. The original's: the 1992 game as it was, all our changes off, its own keys."},
@@ -1711,6 +1820,7 @@ static const struct { int id; const char *label; int opt; const char *hint; } ME
     {MO_RENDERER, "Renderer", -1, "The graphics system that draws the picture: Vulkan (the default) or Direct3D 12. Takes hold at the next start."},
     {MO_FOV, "Field of view", 6, "How wide an angle you see: 50 to 120 degrees, in steps of 5. Higher shows more at the sides. Default 85."},
     {MO_SMOOTH, "Smooth motion", 16, "On: the camera glides between the game's movement steps. Off: it jumps from step to step. Default On."},
+    {MO_RVSYNC, "Vertical sync", 90, "On: each picture waits for the screen's refresh, so there is no tearing. Off: pictures go out as soon as they are made. From the next start. Default On."},
     {MO_FADE, "Message fade", -1, "Seconds the message box stays on screen after the newest message: 2 to 30, or Never (it stays). Default 5."},
     {MO_DOORSTEP, "Shut doors from close up", -1, "On: a door you shut while standing just inside its swing still shuts. Off: as the original, it swings open again."},
     {MO_DOORPICK, "Easier door targeting", -1, "On: point at a door's frame, or its open leaf from any side, to use it. Off: as the original, the leaf only."},
@@ -1732,7 +1842,11 @@ static const struct { int id; const char *label; int opt; const char *hint; } ME
     {MO_STYLE, "DLSS 5 style", 2, "The look DLSS 5 gives the picture: A - Default, B - Natural or C - Cinematic."},
     {MO_D5INT, "DLSS 5 intensity", 24, "How strongly DLSS 5 changes the picture: 0% to 100%, in steps of 5. Higher is stronger."},
     {MO_D5STR, "DLSS 5 structure", 25, "How much fine local detail DLSS 5 adds: 0% to 100%, in steps of 5. Higher is more."},
+    {MO_RD5TONE, "DLSS 5 tone", 101, "DLSS 5's tone, 0.00 to 2.00 in steps of 0.05. From the next start. Default 1.00."},
+    {MO_RD5SAT, "DLSS 5 saturation", 102, "DLSS 5's colour strength, 0.00 to 2.00 in steps of 0.05. From the next start. Default 1.15."},
     {MO_BOUNCE, "Bounced light", 4, "On: light bounces off walls and floors into the shadows, so they are less dark. Off: no bounced light."},
+    {MO_RBOUNCES, "Light bounces", 96, "How many times bounced light bounces again: 1 to 4, or As many as build up (the light probes feed back). Default 1."},
+    {MO_RRAYLEN, "Bounce ray reach", 97, "How far a bounced light ray goes: 2 to 32 tiles. Longer finds more light, a little slower. Default 8."},
     {MO_SHADOWS, "Object shadows (.)", 9, "On: objects and creatures cast shadows (needs Ray tracing). The . key switches it too."},
     {MO_TEXRES, "Textures", 52, "The pictures on walls and floors: Original, or sharper copies enlarged to 256 or 512 pixels in the same colours."},
     {MO_MAPNORMAL, "Normal map detail", 53, "Detail of the maps that give the stone its bumps: As the textures, Original (64 pixels), 256 or 512."},
@@ -1740,12 +1854,19 @@ static const struct { int id; const char *label; int opt; const char *hint; } ME
     {MO_MAPHEIGHT, "Relief height map detail", 55, "Detail of the height maps the stones' own small shadows come from: As the textures, Original, 256 or 512."},
     {MO_RELIEF, "Normal maps (F6)", 5, "On: light picks out the bumps and grooves of the stone, so walls and floors look less flat. F6 switches it too."},
     {MO_NSTR, "Normal map strength", 8, "How deep the stone's bumps look: 0.25 (faint) to 4.00 (strong), in steps of 0.25. Used by Normal maps."},
+    {MO_RSHEEN, "Stone sheen", 95, "A shine on the stone walls and floors: 0.00 (none, the default) to 1.00."},
     {MO_TEXAO, "Joint shadows (AO)", 50, "Darkens the joints between the stones of walls and floors: Off, or 25% to 200%. Higher is darker."},
     {MO_TEXSHADOW, "Relief shadows", 51, "Stones cast small shadows of their own from each light: Off, or Depth 1 to 8. Higher: deeper relief, more shadow."},
+    {MO_RSPRN, "Sprite normal strength", 98, "How strongly the objects' and creatures' pictures are lit by their normal maps: 0.00 (flat) to 1.00. Default 0.50."},
+    {MO_RSPRAO, "Sprite joint shadows", 99, "How dark the objects' and creatures' occlusion maps make their creases: 0.00 (none) to 1.00. Default 0.50."},
+    {MO_RSPRH, "Sprite relief depth", 100, "How deep the objects' and creatures' height maps look, 0 to 4 texels. Default 0 (off)."},
     {MO_LIGHTCOL, "Light colour", 31, "The colour maths for how your eye adapts to firelight: CAT16 (the newer standard, the default) or Bradford."},
     {MO_LIGHTFADE, "Light fade", 62, "How light dims with distance. 2 / 3 / 4 tiles: half at 2 tiles, 30% at 3, dark at 4. Original: the game's shading."},
+    {MO_RHAND, "Your light", 94, "Where your torch or lantern is held: Over the head (the default) or At the eye."},
     {MO_BREATH, "Fire breathing", 61, "Now and then a fire sags or flares for a few seconds, like real flames. Off, or 10% to 40%: how strongly."},
     {MO_ADAPT, "Light adaptation", 32, "How far your eye gets used to firelight: 0% leaves it orange, 100% makes it white. Automatic works it out."},
+    {MO_REXPOSE, "Exposure", 91, "The picture's overall brightness before tone mapping: 0.50 to 4.00 in steps of 0.25. From the next start. Default 2.00."},
+    {MO_RGAMMA, "Light gamma", 92, "The lights' falloff curve: 0.50 to 2.00 in steps of 0.05. Higher keeps rooms brighter away from the lights. Default 1.00."},
     {MO_HDR, "HDR output", 33, "On an HDR monitor (HDR on in Windows): fire and bright light go brighter than white. Other monitors: no change."},
     {MO_HDRPEAK, "HDR peak brightness", 34, "The brightest that HDR highlights go: The monitor's (what it reports), or 400 to 4000 nits in steps of 100."},
     {MO_HDRPAPER, "HDR paper white", 35, "How bright plain white and the interface are in HDR: 80 to 500 nits, in steps of 10. Default 200."},
@@ -1761,6 +1882,8 @@ static const struct { int id; const char *label; int opt; const char *hint; } ME
     {MO_GLOWSTONES, "Glowing stones", 80, "On: glowing rocks, orbs and orb rocks shine and light the floor about a foot round them. Off: as plain objects."},
     {MO_MOONLIGHT, "Moonstone light", 81, "The moonstone fills the room it lies in with a deep blue light. Off, or 5% to 50% of a candle. Default 10%."},
     {MO_ELEMLIGHT, "Fire elemental light", 82, "Fire elementals cast a smouldering orange light as they move. Off, or 10% to 100% of a candle. Default 30%."},
+    {MO_RCAMPSW, "Campfire swell", 103, "How much the campfires swell and shrink as they burn: 0.00 (steady) to 0.60. Default 0.35."},
+    {MO_RFLAMESW, "Flame swell", 104, "How much the other fires (torches, braziers, burning things) swell and shrink: 0.00 (steady) to 0.50. Default 0.15."},
     {MO_HEAD, "#Fog and smoke", -1, ""},
     {MO_VOLPAGE, "", -1, ""},   /* (the renderer's rows: vol_rows_build) */
     {MO_HEAD, "#Sound", -1, ""},
@@ -1776,6 +1899,7 @@ static const struct { int id; const char *label; int opt; const char *hint; } ME
     {MO_HEARRANGE, "Hearing range", 56, "How far away a sound can be heard: Original (6 tiles), or 9, 12, 16 or 24 tiles for a longer fade-out."},
     {MO_FEETSPREAD, "Footstep width", 57, "How far apart your two feet sound: Middle (both centred), Original (barely apart), up to 800% (wide apart)."},
     {MO_STEPVOL, "Footstep volume", 59, "How loud all footsteps are, yours and the creatures', next to other sounds: Off, or 10% to 200%. Default 80%."},
+    {MO_DIAL + 40, "Your own footsteps", -1, "How loud your own footsteps are, on top of Footstep volume; the creatures' steps stay as they are: 0% (silent) to 200%. Default 100%."},
     {MO_STEPECHO, "Footstep echo", 60, "How strongly footsteps echo, next to other sounds' echoes: Off, or 10% to 200%. Default 50%. Acoustics High only."},
     {MO_FOOTSTEPS, "Footsteps by floor", 30, "On: steps sound like the floor under them (wood, water, earth, metal). Off: the original's two step sounds."},
     {MO_ACOUSTICS, "Acoustics", 15, "On: walls and shut doors muffle sounds, rooms echo by their size. High: lifelike echoes traced for every sound."},
@@ -1786,6 +1910,7 @@ static const struct { int id; const char *label; int opt; const char *hint; } ME
     {MO_ACDETOUR, "Sound round corners", 29, "On: a sound round a corner seems to come from the opening it passes through, not through the rock. Default On."},
     {MO_HEAD, "#Sound tuning", -1, ""},
     {MO_ROOMINFO, "Room measured here", -1, "Information only: how long this room echoes (low / middle / high notes) and how far sound travels between its walls."},
+    {MO_DIAL + 35, "Fast echo rays", -1, "On: the echoes' sound rays are traced by Intel's Embree on several threads, about six times quicker. Off: Steam Audio's own, on two. Default On."},
     {MO_DIAL + 21, "Sound by Steam Audio", -1, "On: Steam Audio shapes each sound for your two ears. Off: OpenAL does. Needs Headphone 3D sound. Default On."},
     {MO_DIAL + 22, "Muffling by Steam Audio", -1, "On: Steam Audio works out what walls, doors and floors let through, by their material. Off: the game's own rays."},
     {MO_DIAL + 23, "Sound level (Steam Audio)", -1, "How loud the sounds played by Steam Audio are, next to the game's own mix: 0% to 100%. Default 30%."},
@@ -1794,7 +1919,11 @@ static const struct { int id; const char *label; int opt; const char *hint; } ME
     {MO_DIAL + 24, "Sound source size", -1, "How big a sound's source counts as: 5 to 300 cm. Bigger: it fades more gently behind a corner. Default 50 cm."},
     {MO_DIAL + 29, "Music buffer", -1, "Music kept ready ahead: 50 to 600 ms. More: fewer gaps when the PC is busy, but the music answers later. Default 150."},
     {MO_DIAL + 30, "Music thread first", -1, "On: making the music comes before the game's other work, so a busy moment leaves no gap in the tune. Default On."},
-    {MO_DIAL + 28, "Music in the menu", -1, "On: the music plays on while this menu is open. Off: it stops with the paused game. Default On."},
+    {MO_DIAL + 37, "Music volume, clean", -1, "On: the Roland plays the music at its own full level and the Music volume turns the sound down afterwards, so the Roland itself (its reverb too) always works at full precision; as loud as the old way at every step. Off: the volume is turned down inside the Roland (the old way). Default On."},
+    {MO_DIAL + 36, "Roland voices", -1, "Notes the Roland can sound at once for the music: the real unit has 32, and a busy passage cuts notes short. More: none cut. From the next start. Default 256."},
+    {MO_DIAL + 28, "Music in the menu", -1, "On: the music plays on while this menu is open and while a new level is being built. Off: it stops with the paused game. Default On."},
+    {MO_DIAL + 39, "Heat shimmer", -1, "A sound heard through the hot air over a fire, lava or a blast flickers a little, the high notes most, as real hot air bends sound. 0% off, 100% as real, up to 300%. Default 100%."},
+    {MO_DIAL + 38, "Loudness limiter", -1, "On: when many loud sounds land at once, the effects are turned down for that moment instead of crackling. Quieter moments are untouched. Off: the sound can crackle at its loudest. Default On."},
     {MO_DIAL + 27, "Own footsteps plain", -1, "On: your own footsteps play untouched: no echo, floor sound, 3D or muffling. For comparing by ear. Default Off."},
     {MO_DIAL + 34, "Roland's own reverb", -1, "The Roland adds a small room echo to every effect. Automatic: off while Acoustics adds the real room's. On: always."},
     {MO_DIAL + 26, "Effects interrupt music", -1, "On: as the original, each sound effect cuts notes out of the music. Off (the default): the music plays whole."},
@@ -1823,6 +1952,7 @@ static const struct { int id; const char *label; int opt; const char *hint; } ME
     {MO_DIAL + 18, "Loudness, headphone 3D", -1, "Loudness of positional sound against the game's own mix, Headphone 3D sound on: 25% to 2000%. Default 520%."},
     {MO_HEAD, "#Controls", -1, ""},
     {MO_MOUSE, "Mouse sensitivity", 7, "How fast the mouse turns the view: 0.1 (slow) to 4.0 (fast), in steps of 0.1. Default 1.0."},
+    {MO_RINVERT, "Invert mouse", 93, "On: moving the mouse forward looks down, as a flight stick. Off: forward looks up. Default Off."},
     {MO_HEAD, "#Keys", -1, ""},
     {MO_KEYPAGE, "", -1, ""},
     {MO_HEAD, "#AI", -1, ""},
@@ -1862,6 +1992,21 @@ static const struct { int id; const char *label; int opt; const char *hint; } ME
     {MO_LLMRATE, "Model questions", -1, "The most questions creatures may put to the model each second: 1 to 60. Any beyond that are not asked. Default 20."},
     {MO_LLMSTALE, "Model answer too old", -1, "An answer that comes later than this is dropped, as the moment has passed: 1 to 12 s, or Never. Default 3 s."},
     {MO_LLMIDLE, "Model unloaded after", -1, "Minutes without a question before the model's memory is freed; it loads again when needed: 1 to 60, or Never. Default 10."},
+    {MO_HEAD, "#Enhancements", -1, ""},
+    {MO_ENH + ENH_SKIP_INTRO, "Skip the introduction", -1, "On: the game starts at its main menu, without the title and the introduction. From the next start. Default Off."},
+    {MO_ENH + ENH_WRAP_MENU, "Menus wrap around", -1, "On: the start menu and the saved games wrap from the last item to the first. Default Off."},
+    {MO_ENH + ENH_FAST_PANELS, "Fast panels", -1, "On: the right-hand panel slides twice as fast. Default Off."},
+    {MO_ENH + ENH_FREE_HEADING, "Free heading", -1, "On: sliding along a wall no longer turns your view. Default Off."},
+    {MO_ENH + ENH_SUBTITLES, "Cutscene subtitles", -1, "On: cutscenes show their text while the speech plays. Default Off."},
+    {MO_ENH + ENH_SKILL_MESSAGES, "Skill messages", -1, "On: says which skill a skill point or a trainer raised, and to what. Default Off."},
+    {MO_ENH + ENH_PERSPECTIVE, "Straight walls when looking up", -1, "On: in the original's 3D picture, floors, ceilings and walls stay straight when the view pitches. Default Off."},
+    {MO_ENH + ENH_FULL_SPRITES, "Full-size sprites when looking up", -1, "On: in the original's 3D picture, creatures and objects keep their size when the view pitches. Default Off."},
+    {MO_ENH + ENH_KEY_RING, "Key ring", -1, "On: a key that does not fit tries the other keys you carry, bags included, and uses the one that fits. Default Off."},
+    {MO_ENH + ENH_TIDY_OBJECTS, "Fix: lost object slots", -1, "On: a stack too heavy to take part of no longer loses an object slot, and lost slots are freed. Changes play. Default Off."},
+    {MO_ENH + ENH_RESTORE_AT_REST, "Fix: restore at rest", -1, "On: a restored game starts at rest, without the motion or fall it was saved in. Changes play. Default Off."},
+    {MO_ENH + ENH_PLAIN_DEBRIS, "Fix: broken enchanted things", -1, "On: an enchanted object that breaks loses its spell, so its debris casts nothing. Changes play. Default Off."},
+    {MO_ENH + ENH_ARMOUR_SPELLS, "Fix: armour spells", -1, "On: Resist Blows, Thick Skin and Iron Flesh add to your armour, as they were meant to. Changes play. Default Off."},
+    {MO_ENH + ENH_TRUE_ENCHANTS, "Fix: enchantment names", -1, "On: a melee weapon's enchantment is named for what it does (Damage or Accuracy); the original names them the other way. Default Off."},
 };
 #define MENU_NROWS ((int)(sizeof MENU_ROWS / sizeof MENU_ROWS[0]))
 /* The Fog and smoke tab's rows, as the renderer has them (uwv_vol_row: 0 a heading, 1 a switch, 2 a slider, 3 a
@@ -1872,6 +2017,7 @@ static float vol_frac[MENU_MAX];
 static int vol_kind[MENU_MAX], vol_edit_on, vol_drag = -1;
 static char vol_edit[16];
 static int vol_have(void) { return V.dll && V.vol_rows && V.vol_row && V.vol_value; }
+/* the Fog and smoke tab's rows, from the renderer */
 static void vol_rows_build(const char **lab, const char **val, const char **hint, char vbuf[][128])
 {
     int n = vol_have() ? V.vol_rows() : 0;
@@ -1891,8 +2037,7 @@ static void vol_rows_build(const char **lab, const char **val, const char **hint
     }
     if (menu_n && menu_ids[menu_n - 1] == MO_HEAD) menu_n--;
 }
-/* The Sprites tab's rows (the user, 2026-11-17: "make a new tab for sprites", "only have the options show up if there
-   is an alternative sprite for it"): one for each object picture of ours that is there, as the renderer says
+/* The Sprites tab's rows: one for each object picture of ours that is there, as the renderer says
    (uwv_option 1000 + the object: its value, 0 when it has no picture of ours; 3000 + the object: its name). list: the
    tab is open, its rows are listed. 1 when there is any (the tab is shown). */
 static char spr_lab[MENU_MAX][48];
@@ -1913,14 +2058,13 @@ static int spr_rows_build(int list, const char **lab, const char **val, const ch
     }
     return any;
 }
-/* The tabs (2026-11-17, the user: "a tab for each section of the esc menu to make it easier to get to the option ...
-   give each tab a default button and a few presets that they can use, then when they change something it goes to
-   custom"). A tab is a section of MENU_ROWS (the rows from one heading to the next); the menu lists the open tab's
+/* The tabs (each with a Default settings row and presets; a change of a row makes it Custom). A tab is a section of MENU_ROWS (the rows from one heading to the next); the menu lists the open tab's
    rows alone (menu_tab: kept while the game runs), the strip of names is drawn by the renderer (uwv_menu_tabs). A tab
    none of whose rows is shown now is left out (tab_shown: the rows shown in each, counted as the rows are built). */
 #define MENU_TABS 16
 static int menu_tab, menu_ntabs, tab_shown[MENU_TABS], tab_vis[MENU_TABS], tab_nvis, menu_shift;
 static int tab_last[MENU_TABS];   /* the preset last taken on each tab, + 1: named first when two presets match */
+/* tab t's name (its heading without the #) */
 static const char *tab_name(int t)
 {
     for (int i = 0, sec = -1; i < MENU_NROWS; i++)
@@ -1969,7 +2113,7 @@ static const PresetRow PR_E_ON[] = { {MO_PARTICLES, "On"}, {MO_DECALS, "On"}, {M
 static const PresetRow PR_SOUND[] = {
     {MO_MUSVOL, "100%", 1}, {MO_FXVOL, "100%", 1}, {MO_HRTF, "On"}, {MO_PANFIX, "Corrected"}, {MO_HEARRANGE, "Original (6 tiles)"},
     {MO_FEETSPREAD, "Original"}, {MO_STEPVOL, "80%"}, {MO_STEPECHO, "50%"}, {MO_FOOTSTEPS, "On"}, {MO_ECHOQ, "Medium (2,048 rays)"},
-    {MO_ACWET, "100%"}, {MO_ACSIZE, "2.4 m a tile"}, {MO_ACOCCL, "100%"}, {MO_ACDETOUR, "On"}, {MO_FXAUDIO, "On"}, {MO_ACOUSTICS, "High"},   /* (2026-11-17: as the game comes, settings.txt; it was Off, Off) */
+    {MO_ACWET, "100%"}, {MO_ACSIZE, "2.4 m a tile"}, {MO_ACOCCL, "100%"}, {MO_ACDETOUR, "On"}, {MO_FXAUDIO, "On"}, {MO_ACOUSTICS, "High"},   /* (as the game comes, settings.txt) */
 };
 static const PresetRow PR_S_ORIGINAL[] = { {MO_FXAUDIO, "Off"} };
 static const PresetRow PR_S_POSITIONAL[] = { {MO_FXAUDIO, "On"}, {MO_ACOUSTICS, "On"} };
@@ -2020,6 +2164,7 @@ static const char *tab_preset_name(int t, int k)   /* NULL past the last */
     k = tab_preset_at(t, k);
     return k < 0 ? NULL : TAB_PRESETS[k].name;
 }
+/* how many presets tab t has */
 static int tab_preset_count(int t)
 {
     int n = 0;
@@ -2041,6 +2186,7 @@ static int tab_preset_rows(int t, int k, PresetRow *out, int cap)
     }
     return n;
 }
+/* a row's value matches a preset's (a * at the end: its start; at the start: anywhere in it) */
 static int preset_text_is(const char *have, const char *want)
 {
     size_t l = strlen(want);
@@ -2089,14 +2235,14 @@ static int menu_opt(int id)   /* the renderer's option of a row, -1 none */
     for (int i = 0; i < MENU_NROWS; i++) if (MENU_ROWS[i].id == id && id != MO_HEAD) return MENU_ROWS[i].opt;
     return -1;
 }
-/* The Keys tab (the user, 2026-11-17: "another menu to the esc menu to rebind all commands the way the user wants",
-   "in its own tab"): a row for each command of our display (uwinput.c's CMD), its value the key it has. Enter (or a
+/* The Keys tab: a row for each command of our display (uwinput.c's CMD), its value the key it has. Enter (or a
    click) asks for the new key: the next key pressed is it, with Shift or Ctrl if one is held; Shift alone is taken
    when it is let go with nothing else pressed. Esc gives up, Delete leaves the command with no key. A key another
    command had is taken from it (that one then shows "none"). Left (or a right click) puts the shipped key back.
    Kept in the settings as key_<id>=<code>,<modifier>. Esc, Tab, F1, F11 and ` are the menu's, the panel's and the
    settings screen's own and cannot be given away. The original's display has its own keys: no tab there. */
 static int key_ask = -1, key_ask_mod;
+/* a set-1 code's name for the Keys tab */
 static const char *key_name(int c)
 {
     static const struct { int c; const char *n; } K[] = {
@@ -2118,6 +2264,7 @@ static const char *key_name(int c)
     snprintf(other, sizeof other, "Key %X", c);
     return other;
 }
+/* a key and its modifier as a row shows them */
 static void key_text(int key, int shift, char *out, size_t n)
 {
     if (!key) snprintf(out, n, "%s", "none");
@@ -2149,6 +2296,7 @@ static void keys_save(int i)   /* command i's key to the settings (-1: every com
         port_config_set(plat_home(), name, v);
     }
 }
+/* command i given a key (taken from the command that had it), kept in the settings */
 static void key_bind(int i, int key, int shift)
 {
     char t[48];
@@ -2156,7 +2304,7 @@ static void key_bind(int i, int key, int shift)
     keys_save(i);
     if (lost >= 0) keys_save(lost);
     key_text(key, shift, t, sizeof t);
-    fprintf(stderr, PLAT_NAME ": keys: %s = %s%s%s\n", uwi_cmd_label(i), t, lost >= 0 ? ", taken from " : "", lost >= 0 ? uwi_cmd_label(lost) : "");
+    RLOG_I("front", "keys: %s = %s%s%s", uwi_cmd_label(i), t, lost >= 0 ? ", taken from " : "", lost >= 0 ? uwi_cmd_label(lost) : "");
 }
 /* a key while the Keys tab asks for one: 1 always (every key is the question's) */
 static int key_ask_event(int c, int down)
@@ -2174,6 +2322,7 @@ static int key_ask_event(int c, int down)
     }
     return 1;
 }
+/* the Keys tab's rows: Default keys, then each command with its key */
 static void key_rows_build(const char **lab, const char **val, const char **hint, char vbuf[][128])
 {
     static char hints[96][224];
@@ -2284,6 +2433,10 @@ static void menu_rows_pass(const char **lab, const char **val, const char **hint
         else if (id == MO_MUSVOL) volumes_load(), snprintf(vbuf[menu_n], 128, "%d%%", mus_vol);
         else if (id == MO_FXVOL) volumes_load(), snprintf(vbuf[menu_n], 128, "%d%%", fx_vol);
         else if (id == MO_FADE) { int f = fade_secs(); if (f) snprintf(vbuf[menu_n], 128, "%d s", f); else snprintf(vbuf[menu_n], 128, "Never"); }
+        else if (id >= MO_ENH && id < MO_ENH + ENH_COUNT) snprintf(vbuf[menu_n], 128, "%s", ENHANCED(id - MO_ENH) ? "On" : "Off");
+        else if (id == MO_QFADES) { extern int port_quick_fades; snprintf(vbuf[menu_n], 128, "%s", port_quick_fades ? "On" : "Off"); }
+        else if (id == MO_LOGDETAIL) snprintf(vbuf[menu_n], 128, "%s", LOG_DETAIL[rlog_level()]);
+        else if (id == MO_SETSCREEN) snprintf(vbuf[menu_n], 128, "%s", "Enter");
         else if (id == MO_DOORSTEP) snprintf(vbuf[menu_n], 128, "%s", door_step(-1) ? "On" : "Off");
         else if (id == MO_DOORPICK) snprintf(vbuf[menu_n], 128, "%s", door_pick(-1) ? "On" : "Off");
         else if (id == MO_DOORCUE) snprintf(vbuf[menu_n], 128, "%s", door_cue(-1) ? "On" : "Off");
@@ -2348,6 +2501,7 @@ static void menu_rows_pass(const char **lab, const char **val, const char **hint
     menu_ntabs = sec + 1 > MENU_TABS ? MENU_TABS : sec + 1;
     if (menu_n && menu_ids[menu_n - 1] == MO_HEAD) menu_n--;
 }
+/* the rows the menu shows now: the open tab's (the first that has any, if it has none), and the Preset row's value */
 static void menu_rows_build(const char **lab, const char **val, const char **hint, char vbuf[][128])
 {
     menu_rows_pass(lab, val, hint, vbuf);
@@ -2368,6 +2522,7 @@ static void menu_tab_set(int t)
     if (t == menu_tab || t < 0 || t >= menu_ntabs) return;
     menu_tab = t, menu_sel = 0, vol_edit_on = 0, vol_drag = -1;
 }
+/* the next (dir 1) or the previous (-1) tab that shows a row opened */
 static void menu_tab_go(int dir)
 {
     for (int k = 1; k < menu_ntabs; k++) {
@@ -2375,6 +2530,7 @@ static void menu_tab_go(int dir)
         if (tab_shown[t]) { menu_tab_set(t); return; }
     }
 }
+/* the shown tabs' names to whoever draws the menu */
 static void menu_tabs_give(void)
 {
     const char *names[MENU_TABS];
@@ -2473,6 +2629,7 @@ static void panel_shortcut(int c)
     look_publish();
     ctrl_key(c);
 }
+/* our menu closed: the first start's model kept, the game going on */
 static void menu_close(void)
 {
     menu_open = 0, menu_page = 0;
@@ -2501,24 +2658,22 @@ static void fx_audio_start(int again);
 static void fx_pan_fix_read(void);
 static void fx_acoustics_tune(void);
 static void tab_preset_apply(int k);
-static void menu_choose_step(int row, int step)
+/* a row of a tab's own stepped (Fog and smoke, Sprites, Keys, Preset, Default settings): 1 when it was one */
+static int menu_step_tab_row(int id, int step)
 {
     char v[128];
-    if (row < 0 || row >= menu_n) return;
-    int id = menu_ids[row];
-    if (id == MO_HEAD) return;
     if (id >= MO_VOL && id < MO_VOL + 1000) {   /* a row of the Fog and smoke tab: the renderer steps it */
         if (vol_have()) V.vol_value(id - MO_VOL, step, v, sizeof v);
-        return;
+        return 1;
     }
     if (id >= MO_SPR && id < MO_SPR + 512) {   /* a row of the Sprites tab: the other picture, at once */
         if (V.option) V.option(1000 + id - MO_SPR, step ? step : 1, v, sizeof v);
-        return;
+        return 1;
     }
     if (id == MO_KEYDEFAULT) {          /* the Keys tab: every command's shipped key */
         uwi_cmd_defaults(), keys_save(-1);
-        fprintf(stderr, PLAT_NAME ": keys: every command back to its default key\n");
-        return;
+        RLOG_I("front", "keys: every command back to its default key");
+        return 1;
     }
     if (id >= MO_KEY && id < MO_KEY + 200) {   /* a command's row: Enter or Right asks for the key, Left its shipped one */
         if (step > 0) key_ask = id - MO_KEY, key_ask_mod = 0;
@@ -2527,23 +2682,29 @@ static void menu_choose_step(int row, int step)
             uwi_cmd_get(id - MO_KEY, 1, &k, &sh);
             key_bind(id - MO_KEY, k, sh);
         }
-        return;
+        return 1;
     }
-    if (id == MO_DEFAULTS) { tab_preset_apply(0); return; }   /* the tab's rows back to their defaults */
+    if (id == MO_DEFAULTS) { tab_preset_apply(0); return 1; }   /* the tab's rows back to their defaults */
     if (id == MO_PRESET) {   /* the next preset (or the one before) taken; from Custom, the first (or the last) */
         const char *lab[MENU_MAX], *val[MENU_MAX], *hint[MENU_MAX];
         static char vb[MENU_MAX][128];
         int n = tab_preset_count(menu_tab), now;
-        if (n <= 0) return;
+        if (n <= 0) return 1;
         menu_rows_build(lab, val, hint, vb);
         now = tab_preset_now(menu_tab, val);
         tab_preset_apply(now < 0 ? (step > 0 ? 0 : n - 1) : (now + (step > 0 ? 1 : n - 1)) % n);
-        return;
+        return 1;
     }
-    if (id == MO_BACK) { menu_page = 0, menu_sel = 0; return; }
+    return 0;
+}
+/* a row of the save and load pages, or one of ours with its own code (the devices, the dials, the enhancements,
+   Quick fades, Log detail, the settings screen): 1 when it was one */
+static int menu_step_page_row(int id, int step)
+{
+    if (id == MO_BACK) { menu_page = 0, menu_sel = 0; return 1; }
     if (id > MO_SLOT && id <= MO_SLOT + 4) {
         int slot = id - MO_SLOT;
-        if (menu_page == 2 && !slot_used[slot - 1]) return;   /* nothing there to load */
+        if (menu_page == 2 && !slot_used[slot - 1]) return 1;   /* nothing there to load */
         if (menu_page == 1) {
             UwgSnap sn;
             char d[48];
@@ -2559,21 +2720,63 @@ static void menu_choose_step(int row, int step)
             menu_close();
             uwi_cmd(UWI_OP_LOAD, slot, 0, 0);
         }
-        return;
+        return 1;
     }
-    if (id == MO_ROOMINFO) return;   /* (read-only) */
-    if (id == MO_CARDMUSIC || id == MO_CARDSPEECH) { card_step(id == MO_CARDSPEECH, step); return; }
-    if (id >= MO_DIAL && id < MO_DIAL + SOUND_NDIALS) { dial_step(id - MO_DIAL, step); return; }
+    if (id == MO_ROOMINFO) return 1;   /* (read-only) */
+    if (id == MO_CARDMUSIC || id == MO_CARDSPEECH) { card_step(id == MO_CARDSPEECH, step); return 1; }
+    if (id >= MO_DIAL && id < MO_DIAL + SOUND_NDIALS) { dial_step(id - MO_DIAL, step); return 1; }
+    if (id >= MO_ENH && id < MO_ENH + ENH_COUNT) {   /* an enhancement: at once, and kept in uw1port.cfg */
+        uint32_t keep = 0, bit = 1u << (id - MO_ENH);
+        enhance_on ^= bit;
+        if (plat_home()) {
+            enhance_load(plat_home(), &keep);   /* (the file's own line, the Display switch's flags as they were) */
+            enhance_save(plat_home(), (keep & ~bit) | (enhance_on & bit));
+        }
+        return 1;
+    }
+    if (id == MO_QFADES) {   /* the map's and screens' fades instant (uw1port.cfg quick_fades, 1 unless 0) */
+        extern int port_quick_fades;
+        port_quick_fades = !port_quick_fades;
+        if (plat_home()) port_config_set(plat_home(), "quick_fades", port_quick_fades ? "1" : "0");
+        return 1;
+    }
+    if (id == MO_LOGDETAIL) {   /* how much goes into uwr.log: in the exe and in the renderer DLL; kept in uw1port.cfg (log_detail) */
+        char b[4];
+        int lv = (rlog_level() + (step > 0 ? 1 : 3)) % 4;
+        rlog_set_level(lv);
+        log_detail_to_view(lv);
+        snprintf(b, sizeof b, "%d", lv);
+        if (plat_home()) port_config_set(plat_home(), "log_detail", b);
+        RLOG_I("front", "log detail: %s", LOG_DETAIL[lv]);
+        return 1;
+    }
+    if (id == MO_SETSCREEN) {   /* the port's own settings screen, as F11 opens it */
+        menu_close();
+        settings_show(1);
+        sync_open();
+        return 1;
+    }
+    return 0;
+}
+/* a row the renderer keeps (uwv_option) stepped, and what follows from it here: 1 when it was one */
+static int menu_step_renderer_row(int id, int step)
+{
+    char v[128];
     if (menu_opt(id) >= 0) {
         if (V.option) V.option(menu_opt(id), step, v, sizeof v);
-        if (id == MO_MOUSE) display_apply();   /* the new speed to the port's mouse-look */
+        if (id == MO_MOUSE || id == MO_RINVERT) display_apply();   /* the new speed (or the inverting) to the port's mouse-look */
         /* the setting (the renderer keeps it) read again: the audio started again for these three, the effects' sides
            taken at once */
         if (id == MO_FXAUDIO || id == MO_ACOUSTICS || id == MO_HRTF) fx_restart_soon();
         if (id == MO_PANFIX) fx_pan_fix_read();
         if (id == MO_ACWET || id == MO_ACSIZE || id == MO_ACOCCL || id == MO_ACDETOUR || id == MO_FOOTSTEPS || id == MO_HEARRANGE || id == MO_FEETSPREAD || id == MO_ECHOQ || id == MO_STEPVOL || id == MO_STEPECHO) fx_acoustics_tune();   /* heard at once, no restart */
-        return;
+        return 1;
     }
+    return 0;
+}
+/* one of our own rows stepped: the display, the window, the sound, the AI, the message fade, Quit */
+static void menu_step_own_row(int id, int step)
+{
     switch (id) {
     case MO_RESUME: menu_close(); break;
     case MO_DISPLAY:                        /* the other display, kept */
@@ -2582,8 +2785,8 @@ static void menu_choose_step(int row, int step)
         display_apply();
         if (plat_home()) port_config_set(plat_home(), "display", display_mode ? "original" : "ours");
         if (!display_mode) iface = 0;
-        fprintf(stderr, PLAT_NAME ": display: %s\n", display_mode ? "the original's (its own 3D picture, sound, keys and rules; "
-                "everything of ours off)" : "ours (everything of ours back as it was set)");
+        RLOG_I("front", "display: %s", display_mode ? "the original's (its own 3D picture, sound, keys and rules; "
+               "everything of ours off)" : "ours (everything of ours back as it was set)");
 #ifndef UWPORT_PLAIN
         fx_audio_start(1);                  /* the sound follows: the game's own, or ours started again */
         menu_sel = 0;                       /* (the rows changed: the choice found again below) */
@@ -2605,7 +2808,7 @@ static void menu_choose_step(int row, int step)
     case MO_SAVE: menu_page = 1, menu_sel = 0, slots_read(); break;   /* our save page (the original's panel no more) */
     case MO_LOAD: menu_page = 2, menu_sel = 0, slots_read(); break;   /* our load page */
     case MO_NEW: {   /* back to the start (the title, the introduction, the menu: a new character): the program started
-                        again with --menu (no autoload), as it was started, and this one closed (the user) */
+                        again with --menu (no autoload), as it was started, and this one closed */
         uwp_new_game();
         break;
     }
@@ -2660,9 +2863,20 @@ static void menu_choose_step(int row, int step)
     }
     case MO_QUIT:   /* asked here (the original's own prompt cannot be seen over our display), then the window's close:
                        the port's quit request, as the close button */
-        uwp_close();   /* one click (the user) */
+        uwp_close();   /* one click, no question */
         break;
     }
+}
+/* a row of the menu stepped (Right or Enter: 1, Left: -1): each kind of row to its handler, in this order */
+static void menu_choose_step(int row, int step)
+{
+    if (row < 0 || row >= menu_n) return;
+    int id = menu_ids[row];
+    if (id == MO_HEAD) return;
+    if (menu_step_tab_row(id, step)) return;
+    if (menu_step_page_row(id, step)) return;
+    if (menu_step_renderer_row(id, step)) return;
+    menu_step_own_row(id, step);
 }
 static void menu_choose(int row) { menu_choose_step(row, 1); }
 /* the open tab's k-th preset taken (0: its defaults). The renderer's for Fog and smoke; the dials' own numbers for
@@ -2685,7 +2899,7 @@ static void tab_preset_apply(int k)
             if (!dial_shown(i) || dial_val[i] == SOUND_DIALS[i].dflt) continue;
             dial_val[i] = SOUND_DIALS[i].dflt, any = 1;
             fx_setting_save(SOUND_DIALS[i].key, dial_val[i]);
-            if (i == 34) again = 1;   /* (the Roland's own reverb: the renderings made again, as dial_step) */
+            if (i == 34 || i == 35 || i == 38) again = 1;   /* (the Roland's own reverb, the echoes' ray tracer, the limiter: started again, as dial_step) */
         }
         if (again) fx_restart_soon();
         else if (any) fx_acoustics_tune();
@@ -2759,8 +2973,7 @@ static int menu_event(int kind, int c, int down, int x, int y)
    held) at most every 30 ticks of the game's clock (117 ms) since the last key it gave, round from the last one. A make
    and its break sent together are both read by key() between two scans, so such a tap counted only when no key had
    been given for 30 ticks: while W walks (the walk's X given every 30 ticks), or PageDown or a slide is held, C, a
-   click's look or use and the hold's take were lost (the user: "while moving forward and i press c to start combat it
-   sometimes doesn't"; the scroll that could not be picked up with the left button held). A keyboard's press lasts as
+   click's look or use and the hold's take were lost. A keyboard's press lasts as
    long as the finger holds it; a tap here lasts until MOUSE.C counts the key given (port_key_taken, by scan code) or
    TAP_HOLD_MS, before the keyboard's typematic would repeat it (keyqueue.c: 500 ms); the scan that could give it again
    is 30 ticks after it was given, and the break goes at the window's next step (tap_pump). Replays: key() and the
@@ -2771,13 +2984,15 @@ extern volatile unsigned port_key_taken[0x80];   /* ui/MOUSE.C (uw-new): the key
 #endif
 static struct { uint8_t make; unsigned seen; uint64_t t0; } taps[8];
 static int ntaps;
+/* tap i's break sent (its key let go) */
 static void tap_end(int i)
 {
     key_byte((uint8_t)(taps[i].make | 0x80));
     if (getenv("UWPORT_GRABDBG"))
-        fprintf(stderr, PLAT_NAME ": tap %02X held %lu ms\n", taps[i].make, (unsigned long)(ms_now() - taps[i].t0));
+        RLOG_I("front", "tap %02X held %lu ms", taps[i].make, (unsigned long)(ms_now() - taps[i].t0));
     taps[i] = taps[--ntaps];
 }
+/* each step: the taps the game has taken (or held long enough) let go */
 static void tap_pump(void)
 {
     for (int i = ntaps - 1; i >= 0; i--) {
@@ -2788,11 +3003,12 @@ static void tap_pump(void)
 #endif
     }
 }
+/* a tap of a key for the game: the make now, the break once the game has taken it (tap_pump) */
 static void send_key(uint8_t make)
 {
     if (!hooks || !hooks->key) return;
 #ifndef UWPORT_PLAIN
-    /* a click's key with Ctrl held (the user, 2026-11-17: Ctrl + a left click opened the original's quit panel: the
+    /* a click's key with Ctrl held (Ctrl + a left click would open the original's quit panel: the
        look's q read as Ctrl+Q, PLAYER.C's do_option_shortcut). Our display has no way to the original's interface but
        the Display row, so Ctrl is let go to the game first, both of them; the next press of it is seen as ever */
     if (display_mode != 1 && uwp_ctrl_down()) key_byte(0x9D), key_byte(0xE0), key_byte(0x9D);
@@ -2856,8 +3072,9 @@ static void display_init(void)
     char v[16];
     keys_load();                        /* the player's own keys (the Esc menu's Keys tab) */
     display_mode = plat_home() && port_config_get(plat_home(), "display", v, sizeof v) == 0 && !strcmp(v, "original") ? 1 : 0;
+    log_detail_load();                  /* the saved Log detail (also without a renderer) */
 #ifndef UWPORT_PLAIN
-    {   /* quick_fades (1 unless set to 0; the user 2026-11-13): UWEDIT.C strt_demscr's fades instant (the map, a
+    {   /* quick_fades (1 unless set to 0): UWEDIT.C strt_demscr's fades instant (the map, a
            conversation and other screens back to the 3D view at once); 0 keeps the original's half-second fades */
         extern int port_quick_fades;
         port_quick_fades = !(plat_home() && port_config_get(plat_home(), "quick_fades", v, sizeof v) == 0 && atoi(v) == 0);
@@ -2865,10 +3082,10 @@ static void display_init(void)
 #endif
     display_apply();
     volumes_load();                     /* the saved Music volume and Sound volume */
-    {   /* the language model brought up now, in the background, whatever the enhancements (the user: "the model
-           should come online no matter what"); llm=0 in the settings still keeps it off (uwmindhost.c) */
+    {   /* the language model brought up now, in the background, whatever the enhancements; llm=0 in the settings
+           still keeps it off (uwmindhost.c) */
         int port_mind_ready(void);
-        if (port_ai_by_model(-1))       /* (2026-11-16: only when the model decides; the rules need none) */
+        if (port_ai_by_model(-1))       /* (only when the model decides; the rules need none) */
             port_mind_ready();
     }
 }
@@ -2884,7 +3101,7 @@ static void our_action(int a, int down)
 {
     if (down != 1) return;
     switch (a) {
-    case UWI_A_AI_LOG: {                /* Ctrl+L: the AI log on / off (the user) */
+    case UWI_A_AI_LOG: {                /* Ctrl+L: the AI log on / off */
 #ifndef UWPORT_PLAIN                    /* (the plain build has no smart-hunting) */
         extern volatile int port_ai_log;
         void port_scroll_note(const char *s);
@@ -2919,8 +3136,7 @@ static void our_action(int a, int down)
     case UWI_A_RT: if (V.toggle) V.toggle(1); break;
     case UWI_A_STYLE: if (V.toggle) V.toggle(2); break;
     case UWI_A_NORMALS: if (V.toggle) V.toggle(3); break;
-    /* R and ,: our panel (the user, 2026-11-15: the Esc menu's Display row is the only way to the original's
-       interface; they showed it, then its runes or its character page). R our rune page, , the character sheet;
+    /* R and ,: our panel (the Esc menu's Display row is the only way to the original's interface). R our rune page, , the character sheet;
        pressed again on that page, the panel closes */
     case UWI_A_RUNES:
         if (inv_open && inv_runes_open) inv_toggle();
@@ -2932,7 +3148,7 @@ static void our_action(int a, int down)
         break;
     case UWI_A_FIGHT:   /* C: fight mode, the original's: its F5 (the fight icon, INTERACT.C's deal_with_icons(1): the
                            weapon drawn or sheathed; F5 itself is our save); fight_mode follows the game's player->drawn */
-        send_key(0x3F), fprintf(stderr, PLAT_NAME ": fight mode %s asked\n", fight_mode ? "off" : "on");
+        send_key(0x3F), RLOG_I("front", "fight mode %s asked", fight_mode ? "off" : "on");
         break;
     case UWI_A_TAB:     /* Tab: our panel in our display; the original's interface (full-screen play and back) in its */
         if (display_mode == 0) inv_toggle();
@@ -2977,8 +3193,8 @@ static void readout_show(const UwlInfo *li, int on)
         static char was[96];
         static int was_h = -2;
         if (strcmp(was, li->name) || was_h != li->held_item)
-            fprintf(stderr, PLAT_NAME ": crosshair on \"%s\" kind %d take %d reach %d stack %d, held %d (item %d) carry %d at %lu ms\n", li->name,
-                    li->kind, li->take, li->reach, li->stack, li->held, li->held_item, li->carry, (unsigned long)(ms_now() - L.start));
+            RLOG_I("front", "crosshair on \"%s\" kind %d take %d reach %d stack %d, held %d (item %d) carry %d at %lu ms", li->name,
+                   li->kind, li->take, li->reach, li->stack, li->held, li->held_item, li->carry, (unsigned long)(ms_now() - L.start));
         snprintf(was, sizeof was, "%s", li->name), was_h = li->held_item;
     }
     if (V.held) V.held(on && li->held && !inv_open ? li->held_item : -1);   /* the held object on the crosshair */
@@ -2991,11 +3207,13 @@ static void readout_show(const UwlInfo *li, int on)
 /* a key for the game a little later (the pointer moved first, so that the game's own pointer is there when it reads the
    key: the port's q and e act at the game's pointer) */
 static struct { int pending, make; uint64_t due; } key_later;
+/* a tap a little later (one already waiting goes first) */
 static void send_key_later(int make, int ms)
 {
     if (key_later.pending) send_key((uint8_t)key_later.make);
     key_later.pending = 1, key_later.make = make, key_later.due = ms_now() + (uint64_t)ms;
 }
+/* the late tap sent once its time has come */
 static void key_later_pump(void)
 {
     if (key_later.pending && ms_now() >= key_later.due) key_later.pending = 0, send_key((uint8_t)key_later.make);
@@ -3010,8 +3228,7 @@ static void key_later_pump(void)
    no left button here. 1: taken. */
 static unsigned world_held;           /* the buttons pressed here (their release is ours too) */
 static int world_space;               /* the attack's key that is down (0 none): the port's Space, . ; or p */
-/* The attack's kind in mouse-look (the user, 2026-11-14: "I cannot do an overhead attack or a stab due to the mouse
-   being in the center of the screen"; the user's pick: the flick). The original takes the kind from where the pointer
+/* The attack's kind in mouse-look, by the mouse's flick. The original takes the kind from where the pointer
    is in its 3D view (INTERACT.C player_3dattack: the top third bashes, the middle slashes, the bottom stabs), and
    mouse-look keeps the pointer at the middle; the port's Space (keys.c port_key_attack(0)) repeats its last kind, the
    slash until . ; or p choose another, keys our table has for other things. So the kind is the mouse's motion in the
@@ -3020,6 +3237,7 @@ static int world_space;               /* the attack's key that is down (0 none):
    before while the last kind sent was the slash, else its ; (swing 6), which sets the port's last attack back. Only
    the key sent differs: the blow is the original's player_attack with the port's own swings. */
 #define ATTACK_FLICK 0.4f
+/* the attack's key for the mouse's flick: Space (the slash again), p the bash, . the stab, ; the slash */
 static int attack_key(void)
 {
     static int last = 0x27;             /* the kind sent last, as keys.c's last_attack follows it (the slash at first) */
@@ -3029,9 +3247,10 @@ static int attack_key(void)
     k = fabsf(vy) >= ATTACK_FLICK && fabsf(vy) > fabsf(vx) ? (vy > 0 ? 0x19 : 0x34) : 0x27;
     if (k == 0x27 && last == 0x27) return 0x39;
     last = k;
-    if (getenv("UWPORT_LOOKDBG")) fprintf(stderr, PLAT_NAME ": attack: %s\n", k == 0x19 ? "bash (flick up)" : k == 0x34 ? "stab (flick down)" : "slash");
+    if (getenv("UWPORT_LOOKDBG")) RLOG_I("front", "attack: %s", k == 0x19 ? "bash (flick up)" : k == 0x34 ? "stab (flick down)" : "slash");
     return k;
 }
+/* a press or release at the crosshair in full-screen play: look, use, take, throw, attack, a target: 1 taken */
 static int world_click(int type, unsigned button)
 {
     UwlInfo li;
@@ -3058,7 +3277,7 @@ static int world_click(int type, unsigned button)
     world_held |= button;
     uwl_info(&li);
     if (button == PLAT_BUTTON_LEFT && !fight_mode && (li.held || (li.kind == 3 && li.take && li.reach))) {
-        /* the left button on a thing that can be taken (the user): onto the cursor (the port's n: player_3dget), held
+        /* the left button on a thing that can be taken: onto the cursor (the port's n: player_3dget), held
            while the button is (its picture on the crosshair), thrown out where the crosshair aims when it comes up, the
            mouse's momentum its strength (carry_release); a tap with the view still puts it in the pack instead, as E.
            Something already on the cursor is thrown the same way. */
@@ -3230,9 +3449,9 @@ static void input_state(UwiState *s)
 #endif
     s->ctrl_down = uwp_ctrl_down();
     /* (not over the original's options panel: Esc is its own there, it closes it; our menu opened under it unseen and
-       paused the game: the user's "F1 breaks the mouse", 2026-11-13) */
-    /* (nor while an instrument is played: SOUND.C play_instrument's loop ends only at Esc; the user, 2026-11-14:
-       "when I play the mandolin I cannot get out of playing it". uwlog.c knows it from the game's messages.) */
+       paused the game) */
+    /* (nor while an instrument is played: SOUND.C play_instrument's loop ends only at Esc; uwlog.c knows it from the
+       game's messages.) */
     s->esc_menu = (V.ok && V.menu ? full_live : soft_live()) && !s->settings && uwl_left_panel() != 1 && !uwlog_instrument();
     s->tab_ours = view_full_ok() && !s->settings;
     s->look_ours = display_mode == 0;   /* (the want's mouse-look: ` swallowed; the original's display: ` its toggle) */
@@ -3268,7 +3487,7 @@ static void capture_sync(void)
     int look = port_mouse_look() != 0, clip;
     if (look != captured) {
         captured = look;
-        if (getenv("UWPORT_LOOKDBG")) fprintf(stderr, PLAT_NAME ": mouse-look's capture %s at %lu ms\n", captured ? "on" : "off", (unsigned long)(ms_now() - L.start));
+        if (getenv("UWPORT_LOOKDBG")) RLOG_I("front", "mouse-look's capture %s at %lu ms", captured ? "on" : "off", (unsigned long)(ms_now() - L.start));
     }
     clip = uwp_window() && focused && !settings_open() && !menu_open && (locked || captured);   /* (our menu frees it, the lock's too: b9ba607's) */
     if (clip != clip_on) {
@@ -3331,19 +3550,17 @@ static int keep_last(const char *why, int have)
         return 0;
     if (getenv("UWPORT_LOOKDBG") && (!said || ms_now() - said >= 1000)) {
         said = ms_now();
-        fprintf(stderr, PLAT_NAME ": display: kept our last frame (%s) at %lu ms\n", why, (unsigned long)(said - L.start));
+        RLOG_I("front", "display: kept our last frame (%s) at %lu ms", why, (unsigned long)(said - L.start));
     }
     return 1;
 }
 #endif
-/* the level's scene, the game held still while it is built (the user, 2026-11-17: "i was being attacked and i could
-   hear it in the background but i couldn't do anything because there was no screen yet", at a start, a load and a
-   level change: the game's thread ran on while this one built the scene). Held as under our menu (port_pause: the
+/* the level's scene, the game held still while it is built (at a start, a load and a level change; else the game
+   plays on, unseen, while this thread builds the scene). Held as under our menu (port_pause: the
    game gets no time and waits at its next clock read); not when the menu or the settings screen holds it already */
 static unsigned game_renders;   /* the game's count of frames drawn (view_world: uwg_gameview's) */
-/* our sound silent from the moment a level change is seen until a quarter of a second after its scene is up (the
-   user, 2026-11-17: "i can still hear sounds before i can see the level", "two footsteps when i loaded the
-   game"), and Steam Audio's pathing told (uwaudio_level_change) */
+/* our sound silent from the moment a level change is seen until a quarter of a second after its scene is up (no
+   sound before the level is seen), and Steam Audio's pathing told (uwaudio_level_change) */
 #ifndef UWPORT_GAMEVIEW
 #define uwg_scene(level, building) ((void)0)
 #define uwg_scene_beat() ((void)0)
@@ -3351,6 +3568,7 @@ static unsigned game_renders;   /* the game's count of frames drawn (view_world:
 #endif
 static int hush_on;
 static uint64_t hush_end;
+/* our sound hushed for a level's build (begin 1), let back in a quarter second after it (begin 0) */
 static void hush(int begin)
 {
     if (begin) {
@@ -3358,17 +3576,18 @@ static void hush(int begin)
         hush_on = 1, hush_end = 0;
     } else if (hush_on && !hush_end) hush_end = ms_now() + 250;
 }
+/* the hush ended once its time has come */
 static void hush_tick(void)
 {
     if (hush_on && hush_end && ms_now() >= hush_end) hush_on = 0, hush_end = 0, uwaudio_volume(fx_vol / 100.0f);
 }
 static int game_level;          /* and the level of its last one */
+/* the level's scene built (or kept) by the renderer, the game held still and our sound hushed meanwhile: 0 none */
 static int level_scene(const unsigned char *block, int level)
 {
     int st =V.level_state ? V.level_state(block, level) : 0, hold, r;
 #ifdef UWPORT_GAMEVIEW
-    /* (the user, later that day: "now the game crashes when i zone ... it put me in a inbetween level or area".
-       The block's shape changed under the same level number: the game is reading a new level in, and the number
+    /* (the block's shape changed under the same level number: the game is reading a new level in, and the number
        we have is the last drawn frame's. Nothing is built from that mix, and uwview does not read the block,
        until the game has drawn a frame again (its number is then the block's); 15 s at most) */
     static int waiting;
@@ -3387,18 +3606,17 @@ static int level_scene(const unsigned char *block, int level)
 #endif
     hold = st != 0 && !menu_open && !settings_open();
     if (st != 0) hush(1), uwg_scene(-1, 1);
-    if (hold) {
-#ifndef UWPORT_PLAIN
-        port_pause_music(0);   /* nothing heard without a picture: the music stands still too (fx_pump gives the row's choice back) */
-#endif
-        port_pause(1);
-    }
+    /* (the build takes 0.2 to 0.8 s; in DOS the music played on through a level's load, from the timer's interrupt.
+       The "Music in the menu" row decides here too, as under our menu: on, the game's time stands still and the
+       music plays on; the effects stay hushed.) */
+    if (hold) port_pause(1);
     r = V.level(block, level);
     uwg_scene(level, 0);   /* (done, or as far as it goes: the gate does not wait for a scene that cannot be made) */
     hush(0);
     if (hold) port_pause(0);
     return r;
 }
+/* our 3D view set up for this picture from the game's view (camera, level scene, lens, the pixels left clear): 1 ours */
 static int view_world(void)
 {
 #ifdef UWPORT_GAMEVIEW
@@ -3430,8 +3648,8 @@ static int view_world(void)
         stale = 1;
     } else if (!g.on_screen || g.w <= 0 || g.w > 320 - UWG_VIEW_X || g.h <= 0 || g.h > 200 - UWG_VIEW_Y) {
         /* the view not on the game's screen: after a conversation, the map or the options panel the game redraws its
-           screen and fades its own picture in before the first copy; our last frame stays up through that (the user saw
-           the original's picture, stretched, for a second): on the 3D screen in our display for as long as it lasts
+           screen and fades its own picture in before the first copy; our last frame stays up through that (not the
+           original's picture, stretched, for a second): on the 3D screen in our display for as long as it lasts
            (keep_last), elsewhere (PS_TEXT) up to two seconds */
         if (!keep_last("no match", one.w)
             && !(panel_left && one.w > 0 && (uwc_on_view_screen() || screen_now() == PS_TEXT) && ms_now() - panel_left < 2000)) return 0;
@@ -3456,8 +3674,8 @@ static int view_world(void)
         if (retry) {
             lv_fail.on = 1, lv_fail.block = (const void *)s->block, lv_fail.level = s->level, lv_fail.t = ms_now(), lv_fail.kept = 0;
             if (getenv("UWPORT_LOOKDBG"))
-                fprintf(stderr, PLAT_NAME ": display: level %d has no scene: level %d's kept (tried again in 1 s) at %lu ms\n",
-                        s->level, prev.level, (unsigned long)(ms_now() - L.start));
+                RLOG_I("front", "display: level %d has no scene: level %d's kept (tried again in 1 s) at %lu ms",
+                       s->level, prev.level, (unsigned long)(ms_now() - L.start));
         }
         one = prev, stale = 1;
         if (!(lv_fail.kept && lv_fail.kept_block == (const void *)s->block && lv_fail.kept_level == s->level)) {
@@ -3531,15 +3749,13 @@ static int view_world(void)
     return 1;
 }
 
-/* the picture (sw by sh, 0x00RRGGBB) into the interface layer, where GDI would have put it, black round it; clear
-   where our 3D view shows */
-static void view_present(const uint32_t *src, int sw, int sh)
+/* our 3D view this pass (view_world), given up in a conversation, in our display kept over a few frames that do
+   not match: 1 when the view is ours */
+static int view_ours(int sw, int sh)
 {
-    int x, y;
-    uint64_t t0 = plat_counter();
 #ifdef UWPORT_GAMEVIEW
     /* our renderer draws the 3D view: the game leaves its rasterization out. In the original's display the game
-       draws its own again (the user, 2026-11-17: the original is the original, nothing of ours) */
+       draws its own again (nothing of ours there) */
     uwg_gameview_replace(display_mode != 1);
 #endif
     int ours = sw == L.w && sh == L.hgt && view_world();
@@ -3554,7 +3770,7 @@ static void view_present(const uint32_t *src, int sw, int sh)
     if (!ours && !orig) full_live = 0;   /* view_world set it: the game's word, nothing to bridge */
 #else
     {   /* a frame the 3D view cannot be matched in (the game mid-redraw) is not a reason to show the original's
-           screen for one frame in our display (the user saw it flash): a few in a row keep ours, the last camera;
+           screen for one frame in our display (a flash): a few in a row keep ours, the last camera;
            the map, a conversation and the like still change over within about a tenth of a second */
         static int misses;
         if (ours) misses = 0, panel_left = 0;
@@ -3562,25 +3778,25 @@ static void view_present(const uint32_t *src, int sw, int sh)
                  && (++misses <= 6 || (panel_left && uwc_on_view_screen() && ms_now() - panel_left < 2000))) ours = 1;
     }
 #endif
-    uint64_t t1 = plat_counter();
-    int x0 = L.dst.left * V.uw / V.cw, x1 = L.dst.right * V.uw / V.cw;
-    int y0 = L.dst.top * V.uh / V.ch, y1 = L.dst.bottom * V.uh / V.ch;
-    const unsigned char *layer = NULL;
-#ifndef UWPORT_GAMEVIEW
-    full_live = ours;
-#endif
-    {   /* what our view shows where the game's pointer stands for (the crosshair; our panel's pointer over the world):
-           the game's thread picks from it (uwlook.c's uwl_pick) rather than from its own picture of the view */
-        int t[UWL_TARGETS], n = -1;
-        static int nopick = -1;   /* UWPORT_NOPICK=1 (a check's): the original's pick alone */
-        if (nopick < 0) nopick = getenv("UWPORT_NOPICK") != NULL;
-        if (V.pick && !nopick && ours && full_play() && V.cw > 0 && V.ch > 0) {
-            float fx = 0.5f, fy = 0.5f;
-            if (inv_open) fx = (float)inv_mx / (float)V.cw, fy = (float)inv_my / (float)V.ch;
-            n = V.pick(fx, fy, t, UWL_TARGETS);
-        }
-        uwl_set_targets(t, n);
+    return ours;
+}
+/* what our view shows where the game's pointer stands for (the crosshair; our panel's pointer over the world): the
+   game's thread picks from it (uwlook.c's uwl_pick) rather than from its own picture of the view */
+static void view_targets(int ours)
+{
+    int t[UWL_TARGETS], n = -1;
+    static int nopick = -1;   /* UWPORT_NOPICK=1 (a check's): the original's pick alone */
+    if (nopick < 0) nopick = getenv("UWPORT_NOPICK") != NULL;
+    if (V.pick && !nopick && ours && full_play() && V.cw > 0 && V.ch > 0) {
+        float fx = 0.5f, fy = 0.5f;
+        if (inv_open) fx = (float)inv_mx / (float)V.cw, fy = (float)inv_my / (float)V.ch;
+        n = V.pick(fx, fy, t, UWL_TARGETS);
     }
+    uwl_set_targets(t, n);
+}
+/* the crosshair and its readout: asked for in full-screen play, then given to the HUD */
+static void view_readout(int ours)
+{
     if (V.readout2) {                   /* the crosshair and its readout: asked for in full-screen play, then given to the HUD */
         UwlInfo li;
         int on = ours && full_play();
@@ -3594,81 +3810,99 @@ static void view_present(const uint32_t *src, int sw, int sh)
         uwl_get(name, sizeof name);
         V.readout(ours && full_play() ? name : "");
     }
-    {   /* a conversation in our display (uwconv.c): the original's conversation pieces, centred and scaled up, over our
-           3D view's last frame, dimmed; the pointer free (mouse-look not wanted off PS_GAME: input_sync) */
-        int was = uwc_shown();
-        layer = uwc_frame(display_mode == 0 && V.hud ? src : NULL, sw, sh, V.uw, V.uh, V.cw, V.ch);
-        if (was && !uwc_shown() && display_mode == 0) panel_left = ms_now();   /* its fade-in: our last frame stays (above) */
+}
+/* a conversation in our display (uwconv.c): the original's conversation pieces, centred and scaled up, over our 3D
+   view's last frame, dimmed; the pointer free (mouse-look not wanted off PS_GAME: input_sync). The layer, or NULL */
+static const unsigned char *view_conv_layer(const uint32_t *src, int sw, int sh)
+{
+    const unsigned char *layer;
+    int was = uwc_shown();
+    layer = uwc_frame(display_mode == 0 && V.hud ? src : NULL, sw, sh, V.uw, V.uh, V.cw, V.ch);
+    if (was && !uwc_shown() && display_mode == 0) panel_left = ms_now();   /* its fade-in: our last frame stays (above) */
+    return layer;
+}
+/* a new game: black until its first view (the game's screen before it is not shown in our display) */
+static const unsigned char *view_first_view(int ours, const unsigned char *layer, int sw)
+{
+    static int seen_view;
+    static long epoch;
+    if (epoch != view_epoch) epoch = view_epoch, seen_view = 0;   /* a new game: black until its first view */
+    if (ours && !seen_view && getenv("UWPORT_LOOKDBG"))   /* (the check's: our first view since the start or the reset) */
+        RLOG_I("front", "display: our first view at %lu ms", (unsigned long)(ms_now() - L.start));
+    if (ours) seen_view = 1;
+    else if (!layer && !seen_view && display_mode == 0 && V.hud && V.ui && sw == 320 && uwc_on_view_screen()) {
+        for (size_t i = 0, all = (size_t)V.uw * (size_t)V.uh; i < all; i++) ((uint32_t *)V.ui)[i] = 0xFF000000u;
+        layer = V.ui;   /* black until our first view */
     }
-    {
-        static int seen_view;
-        static long epoch;
-        if (epoch != view_epoch) epoch = view_epoch, seen_view = 0;   /* a new game: black until its first view */
-        if (ours && !seen_view && getenv("UWPORT_LOOKDBG"))   /* (the check's: our first view since the start or the reset) */
-            fprintf(stderr, PLAT_NAME ": display: our first view at %lu ms\n", (unsigned long)(ms_now() - L.start));
-        if (ours) seen_view = 1;
-        else if (!layer && !seen_view && display_mode == 0 && V.hud && V.ui && sw == 320 && uwc_on_view_screen()) {
-            for (size_t i = 0, all = (size_t)V.uw * (size_t)V.uh; i < all; i++) ((uint32_t *)V.ui)[i] = 0xFF000000u;
-            layer = V.ui;   /* black until our first view */
+    return layer;
+}
+/* a cutscene in the 3D window (PS_CUT_WINDOW: a vision): it alone, centred, over our view's last frame dimmed; the
+   death (PS_DEATH): the skulls alone over black, then the fade. A full-screen cutscene (PS_CUT_FULL: the
+   Introduction, a dream, the ending) and the menu are the plain picture, whole (the compose) */
+static const unsigned char *view_cut_layer(const unsigned char *layer, int ours, const uint32_t *src, int sw, int sh)
+{
+    int ps = screen_now();
+    if (!layer && !ours && display_mode == 0 && V.hud && L.w == 320 && sw == 320 && (ps == PS_CUT_WINDOW || ps == PS_DEATH))
+        layer = uwc_frame_cut(src, sw, sh, V.uw, V.uh, ps == PS_DEATH), cut_now = layer != NULL;
+    return layer;
+}
+/* full-screen play: the HUD only (the rune shelf, the spells, the gargoyle, the beakers), and our message box */
+static const unsigned char *view_hud_layer(const uint32_t *src, int sw, int sh)
+{
+    const unsigned char *layer;
+    if (hud_magic_fn) {   /* the rune shelf and the active spells, as PANELS.C last showed them */
+        unsigned char r[3], sp[3];
+        for (int i = 0; i < 3; i++) r[i] = hud_runes[i], sp[i] = hud_spells[i];
+        hud_magic_fn(r, sp);
+    }
+    if (hud_combat_fn) {   /* the gargoyle's eyes and the blow's charge, for our HUD's pictures */
+        int eyes, pow;
+        uwl_combat(&eyes, &pow);
+        hud_combat_fn(eyes, pow);
+    }
+    {   /* health, mana and poison for the beakers at our bottom panel's ends (uwv_hud_vitals) */
+        if (hud_vitals_fn) {
+            int v[5];
+            uwi_vitals(v);
+            hud_vitals_fn(v);
         }
     }
-    cut_now = 0;
-    {   /* a cutscene in the 3D window (PS_CUT_WINDOW: a vision): it alone, centred, over our view's last frame dimmed;
-           the death (PS_DEATH): the skulls alone over black, then the fade below. A full-screen cutscene (PS_CUT_FULL:
-           the Introduction, a dream, the ending) and the menu are the plain picture, whole (the compose below). */
-        int ps = screen_now();
-        if (!layer && !ours && display_mode == 0 && V.hud && L.w == 320 && sw == 320 && (ps == PS_CUT_WINDOW || ps == PS_DEATH))
-            layer = uwc_frame_cut(src, sw, sh, V.uw, V.uh, ps == PS_DEATH), cut_now = layer != NULL;
+    layer = V.hud(src, sw, sh);   /* full-screen play: the HUD only */
+    if (layer) log_draw();
+    return layer;
+}
+/* (the check's, inputcheck.py display: never expected) the original's 3D screen whole, in place of ours: a line at
+   most once a second, with the frames composed so since the last line */
+static void view_note_original(void)
+{
+    static uint64_t said;
+    static unsigned frames;
+    frames++;
+    if (!said || ms_now() - said >= 1000) {
+        said = ms_now();
+        RLOG_I("front", "display: original picture in PS_GAME at %lu ms (%u frames)", (unsigned long)(said - L.start), frames);
+        frames = 0;
     }
-    if (!layer && ours && full_show() && V.hud) {
-        if (hud_magic_fn) {   /* the rune shelf and the active spells, as PANELS.C last showed them */
-            unsigned char r[3], sp[3];
-            for (int i = 0; i < 3; i++) r[i] = hud_runes[i], sp[i] = hud_spells[i];
-            hud_magic_fn(r, sp);
-        }
-        if (hud_combat_fn) {   /* the gargoyle's eyes and the blow's charge, for our HUD's pictures */
-            int eyes, pow;
-            uwl_combat(&eyes, &pow);
-            hud_combat_fn(eyes, pow);
-        }
-        {   /* health, mana and poison for the beakers at our bottom panel's ends (uwv_hud_vitals) */
-            if (hud_vitals_fn) {
-                int v[5];
-                uwi_vitals(v);
-                hud_vitals_fn(v);
-            }
-        }
-        layer = V.hud(src, sw, sh);   /* full-screen play: the HUD only */
-        if (layer) log_draw();
+}
+/* the host's pointer in our display, but for a cutscene (the game's cursor never stands in for it then) */
+static void view_host_pointer(void)
+{
+    /* (never the host's pointer over our display, the game's cursor only: the game draws its own, our menu and
+       panel draw the game's picture of it) */
+    port_stack_whole = display_mode == 0;   /* our display: a stack whole, never the original's typed
+                                               dialog; split in our panel (Shift + a click, ask_begin) */
+    host_pointer = 0, port_host_pointer = display_mode == 0 && inv_open ? 2 : 0;   /* our panel draws the pointer and the thing on it (the top is the original's screen: its cursor would show twice) */
+    if (display_mode == 0 && !uwp_cursor_hidden() && focused && !offscreen() && !settings_open()) {
+        int cpx, cpy, crw, crh;
+        if (uwp_pointer_pos(&cpx, &cpy) && uwp_window_size(&crw, &crh) && cpx >= 0 && cpy >= 0 && cpx < crw && cpy < crh)
+            uwp_cursor_hide(1);
     }
-    if (!layer && !ours && V.compose && display_mode == 0 && V.hud && !iface && screen_now() == PS_GAME && getenv("UWPORT_LOOKDBG")) {
-        /* (the check's, inputcheck.py display: never expected) the original's 3D screen whole, in place of ours: a line
-           at most once a second, with the frames composed so since the last line */
-        static uint64_t said;
-        static unsigned frames;
-        frames++;
-        if (!said || ms_now() - said >= 1000) {
-            said = ms_now();
-            fprintf(stderr, PLAT_NAME ": display: original picture in PS_GAME at %lu ms (%u frames)\n", (unsigned long)(said - L.start), frames);
-            frames = 0;
-        }
-    }
-    if (!layer) layer = V.compose ? V.compose(src, sw, sh, ours ? clear_px : NULL, x0, y0, x1, y1) : NULL;
-    display_init();
-    first_pick();
-    {   /* the host's pointer in our display, but for a cutscene (the game's cursor never stands in for it then) */
-        /* (the user: never the host's pointer over our display, the game's cursor only: the game draws its own, our
-           menu and panel draw the game's picture of it) */
-        port_stack_whole = display_mode == 0;   /* our display: a stack whole, never the original's typed dialog (the user,
-                                                   2026-11-16); split in our panel (Shift + a click, ask_begin) */
-        host_pointer = 0, port_host_pointer = display_mode == 0 && inv_open ? 2 : 0;   /* our panel draws the pointer and the thing on it (the top is the original's screen: its cursor would show twice) */
-        if (display_mode == 0 && !uwp_cursor_hidden() && focused && !offscreen() && !settings_open()) {
-            int cpx, cpy, crw, crh;
-            if (uwp_pointer_pos(&cpx, &cpy) && uwp_window_size(&crw, &crh) && cpx >= 0 && cpy >= 0 && cpx < crw && cpy < crh)
-                uwp_cursor_hide(1);
-        }
-    }
-    if (layer) goto composed;          /* the renderer built it (optimised); else the loop below */
+}
+/* the picture scaled into the interface layer (V.ui) where GDI would have put it, black round it, clear where our
+   3D view shows (when the renderer did not build the layer itself) */
+static void view_fill_layer(const uint32_t *src, int sw, int sh, int ours, int x0, int y0, int x1, int y1)
+{
+    int x, y;
     for (y = 0; y < V.uh; y++) {
         unsigned char *row = V.ui + (size_t)y * (size_t)V.uw * 4;
         int in_y = y >= y0 && y < y1;
@@ -3681,73 +3915,127 @@ static void view_present(const uint32_t *src, int sw, int sh)
             row[x * 4 + 3] = ours && inside && clear_px[sy * sw + sx] ? 0 : 255;
         }
     }
+}
+/* our menu drawn over the layer by the renderer: its tabs, its rows, the sliders */
+static void view_menu_draw(void)
+{
+    const char *lab[MENU_MAX], *val[MENU_MAX], *hint[MENU_MAX];
+    static char vbuf[MENU_MAX][128];
+    const char *title = menu_page == 1 ? "Save game" : menu_page == 2 ? "Load game" : pick_prompt ? "Pick a model" : "Options";
+    menu_rows_build(lab, val, hint, vbuf);
+    menu_sel_fix(1);
+    menu_tabs_give();
+    if (V.menu_sliders) V.menu_sliders(!menu_page ? vol_frac : NULL, !menu_page ? menu_n : 0);   /* (the sliders' rows: the Fog and smoke tab's) */
+    menu_hover = V.menu_rows2 ? V.menu_rows2(title, lab, val, hint, menu_n, menu_sel, menu_mx, menu_my)
+                              : V.menu_rows(title, lab, val, menu_n, menu_sel, menu_mx, menu_my);
+}
+/* the death's fade: the composed picture darkened to black over 1000 ms (port_death_scene waits on it), then black
+   until the game leaves PS_DEATH (real_start's menu) */
+static const unsigned char *view_death_fade(const unsigned char *layer)
+{
+    size_t all = (size_t)V.uw * (size_t)V.uh * 4, i;
+    unsigned k = fade_state == 2 ? 0 : (unsigned)(ms_now() - fade_t0 >= 1000 ? 0 : 255 - (ms_now() - fade_t0) * 255 / 1000);
+    if (fade_state == 1 && k == 0) uwp_xchg(&fade_state, 2);
+    if (layer != V.ui) memcpy(V.ui, layer, all);
+    for (i = 0; i < all; i += 4)
+        V.ui[i] = (unsigned char)(V.ui[i] * k / 255), V.ui[i + 1] = (unsigned char)(V.ui[i + 1] * k / 255),
+        V.ui[i + 2] = (unsigned char)(V.ui[i + 2] * k / 255), V.ui[i + 3] = 255;
     layer = V.ui;
-composed:
-    inv_pump();
-    if (inv_open && full_play() && V.inventory && layer) inv_draw();   /* our inventory panel */
-    if (menu_open && V.menu_rows && layer) {
-        const char *lab[MENU_MAX], *val[MENU_MAX], *hint[MENU_MAX];
-        static char vbuf[MENU_MAX][128];
-        const char *title = menu_page == 1 ? "Save game" : menu_page == 2 ? "Load game" : pick_prompt ? "Pick a model" : "Options";
-        menu_rows_build(lab, val, hint, vbuf);
-        menu_sel_fix(1);
-        menu_tabs_give();
-        if (V.menu_sliders) V.menu_sliders(!menu_page ? vol_frac : NULL, !menu_page ? menu_n : 0);   /* (the sliders' rows: the Fog and smoke tab's) */
-        menu_hover = V.menu_rows2 ? V.menu_rows2(title, lab, val, hint, menu_n, menu_sel, menu_mx, menu_my)
-                                  : V.menu_rows(title, lab, val, menu_n, menu_sel, menu_mx, menu_my);
+    return layer;
+}
+/* the window's title: the video being made, its seconds left */
+static void view_record_title(void)
+{
+    static int rec_shown = 0;
+    int left = V.recording();
+    if (left != rec_shown) {
+        rec_shown = left;
+        if (left > 0) {
+            char t[160];
+            snprintf(t, sizeof t, "%s - RECORDING VIDEO: %d s left", live.title ? live.title : PLAT_TITLE, left);
+            uwp_title(t);
+        } else if (live.mouse_lock) mouse_title(locked);
+        else uwp_title(live.title ? live.title : PLAT_TITLE);
     }
-    if (L.shot == 1 && live.window_shot_path && V.want_shot) V.want_shot();
-    if (screen_now() == PS_DEATH && fade_state && layer && V.ui) {
-        /* the death's fade: the composed picture darkened to black over 1000 ms (port_death_scene waits on it), then
-           black until the game leaves PS_DEATH (real_start's menu) */
-        size_t all = (size_t)V.uw * (size_t)V.uh * 4, i;
-        unsigned k = fade_state == 2 ? 0 : (unsigned)(ms_now() - fade_t0 >= 1000 ? 0 : 255 - (ms_now() - fade_t0) * 255 / 1000);
-        if (fade_state == 1 && k == 0) uwp_xchg(&fade_state, 2);
-        if (layer != V.ui) memcpy(V.ui, layer, all);
-        for (i = 0; i < all; i += 4)
-            V.ui[i] = (unsigned char)(V.ui[i] * k / 255), V.ui[i + 1] = (unsigned char)(V.ui[i + 1] * k / 255),
-            V.ui[i + 2] = (unsigned char)(V.ui[i + 2] * k / 255), V.ui[i + 3] = 255;
+}
+/* where a frame's time goes, every 120 frames (UWPORT_TIMING=1): the 3D view's state (the game's frame kept, the
+   level), the interface layer filled, the renderer's frame (its upload, drawing, DLSS, present) */
+static void view_timing(uint64_t t0, uint64_t t1, uint64_t t2)
+{
+    static int on = -1, n;
+    static double a, b, c, worst, gap_worst;
+    static uint64_t last_t3;
+    uint64_t t3 = plat_counter();
+    double hz = (double)plat_counter_hz() / 1000.0;
+    if (on < 0) { const char *e = getenv("UWPORT_TIMING"); on = e && *e && *e != '0'; }
+    a += (double)(t1 - t0) / hz, b += (double)(t2 - t1) / hz, c += (double)(t3 - t2) / hz;
+    /* the worst of them too: one slow frame is a hitch the average hides (the second review's item 7: the
+       language model on the same GPU as DLSS and ray tracing) */
+    if ((double)(t3 - t2) / hz > worst) worst = (double)(t3 - t2) / hz;
+    if (last_t3 && (double)(t3 - last_t3) / hz > gap_worst) gap_worst = (double)(t3 - last_t3) / hz;
+    last_t3 = t3;
+    if (on && ++n == 120) {
+        RLOG_I("front", "a frame: the view's state %.2f ms, the interface layer %.2f ms, the renderer %.2f ms "
+               "(worst %.2f), frame to frame worst %.2f ms", a / n, b / n, c / n, worst, gap_worst);
+        n = 0, a = b = c = worst = gap_worst = 0;
+    }
+}
+/* the window's contents as presented (the renderer's own picture) written as the window shot */
+static void view_window_shot(void)
+{
+    uint8_t *rgba = malloc((size_t)V.cw * (size_t)V.ch * 4), *rgbp = malloc((size_t)V.cw * (size_t)V.ch * 3);
+    if (!rgba || !rgbp) RLOG_E("front", "out of memory (%zu bytes) for the window shot", (size_t)V.cw * (size_t)V.ch * 7);
+    if (rgba && rgbp && V.readback(rgba)) {
+        int i;
+        for (i = 0; i < V.cw * V.ch; i++) rgbp[i * 3] = rgba[i * 4], rgbp[i * 3 + 1] = rgba[i * 4 + 1], rgbp[i * 3 + 2] = rgba[i * 4 + 2];
+        if (plat_write_png_rgb(live.window_shot_path, rgbp, V.cw, V.ch) == 0)
+            RLOG_I("front", "wrote %s (%dx%d, the window, %s)", live.window_shot_path, V.cw, V.ch, view_vk ? "Vulkan" : "D3D12");
+        else RLOG_E("front", "cannot write the window shot %s", live.window_shot_path);
+    } else if (rgba && rgbp) RLOG_E("front", "the renderer gave no picture for the window shot %s", live.window_shot_path);
+    free(rgba), free(rgbp);
+    L.shot = 2;
+}
+/* the picture (sw by sh, 0x00RRGGBB) into the interface layer, where GDI would have put it, black round it; clear
+   where our 3D view shows */
+static void view_present(const uint32_t *src, int sw, int sh)
+{
+    uint64_t t0 = plat_counter();
+    int ours = view_ours(sw, sh);
+    uint64_t t1 = plat_counter();
+    int x0 = L.dst.left * V.uw / V.cw, x1 = L.dst.right * V.uw / V.cw;
+    int y0 = L.dst.top * V.uh / V.ch, y1 = L.dst.bottom * V.uh / V.ch;
+    const unsigned char *layer = NULL;
+#ifndef UWPORT_GAMEVIEW
+    full_live = ours;
+#endif
+    view_targets(ours);
+    view_readout(ours);
+    layer = view_conv_layer(src, sw, sh);
+    layer = view_first_view(ours, layer, sw);
+    cut_now = 0;
+    layer = view_cut_layer(layer, ours, src, sw, sh);
+    if (!layer && ours && full_show() && V.hud) layer = view_hud_layer(src, sw, sh);
+    if (!layer && !ours && V.compose && display_mode == 0 && V.hud && !iface && screen_now() == PS_GAME && getenv("UWPORT_LOOKDBG")) view_note_original();
+    if (!layer) layer = V.compose ? V.compose(src, sw, sh, ours ? clear_px : NULL, x0, y0, x1, y1) : NULL;
+    display_init();
+    first_pick();
+    view_host_pointer();
+    if (!layer) {                      /* the renderer did not build it (optimised): the loop of view_fill_layer */
+        view_fill_layer(src, sw, sh, ours, x0, y0, x1, y1);
         layer = V.ui;
     }
+    inv_pump();
+    if (inv_open && full_play() && V.inventory && layer) inv_draw();   /* our inventory panel */
+    if (menu_open && V.menu_rows && layer) view_menu_draw();
+    if (L.shot == 1 && live.window_shot_path && V.want_shot) V.want_shot();
+    if (screen_now() == PS_DEATH && fade_state && layer && V.ui) layer = view_death_fade(layer);
     uint64_t t2 = plat_counter();
     int frame_ok = V.frame(layer);
-    if (V.recording) {                  /* the window's title: the video being made, its seconds left */
-        static int rec_shown = 0;
-        int left = V.recording();
-        if (left != rec_shown) {
-            rec_shown = left;
-            if (left > 0) {
-                char t[160];
-                snprintf(t, sizeof t, "%s - RECORDING VIDEO: %d s left", live.title ? live.title : PLAT_TITLE, left);
-                uwp_title(t);
-            } else if (live.mouse_lock) mouse_title(locked);
-            else uwp_title(live.title ? live.title : PLAT_TITLE);
-        }
-    }
-    {
-        /* where a frame's time goes, every 120 frames (UWPORT_TIMING=1): the 3D view's state (the game's frame
-           kept, the level), the interface layer filled, the renderer's frame (its upload, drawing, DLSS, present) */
-        static int on = -1, n;
-        static double a, b, c, worst, gap_worst;
-        static uint64_t last_t3;
-        uint64_t t3 = plat_counter();
-        double hz = (double)plat_counter_hz() / 1000.0;
-        if (on < 0) { const char *e = getenv("UWPORT_TIMING"); on = e && *e && *e != '0'; }
-        a += (double)(t1 - t0) / hz, b += (double)(t2 - t1) / hz, c += (double)(t3 - t2) / hz;
-        /* the worst of them too: one slow frame is a hitch the average hides (the second review's item 7: the
-           language model on the same GPU as DLSS and ray tracing) */
-        if ((double)(t3 - t2) / hz > worst) worst = (double)(t3 - t2) / hz;
-        if (last_t3 && (double)(t3 - last_t3) / hz > gap_worst) gap_worst = (double)(t3 - last_t3) / hz;
-        last_t3 = t3;
-        if (on && ++n == 120) {
-            fprintf(stderr, PLAT_NAME ": a frame: the view's state %.2f ms, the interface layer %.2f ms, the renderer %.2f ms "
-                    "(worst %.2f), frame to frame worst %.2f ms\n", a / n, b / n, c / n, worst, gap_worst);
-            n = 0, a = b = c = worst = gap_worst = 0;
-        }
-    }
+    if (V.recording) view_record_title();
+    view_timing(t0, t1, t2);
     if (!frame_ok) {
         if (++V.failed >= 3) {
-            fprintf(stderr, PLAT_NAME ": the D3D12 renderer failed: GDI from now on\n");
+            RLOG_E("front", "the %s renderer failed three frames in a row: GDI from now on", view_vk ? "Vulkan" : "D3D12");
             V.shutdown();
             uwp_lib_close(V.dll);
             free(V.ui);
@@ -3757,18 +4045,7 @@ composed:
         return;
     }
     V.failed = 0;
-    if (L.shot == 1 && live.window_shot_path && V.readback) {
-        /* the window's contents as presented: the renderer's own picture */
-        uint8_t *rgba = malloc((size_t)V.cw * (size_t)V.ch * 4), *rgbp = malloc((size_t)V.cw * (size_t)V.ch * 3);
-        if (rgba && rgbp && V.readback(rgba)) {
-            int i;
-            for (i = 0; i < V.cw * V.ch; i++) rgbp[i * 3] = rgba[i * 4], rgbp[i * 3 + 1] = rgba[i * 4 + 1], rgbp[i * 3 + 2] = rgba[i * 4 + 2];
-            if (plat_write_png_rgb(live.window_shot_path, rgbp, V.cw, V.ch) == 0)
-                fprintf(stderr, PLAT_NAME ": wrote %s (%dx%d, the window, %s)\n", live.window_shot_path, V.cw, V.ch, view_vk ? "Vulkan" : "D3D12");
-        }
-        free(rgba), free(rgbp);
-        L.shot = 2;
-    }
+    if (L.shot == 1 && live.window_shot_path && V.readback) view_window_shot();
 }
 
 /* ---- the loop ---- */
@@ -3779,8 +4056,8 @@ composed:
    north) as the renderer's tiles (x, z); the height the eye's, or an object's z (32 a tile, as the renderer's). */
 static int fx_pan_fix = 1;   /* data\settings.txt fx_pan_fix (1 unless written 0): the Roland effects panned as the game meant */
 static unsigned fx_ac_seen;   /* the renderer's acoustic epoch the audio has (0: none) */
-/* Our own files' folder (settings.txt, acoustics.txt, our maps): data\ beside the program. In a flat folder (the user,
-   2026-11-16: the program beside the game's own UW.EXE, no game\ folder) it is uwr\, so that nothing of ours lands in
+/* Our own files' folder (settings.txt, acoustics.txt, our maps): data\ beside the program. In a flat folder (the
+   program beside the game's own UW.EXE, no game\ folder) it is uwr\, so that nothing of ours lands in
    the game's DATA\. The renderer makes the same choice (src\uwview.c data_dirs). */
 void uwf_our_data(char *out, size_t n)
 {
@@ -3802,6 +4079,7 @@ void uwf_our_data(char *out, size_t n)
     }
     snprintf(out, n, "%s%s", base, is_flat ? "uwr" : "data");
 }
+/* our positional sound started (again): OpenAL, the acoustics, the Roland's effects; none in the original's display */
 static void fx_audio_start(int again)
 {
     char bin[UWF_PATH], data[UWF_PATH];
@@ -3809,7 +4087,7 @@ static void fx_audio_start(int again)
     if (!base) return;
     if (again) uwaudio_shutdown();
     if (display_orig()) {   /* the original's display: the game's own sound alone (uwaudio_taken 0: SOUND.C plays it) */
-        fprintf(stderr, "fx: the original's display: the game's own sound, no positional sound\n");
+        RLOG_I("fx", "the original's display: the game's own sound, no positional sound");
         return;
     }
     snprintf(bin, sizeof bin, "%sbin", base), uwf_our_data(data, sizeof data);
@@ -3817,7 +4095,7 @@ static void fx_audio_start(int again)
     fx_pan_fix = uwaudio_setting(data, "fx_pan_fix", 1);
     volumes_load();
     uwaudio_volume(hush_on ? 0 : fx_vol / 100.0f);   /* (a level's build under way stays silent) */
-    fprintf(stderr, "fx: starting the positional sound (OpenAL, the acoustics, the Roland's effects)\n");
+    RLOG_I("fx", "starting the positional sound (OpenAL, the acoustics, the Roland's effects)");
     uwaudio_init(bin, data);
     fx_ac_seen = 0;   /* (the acoustics' materials are read by uwaudio_init: the level handed over again) */
 }
@@ -3848,6 +4126,7 @@ static int fx_thing_mat(int item)
     for (int i = 0; i < uwacmat_count(); i++) if (!strcmp(uwacmat_get(i)->name, name)) return i;
     return 0;
 }
+/* the level's tiles, doors and things handed to the audio when they changed (the fx: lines stay raw: fxcheck.py reads them by their start) */
 static void fx_acoustic_level(void)
 {
     static UwvAcTile tile[64 * 64];
@@ -3909,16 +4188,33 @@ static void fx_acoustics_tune(void)
     uwf_our_data(data, sizeof data);
     uwaudio_tune(data);
 }
+/* at exit: how often the music's stream ran dry in the run */
 static void underruns_at_exit(void)
 {
     extern unsigned audio_underruns(void);
-    fprintf(stderr, "audio: the music's stream ran dry %u times in this run\n", audio_underruns());
+    RLOG_I("front", "audio: the music's stream ran dry %u times in this run", audio_underruns());
 }
+static double fxp_ms(void) { return (double)plat_counter() * 1000.0 / (double)plat_counter_hz(); }
+static void fx_pump1(void);
+/* each picture: the effects pumped (timed under UWPORT_TIMING) */
 static void fx_pump(void)
+{
+    static int timing = -1;
+    if (timing < 0) { const char *e = getenv("UWPORT_TIMING"); timing = e && *e && *e != '0'; }
+    double a = timing ? fxp_ms() : 0;
+    fx_pump1();
+    if (timing && fxp_ms() - a > 30) RLOG_I("front", "a slow sound pump at %lu ms: %.0f ms", (unsigned long)(ms_now() - L.start), fxp_ms() - a);
+}
+static double fxp_t[4];
+/* the effects' events to the audio and the renderer, the listener, the game's sound switches, the music's dry runs */
+static void fx_pump1(void)
 {
 #ifndef UWPORT_PLAIN
     if (fx_restart_at && ms_now() >= fx_restart_at) fx_restart_at = 0, fx_audio_start(1);
+    fxp_t[0] = fxp_ms();
     fx_acoustic_level();
+    fxp_t[1] = fxp_ms();
+    if (fxp_t[1] - fxp_t[0] > 30) RLOG_I("front", "(timing) the level's acoustics %.0f ms", fxp_t[1] - fxp_t[0]);
     PortFxEvent ev[64];
     float ex = 0, ey = 0, ez = 0;
     int n = port_fx_drain(ev, 64), have = 0;
@@ -3938,7 +4234,11 @@ static void fx_pump(void)
         uwaudio_event(e->kind, x, y, z, e->fx, e->vol);
         if (V.fx_event && !V.failed) V.fx_event(e->kind, e->x < 0 ? ex : x, y, e->x < 0 ? ez : z, e->fx, e->mob);
     }
+    fxp_t[2] = fxp_ms();
     uwaudio_pump();
+    fxp_t[3] = fxp_ms();
+    if (fxp_t[3] - fxp_t[2] > 30) RLOG_I("front", "(timing) uwaudio_pump %.0f ms; the events before it %.0f ms", fxp_t[3] - fxp_t[2], fxp_t[2] - fxp_t[1]);
+    else if (fxp_t[2] - fxp_t[1] > 30) RLOG_I("front", "(timing) the sound events %.0f ms", fxp_t[2] - fxp_t[1]);
     /* the game's side (SOUND.C fx_play): the effects we play ourselves have their Roland copy silent; the pan mirrored
        for the MT-32's inverted reading of it (portgame.h port_fx_control) */
     cards_load();
@@ -3947,9 +4247,15 @@ static void fx_pump(void)
     dials_load();
     port_fx_interrupts(display_mode == 1 ? 1 : dial_val[26]);   /* (the original's display: its effects take the music's channels) */
     port_pause_music(dial_val[28]);     /* (the "Music in the menu" row: on unless turned off) */
+    port_music_clean_set(dial_val[37]);   /* (the "Music volume, clean" row) */
+    {   /* the heat shimmer (the "Heat shimmer" row): the hot air near the eye, from the renderer, to the sound */
+        static float heat[96 * 5];
+        int nh = dial_val[39] > 0 && V.dll && V.heat_spots ? V.heat_spots(heat, 96) : 0;
+        uwaudio_heat(heat, nh, (float)dial_val[39] / 100.0f);
+    }
     uwp_music_room(dial_val[29], dial_val[30]);   /* (the "Effects interrupt music" row: 0 unless turned on) */
     {   /* the music's stream (Exhume's audio.c): the times the device found it empty, into the log once a minute
-           when there were more, and at the end (the user, 2026-11-16: "some cutoff ... for the music") */
+           when there were more, and at the end */
         extern unsigned audio_underruns(void);
         static unsigned said;
         static unsigned long long next;
@@ -3962,15 +4268,15 @@ static void fx_pump(void)
             unsigned u = audio_underruns();
             if (!t0) t0 = now;
             if (u != each) {
-                if (lines++ < 40) fprintf(stderr, "audio: the music's stream ran dry (%u) %.1f s into the run: %s\n", u, (double)(now - t0) / 1000.0,
-                                          menu_open ? "our menu open" : settings_open() ? "the settings screen open" : screen_now() == PS_GAME ? "in the game" : "another screen");
+                if (lines++ < 40) RLOG_W("front", "audio: the music's stream ran dry (%u) %.1f s into the run: %s", u, (double)(now - t0) / 1000.0,
+                                         menu_open ? "our menu open" : settings_open() ? "the settings screen open" : screen_now() == PS_GAME ? "in the game" : "another screen");
                 each = u;
             }
         }
         if (now >= next) {
             unsigned u = audio_underruns();
             next = now + 60000;
-            if (u != said) fprintf(stderr, "audio: the music's stream ran dry %u times so far (%u in the last minute)\n", u, u - said), said = u;
+            if (u != said) RLOG_W("front", "audio: the music's stream ran dry %u times so far (%u in the last minute)", u, u - said), said = u;
         }
     }
 #endif
@@ -4049,7 +4355,8 @@ void uwf_tick_scan(void)
         const char *path = live.screenshot_path ? live.screenshot_path : PLAT_NAME ".png";
         L.shot = 1;
         if (plat_write_png(path, L.pix, L.w, L.hgt, L.pal) == 0)
-            fprintf(stderr, PLAT_NAME ": wrote %s (%dx%d) at %lu ms\n", path, L.w, L.hgt, (unsigned long)(ms_now() - L.start));
+            RLOG_I("front", "wrote %s (%dx%d) at %lu ms", path, L.w, L.hgt, (unsigned long)(ms_now() - L.start));
+        else RLOG_E("front", "cannot write the screenshot %s", path);
         {
             /* UWPORT_FBDUMP=FILE: the 3D view's frame buffer at its last frame, as it lies in memory (the checks) */
             const char *fbp = getenv("UWPORT_FBDUMP");
@@ -4057,8 +4364,9 @@ void uwf_tick_scan(void)
             if (fbp && *fbp && uwg_snapshot(&s)) {
                 int rows = UWG_FB_LEN / s.w;
                 if (plat_write_png(fbp, s.fb, s.w, rows, L.pal) == 0)
-                    fprintf(stderr, PLAT_NAME ": wrote %s (%dx%d, the 3D frame buffer; %u frames; level %d at %d,%d,%d facing %d pitch %d)\n",
-                            fbp, s.w, rows, s.frames, s.level, s.x, s.y, s.z, s.facing, s.pitch);
+                    RLOG_I("front", "wrote %s (%dx%d, the 3D frame buffer; %u frames; level %d at %d,%d,%d facing %d pitch %d)",
+                           fbp, s.w, rows, s.frames, s.level, s.x, s.y, s.z, s.facing, s.pitch);
+                else RLOG_E("front", "cannot write the frame buffer picture %s", fbp);
             }
         }
     }
@@ -4078,13 +4386,13 @@ int uwf_hover(int x, int y)
     if (!(!locked && !captured && !settings_open() && L.have_dst)) return -1;
     float gx, gy;   /* (in a conversation in our display, over its pieces: uwconv.c) */
     int over = uwc_shown() ? uwc_point(x, y, &gx, &gy) : x >= L.dst.left && x < L.dst.right && y >= L.dst.top && y < L.dst.bottom;
-    if (display_mode == 0) over = 1;   /* our display: never the host's pointer, the game's only (the user) */
+    if (display_mode == 0) over = 1;   /* our display: never the host's pointer, the game's only */
     return over;
 }
 int uwf_pointer_free(void) { return !locked && !captured; }
 
-/* the message box: up older, down newer (the game has no use for the wheel); the menu's list while the menu is open
-   (the user: "work with the scroll wheel") */
+/* the wheel: our menu's list while it is open, else our panel's open bags, a conversation's scroll back, or the
+   message box (up older, down newer; the game has no use for the wheel) */
 #define WHEEL_STEP 120                 /* (Win32's WHEEL_DELTA: a notch) */
 void uwf_wheel(int delta)
 {
@@ -4095,7 +4403,7 @@ void uwf_wheel(int delta)
         wheel_rest %= WHEEL_STEP;
     } else if (display_mode == 0 && inv_open && V.inv_wheel && V.inv_hit && inv_snap.valid
                && V.inv_hit(&inv_snap, inv_mx, inv_my, inv_sheet, NULL, NULL) != -1) {
-        /* over our panel: the open bags' rows (the user: "scroll through them with the mousewheel") */
+        /* over our panel: the open bags' rows */
         static int inv_rest;
         inv_rest += delta;
         if (inv_rest / WHEEL_STEP) V.inv_wheel(inv_rest / WHEEL_STEP);
@@ -4132,7 +4440,7 @@ void uwf_focus(int on)
     left_down = 0;
     L.swallow = 0;
     uwi_release_all();
-    if (key_bytes_sent != n) fprintf(stderr, PLAT_NAME ": the window lost the focus: the buttons and keys held let go\n");
+    if (key_bytes_sent != n) RLOG_I("front", "the window lost the focus: the buttons and keys held let go");
     input_sync();
 }
 void uwf_set_focused(int on) { focused = on; }
@@ -4163,8 +4471,8 @@ void uwf_client_size(int *w, int *h) { client_size(w, h); }
 int uwf_offscreen(void) { return offscreen(); }
 int uwf_no_input(void) { return no_input(); }
 void uwf_view_start(void) { view_start(); }
-/* 2026-11-17: the renderer was started by the first frame, the game's thread already running: three or four seconds
-   (a first run, its relief maps: eleven more) of the game's music and sounds over a window with no picture */
+/* the renderer started before the game's thread runs (started by the first frame, the game's music and sounds
+   played for seconds over a window with no picture) */
 void uwf_view_warm(void) { view_size(); }
 int uwf_view_loaded(void) { return V.dll != NULL; }
 int uwf_view_ok(void) { return V.ok; }
@@ -4178,18 +4486,16 @@ void uwf_shutdown(void)
         void port_mind_stop(void);
         port_mind_stop();
     }
-    if (uwp_window()) fprintf(stderr, PLAT_NAME ": %u presents\n", L.presents);
+    if (uwp_window()) RLOG_I("front", "%u presents", L.presents);
     if (clip_on) uwp_capture(0);
     if (V.ok) V.shutdown();
     /* OpenAL Soft (fx_audio) closed and let go before the process ends: left open, its threads die in ExitProcess and
-       the DLL's own teardown then fails (the user, 2026-11-12, at exit: libstdc++'s "std::__condvar::~__condvar():
-       Assertion '__e != 16' failed", a condition variable destroyed with a waiter; soft_oal.dll is the only file of
-       ours that carries that text) */
+       the DLL's own teardown then fails (libstdc++'s "std::__condvar::~__condvar(): Assertion '__e != 16' failed",
+       a condition variable destroyed with a waiter) */
     uwaudio_shutdown();
 }
 
-/* the checks' own window events, each pass before the window's messages (moved here from plat_win32.c's loop_step,
-   2026-11-15, so that every backend has them) */
+/* the checks' own window events, each pass before the window's messages (here, so that every backend has them) */
 void uwf_tick_tests(void)
 {
     {   /* UWPORT_FOCUSTEST=T1,T2[,T3,T4] (a check's): the window loses the focus at T1 ms and gets it back at T2 (and again
@@ -4207,7 +4513,7 @@ void uwf_tick_tests(void)
             int away = !(fi & 1);
             fi++;
             uwp_test_focus(away);
-            fprintf(stderr, PLAT_NAME ": focus test: %s\n", away ? "away" : "back");
+            RLOG_I("front", "focus test: %s", away ? "away" : "back");
         }
     }
     {   /* UWPORT_MOUSETEST="T:EV,T:EV,..." (a check's): the window's own mouse events at T ms, as the window gets them (its
@@ -4239,7 +4545,7 @@ void uwf_tick_tests(void)
             int cx, cy;
             uwp_window_size(&crw, &crh);
             cx = (int)((long)me[mi].x * crw / 10000), cy = (int)((long)me[mi].y * crh / 10000);
-            fprintf(stderr, PLAT_NAME ": mouse test at %lu ms: %s %d %d\n", (unsigned long)(ms_now() - L.start), ev, me[mi].x, me[mi].y);
+            RLOG_I("front", "mouse test at %lu ms: %s %d %d", (unsigned long)(ms_now() - L.start), ev, me[mi].x, me[mi].y);
             if (!strcmp(ev, "raw")) uwf_raw_motion(me[mi].x, me[mi].y);
             else if (!strcmp(ev, "mv")) uwf_pointer(PLAT_POINTER_MOVE, cx, cy, 0);
             else if (!strcmp(ev, "sd") || !strcmp(ev, "su")) uwf_key(0x2A, ev[1] == 'd', 0);

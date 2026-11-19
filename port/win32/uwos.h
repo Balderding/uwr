@@ -238,6 +238,10 @@ static inline HANDLE CreateThread(void *sa, size_t stack, DWORD (*fn)(LPVOID), L
     pthread_attr_destroy(&a);
     return h;
 }
+/* (2026-11-18, uwaudio.c's echo feed raised to the music thread's priority) Linux: left as it is (a raised priority
+   needs the system's leave there), so a no-op that says it worked */
+#define THREAD_PRIORITY_TIME_CRITICAL 15
+static inline int SetThreadPriority(HANDLE h, int prio) { (void)h, (void)prio; return 1; }
 /* WAIT_OBJECT_0 once signalled (an event's signal or a semaphore's count is taken; a thread has ended: joined once,
    and a second wait on it is signalled at once), WAIT_TIMEOUT after ms (INFINITE: no limit) */
 static inline DWORD WaitForSingleObject(HANDLE h, DWORD ms)

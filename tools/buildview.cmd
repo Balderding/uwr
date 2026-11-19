@@ -63,7 +63,9 @@ rem the effects (docs\superpowers\plans\2026-11-12-fx-audio-and-visual.md), each
 set FXSRC=src\render_particles.c src\render_decals.c
 set CF=%CLANG_FLAGS% -std=c17 -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -O2 -I src -I dlss\include -I %B%\gen
 set COMMON=src\base.c src\png.c src\gr.c src\audio.c src\conv.c src\extract.c src\level.c src\normals.c src\lights.c src\world.c src\models.c src\objdata.c src\orig.c src\xmidi.c src\sound.c src\sfx.c src\songs.c src\collide.c
-clang %CF% -shared -o %B%\uwview.dll src\uwview.c src\render.c %FXSRC% src\ngx.c src\ui.c src\menu_draw.c src\smoothtext.c src\uwinv_draw.c src\uwconv_draw.c src\uwrec.c %COMMON% -ld3d12 -ldxgi -ldxguid -luser32 -lgdi32 -ladvapi32 -lwinmm -lmfplat -lmfreadwrite -lmfuuid -lole32 -lshell32 || exit /b 1
+rem the shared logger (port\win32\rlog.c) is in every renderer build; its header is found by -I port\win32
+set RLOG=port\win32\rlog.c -I port\win32
+clang %CF% -shared -o %B%\uwview.dll %RLOG% src\uwview.c src\render.c %FXSRC% src\ngx.c src\ui.c src\menu_draw.c src\smoothtext.c src\uwinv_draw.c src\uwconv_draw.c src\uwrec.c %COMMON% -ld3d12 -ldxgi -ldxguid -luser32 -lgdi32 -ladvapi32 -lwinmm -lmfplat -lmfreadwrite -lmfuuid -lole32 -lshell32 || exit /b 1
 clang %CF% -fno-optimize-sibling-calls -shared -o %B%\uw_nvngx_port.dll src\nrbridge.c || exit /b 1
 echo built uwview.dll
 rem the same with the Vulkan renderer (render_vk.c for render.c; no D3D12, NGX or the D3D12 passes; the loader is opened
@@ -73,10 +75,10 @@ rem gives; and the shaders' SPIR-V reads every struct where the C side writes it
 set VKPY=O:\appsnotonc\sentinel\uv\python\cpython-3.13.17-windows-x86_64-none\python.exe
 %VKPY% -I tools\render_vk_cpu.py --check || exit /b 1
 %VKPY% -I tools\vklayout.py || exit /b 1
-clang %CF% -I O:\appsnotonc\vulkan-sdk\1.4.363.1\Include -shared -o %B%\uwview_vk.dll src\uwview.c src\render_vk.c src\vk_load.c src\ngx_vk.c src\ui.c src\menu_draw.c src\smoothtext.c src\uwinv_draw.c src\uwconv_draw.c src\uwrec.c %COMMON% -ldxgi -ldxguid -luser32 -lgdi32 -ladvapi32 -lwinmm -lmfplat -lmfreadwrite -lmfuuid -lole32 -lshell32 || exit /b 1
+clang %CF% -I O:\appsnotonc\vulkan-sdk\1.4.363.1\Include -shared -o %B%\uwview_vk.dll %RLOG% src\uwview.c src\render_vk.c src\vk_load.c src\ngx_vk.c src\ui.c src\menu_draw.c src\smoothtext.c src\uwinv_draw.c src\uwconv_draw.c src\uwrec.c %COMMON% -ldxgi -ldxguid -luser32 -lgdi32 -ladvapi32 -lwinmm -lmfplat -lmfreadwrite -lmfuuid -lole32 -lshell32 || exit /b 1
 echo built uwview_vk.dll
 rem uwr-vulkan.exe: uwr.exe started with the Vulkan renderer for one run (makedist.py puts it beside uwr.exe)
 clang %CLANG_FLAGS% -O2 -municode -mwindows tools\uw_vulkan_launch.c -o %B%\uwr-vulkan.exe || exit /b 1
 rem the tour: the renderer with no game, every level and pictures of its items (tests\uwtour.c)
-clang %CF% -o %B%\uwtour.exe tests\uwtour.c src\uwview.c src\render.c %FXSRC% src\ngx.c src\ui.c src\menu_draw.c src\smoothtext.c src\uwinv_draw.c src\uwrec.c %COMMON% -ld3d12 -ldxgi -ldxguid -luser32 -lgdi32 -ladvapi32 -lwinmm -lmfplat -lmfreadwrite -lmfuuid -lole32 -lshell32 || exit /b 1
+clang %CF% -o %B%\uwtour.exe %RLOG% tests\uwtour.c src\uwview.c src\render.c %FXSRC% src\ngx.c src\ui.c src\menu_draw.c src\smoothtext.c src\uwinv_draw.c src\uwrec.c %COMMON% -ld3d12 -ldxgi -ldxguid -luser32 -lgdi32 -ladvapi32 -lwinmm -lmfplat -lmfreadwrite -lmfuuid -lole32 -lshell32 || exit /b 1
 echo built uwtour.exe

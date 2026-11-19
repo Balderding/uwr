@@ -1,25 +1,26 @@
-/* uwinput: who owns each press of the window's keys and mouse buttons, and the key table of our display
-   (docs\superpowers\specs\2026-11-12-input-rewrite-design.md; uwinput.h). Pure C: no Win32 here.
+/* uwinput.c: decides who owns each key press and mouse button press of the window, and holds the key table of our
+   display (see uwinput.h). Plain C, no Win32.
 
-   A new press goes to the first owner that applies, in this order: SETTINGS (the settings screen is open), MENU
-   (our Esc menu), then three keys outside the key table (F11: SETTINGS, whose handler opens the screen; Esc where
-   our menu can open, esc_menu: MENU, whose handler opens it; Tab where it is ours, tab_ours: the WORLD's
-   UWI_A_TAB), PANEL (our inventory panel, when its handler takes the event), WORLD (our display's 3D play:
-   the key table below, or the world's handler for a button), CENTRED (a conversation, the map, typed text: the
-   original's piece centred, when its handler takes it), else GAME (the byte or pointer event to the game as it
-   comes). The owner and what was sent are kept per physical key and per button, and the release goes to the same
-   owner whatever has changed since; a held WORLD or GAME press the new state no longer allows (the screen left the
-   3D view; our menu or the settings opened) is released at once (uwi_state) and its later release sends nothing.
-   Before, a release after the screen changed went to the game as the key's own code: a translated key stayed down
-   and the keyboard's repeat sent it again (Z slept, dreamed, slept again), Space left the port's Shift held. */
+   A new press goes to the first owner that applies, in this order:
+     SETTINGS  the settings screen is open
+     MENU      our Esc menu is open
+     (three keys outside the key table: F11 -> SETTINGS, whose handler opens the screen; Esc, where our menu can
+      open -> MENU, whose handler opens it; Tab, where it is ours -> WORLD's UWI_A_TAB)
+     PANEL     our inventory panel, when its handler takes the event
+     WORLD     our display's 3D play: the key table below, or the world's handler for a button
+     CENTRED   a conversation, the map or typed text: the original's piece centred, when its handler takes it
+     GAME      otherwise the byte or pointer event goes to the game as it comes.
+   The owner and what was sent are kept per physical key and per button, and the release always goes to the same
+   owner, whatever has changed since. A held WORLD or GAME press that the new state no longer allows (the screen left
+   the 3D view, or our menu or the settings opened) is released at once by uwi_state, and its later release sends
+   nothing. */
 #include <string.h>
 #include "uwinput.h"
 
 #define NKEYS 0x200
 enum { SH_ANY = 0, SH_SHIFT = 1, SH_CTRL = 2 };   /* an entry's modifier: none needed, Shift, Ctrl */
 
-/* our display's commands, each with the key it has as shipped (the old our_keys, plat_win32.c b9ba607, and the keys
-   that went straight to the game: A, D, S, E, the arrows ...), and bind[], the key each has now: the player's own
+/* our display's commands, each with the key it has by default (CMD) and bind[], the key each has now: the player's own
    (the Esc menu's Keys tab; the backend loads and keeps them). A label with # is a heading of that tab, no command.
    A WALK's or RUN's code is its bit in w_held / run_held. A key that is some command's shipped key and has no
    command now does nothing in the world (it must not fall through to the game as the command it was); any other
@@ -114,8 +115,10 @@ static int last_x, last_y;
 static int w_held, run_held, walk_sent;   /* w_held: bit 0 the walk's key, bit 1 its second; run_held: the run's two */
 static int shift_phys;                    /* the keyboard's Shift keys held (bit 0 left, bit 1 right): a command's Shift+ */
 
+/* sends a key or pointer event to the game, if a sink is set */
 static void gkey(int code, int down) { if (O.game_key) O.game_key(code, down); }
 static void gptr(int type, int x, int y, unsigned b) { if (O.game_pointer) O.game_pointer(type, (float)x, (float)y, b); }
+/* calls the owner's handler; 0 when it has none or does not take the event */
 static int handler(int owner, int kind, int code, int down, int x, int y)
 {
     int (*h)(int, int, int, int, int) =
@@ -124,8 +127,8 @@ static int handler(int owner, int kind, int code, int down, int x, int y)
     return h ? h(kind, code, down, x, y) : 0;
 }
 
-/* the forward code the game should see held: W or Up with Shift is its run (W), without its walk (X); it follows
-   Shift going down or up while forward is held (as the old walk_update) */
+/* sends the forward key the game should see held: W or Up with Shift is its run (W), without Shift its walk (X);
+   it follows Shift going down or up while forward is held */
 static void walk_update(void)
 {
     int want = w_held ? (run_held ? 0x11 : 0x2D) : 0;
@@ -135,6 +138,7 @@ static void walk_update(void)
     walk_sent = want;
 }
 
+/* whether our 3D play is on: our display, the game screen, the view live */
 static int world_on(const UwiState *s) { return s->display_ours && s->screen == UWI_PS_GAME && s->full_live; }
 static int centred_on(const UwiState *s) { return s->screen == UWI_PS_MAP || s->screen == UWI_PS_CONV || s->screen == UWI_PS_TEXT; }
 static int in_key_table(int c)
@@ -150,7 +154,7 @@ static int shipped_key(int c)   /* some command's key as shipped, with no modifi
 }
 /* a held press its owner may keep in this state (only WORLD and GAME presses are taken back); c the key (-1 a button).
    A GAME press of a key in the key table (W, say, pressed over a conversation) is let go once the world is on again
-   (back in PS_GAME): the key is the world's there, the spec's owner change (the final review's finding 5) */
+   (back in PS_GAME): the key is the world's there */
 static int keeps(int owner, const UwiState *s, int c)
 {
     if (owner == UWI_WORLD) return s->screen == UWI_PS_GAME && !s->menu && !s->settings;
@@ -188,6 +192,7 @@ static void release_button(int i)
     else handler(owner, UWI_BUTTON, (int)b, 0, last_x, last_y);
 }
 
+/* starts with no key or button held, and the sinks (game, handlers) to send to */
 void uwi_init(const UwiOut *out)
 {
     memset(&O, 0, sizeof O);
@@ -200,6 +205,7 @@ void uwi_init(const UwiOut *out)
     bind_make();
 }
 
+/* lets go of every held press that the state s no longer allows */
 void uwi_state(const UwiState *s)
 {
     for (int c = 0; c < NKEYS; c++)
@@ -208,6 +214,7 @@ void uwi_state(const UwiState *s)
         if (bown[i] != UWI_NONE && !keeps(bown[i], s, -1)) release_button(i);
 }
 
+/* lets go of everything held (focus lost, screen change) */
 void uwi_release_all(void)
 {
     for (int c = 0; c < NKEYS; c++) release_key(c);
@@ -216,14 +223,17 @@ void uwi_release_all(void)
     shift_phys = 0;
 }
 
+/* whether mouse-look should be on in this state */
 int uwi_look_wanted(const UwiState *s)
 {
     return s->display_ours && s->screen == UWI_PS_GAME && !s->settings && !s->menu && !s->panel &&
            !s->options_panel && s->focused && s->mouse_look_enh && !s->replaying;
 }
 
+/* who owns the held key code (UWI_NONE when none) */
 int uwi_owner_of_key(int code) { return code >= 0 && code < NKEYS ? kp[code].owner : UWI_NONE; }
 
+/* the command whose key (with its Shift or Ctrl) matches c now, a modified one first; -1 none */
 static int find_key(const UwiState *s, int c)
 {
     int shift = shift_phys != 0, ctrl = s->ctrl_down != 0;   /* Shift: the keys as we saw them; Ctrl: the live keyboard's */
@@ -237,6 +247,7 @@ static int find_key(const UwiState *s, int c)
     return -1;
 }
 
+/* a key press, repeat or release: gives a new press to the first owner that applies (see the head comment) */
 void uwi_key(const UwiState *s, int c, int down, int repeat)
 {
     if (c < 0 || c >= NKEYS) return;
@@ -252,7 +263,7 @@ void uwi_key(const UwiState *s, int c, int down, int repeat)
     if (kp[c].owner != UWI_NONE) release_key(c);   /* a press with no release seen: the old one ends first */
     if (s->settings) { kp[c].owner = UWI_SETTINGS; handler(UWI_SETTINGS, UWI_KEY, c, 1, 0, 0); return; }
     if (s->menu) { kp[c].owner = UWI_MENU; handler(UWI_MENU, UWI_KEY, c, 1, 0, 0); return; }
-    /* the three keys of ours outside the key table (the old handle_key and menu_key had them): F11 opens the settings
+    /* the three keys of ours outside the key table: F11 opens the settings
        screen (its handler), Esc our menu where it can (its handler opens it), Tab our panel or the original's
        interface; each owned like any press, so its release (and Esc's repeats) go to the same owner */
     if (c == 0x57) { kp[c].owner = UWI_SETTINGS; handler(UWI_SETTINGS, UWI_KEY, c, 1, 0, 0); return; }
@@ -266,7 +277,7 @@ void uwi_key(const UwiState *s, int c, int down, int repeat)
        and be undone at its next poll); no owner, so its release and repeats send nothing either */
     if (c == 0x29 && s->look_ours) return;
     if (s->panel && handler(UWI_PANEL, UWI_KEY, c, 1, 0, 0)) { kp[c].owner = UWI_PANEL; return; }
-    /* our display has no way to the original's interface but the Esc menu's Display row (the user, 2026-11-15): the
+    /* our display reaches the original's interface only through the Esc menu's Display row, so the
        original's own keys for its options panel (PLAYER.C: F1 deal_with_icons(5); Ctrl+S/R/M/F/D/Q
        do_option_shortcut) go to ours on every screen of it: Ctrl+S our save page, Ctrl+R our load page, the rest our
        menu. Never to the game here, so its panel cannot open */
@@ -303,6 +314,7 @@ void uwi_key(const UwiState *s, int c, int down, int repeat)
 
 static int button_index(unsigned b) { return b == 1 ? 0 : b == 2 ? 1 : b == 4 ? 2 : -1; }
 
+/* a mouse button press or release (b: 1 left, 2 right, 4 middle) at window point x, y */
 void uwi_button(const UwiState *s, unsigned b, int down, int x, int y)
 {
     int i = button_index(b);

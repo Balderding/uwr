@@ -1,6 +1,6 @@
-/* uwlook.c: the name of what the crosshair (the 3D view's centre) is on, for our full-screen display's readout.
-   Taken on the game's thread where uwgame.c takes the 3D frame (uwl_capture, called after the frame was copied to
-   the screen), from the original's own pick (INTERACT.C's pick_3d: a pick frame, each object's face in a colour of its
+/* uwlook.c: finds the name of what the crosshair (the 3D view's centre) is on, for our full-screen display's readout.
+   It runs on the game's thread where uwgame.c takes the 3D frame (uwl_capture, called after the frame was copied to
+   the screen), using the original's own pick (INTERACT.C's pick_3d: a pick frame, each object's face in a colour of its
    own, read at the pointer; here the view's centre) and its own words (GAMESTRN.C's get_string and get_name, the
    quality words of LOOK.C's LookAt, CritterLook's attitude and name, look_nothing's texture words, RectLook's decals).
    LookAt and look_nothing themselves print to the message scroll, so they are not called: only the lookups. The
@@ -23,6 +23,7 @@
 #include <time.h>
 #include <stdlib.h>
 #include "uwlook.h"
+#include "rlog.h"
 
 extern int16 pTxtId;
 extern struct Tile far *PickMap;
@@ -45,8 +46,10 @@ static unsigned frame_n;
 static void lock(void) { while (atomic_flag_test_and_set_explicit(&lk, memory_order_acquire)) {} }
 static void unlock(void) { atomic_flag_clear_explicit(&lk, memory_order_release); }
 
+/* turns the look-up on or off (off: the game is not touched at all) */
 void uwl_enable(int on) { atomic_store(&enabled, on); }
 
+/* copies the readout's name into out (n bytes); returns its length, 0 when none */
 int uwl_get(char *out, int n)
 {
     int len;
@@ -59,6 +62,7 @@ int uwl_get(char *out, int n)
     return len;
 }
 
+/* appends the text w to s, kept within n bytes */
 static void add(char *s, int n, const char *w)
 {
     int len = (int)strlen(s);
@@ -159,6 +163,7 @@ static void object_words(char *s, int n, struct Object far *obj)
     if (get_name(name, obj, first == 0, plural)) add(s, n, name);
 }
 
+/* copies out what the last look found (UwlInfo: the thing's kind, name and what can be done with it) */
 void uwl_info(UwlInfo *out)
 {
     lock();
@@ -251,6 +256,7 @@ struct Object far *uwl_pick(void)
     return obj;
 }
 
+/* looks at the view's centre and keeps the name found (game thread, once a frame) */
 void uwl_capture(void)
 {
     char out[96];
@@ -310,9 +316,9 @@ void uwl_capture(void)
     lock();
     info = in;
     unlock();
-    if (frame_n % 150 == 0 && getenv("UWPORT_LOOKDBG")) fprintf(stderr, "uwlook: tick %u pick %p txt %d centre %d pickup %d\n", frame_n, (void *)obj, (int)pTxtId, stdat[(xhgt / 2) * (xwid + 2) + xwid / 2 + 2], (int)PickUp);
+    if (frame_n % 150 == 0 && getenv("UWPORT_LOOKDBG")) RLOG_I("look", "tick %u pick %p txt %d centre %d pickup %d", frame_n, (void *)obj, (int)pTxtId, stdat[(xhgt / 2) * (xwid + 2) + xwid / 2 + 2], (int)PickUp);
     if (strcmp(out, text) != 0 && getenv("UWPORT_LOOKDBG"))
-        fprintf(stderr, "uwlook: \"%s\" kind %d hostile %d reach %d take %d open %d switch %d at %ld ms\n", out, in.kind, in.hostile,
+        RLOG_I("look", "\"%s\" kind %d hostile %d reach %d take %d open %d switch %d at %ld ms", out, in.kind, in.hostile,
                 in.reach, in.take, in.open, in.sw, (long)(clock() * 1000L / CLOCKS_PER_SEC));
     lock();
     memcpy(text, out, sizeof text);

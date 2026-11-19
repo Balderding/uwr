@@ -21,7 +21,7 @@ The game is paused while the menu is open. At the foot of the menu the row you a
 value in full, and under it what the row does (up to three lines).
 
 **Tabs.** The rows are sorted into tabs, one for each section of this page: Game, Display, Graphics, Sprites, Effects,
-Fog and smoke, Sound, Sound tuning, Controls and AI. Their names stand in a strip under the title, on one or two lines;
+Fog and smoke, Sound, Sound tuning, Controls, Keys, AI and Enhancements. Their names stand in a strip under the title, on one or two lines;
 the open tab is the one in gold with a gold bar under it, and only its rows are listed. A tab that has nothing to
 show at the moment is left out of the strip. The menu opens on the tab you were on last, until you close the game.
 
@@ -95,6 +95,9 @@ A "tile" or "map square" is one square of the game's map: 8 feet, about 2.4 metr
 | **Save game (F5)** | Opens the Save page (below). F5 opens it straight from the game. |
 | **Load game (F9)** | Opens the Load page (below). F9 opens it straight from the game. |
 | **New game (title screen)** | Goes back to the title screen so you can start a new character. Anything you have not saved is lost. |
+| **Start-up settings (F11)** | Opens the settings screen the game has at its start, over the game: mouse capture (Follow / Lock), mouse-look speed, the master volume, the window (full screen, its scale, 4:3, whole-number scaling), the game's and the Roland ROMs' folders, recording sessions, and whether that screen shows at each start. F11 closes it again (or opens it straight from the game). |
+| **Quick fades** | On (default): the map and the game's screens come up at once. Off: the original's half-second fades. Kept in uw1port.cfg (quick_fades). |
+| **Log detail** | How much the game writes to uwr.log. Normal is enough unless you are chasing a problem. Errors only: just what went wrong. Warnings: also what the game worked round. Normal (default): also what it is doing. Everything: also the fine detail. Takes hold at once, for the game and for the renderer. Kept in uw1port.cfg (log_detail). If UWR_LOGLEVEL is set when the game starts, it wins at the start. |
 | **Quit the game** | Closes the game at once, without asking. Anything you have not saved is lost. |
 
 ### The Save and Load pages
@@ -115,6 +118,7 @@ Both pages show the same five rows.
 | **Renderer** | Vulkan (default) / Direct3D 12 | The graphics system that draws the picture. Takes hold at the next start; until then the row also shows which one is running now. Windows only. |
 | **Field of view** | 50 to 120 degrees, steps of 5. Default 85 | How wide an angle you see. A higher number shows more at the sides. |
 | **Smooth motion** | On (default) / Off | The game's rules move you in small steps. On, the camera glides between those steps; Off, it jumps from one to the next. The rules themselves do not change. |
+| **Vertical sync** | On (default) / Off | On, each picture waits for the screen's refresh, so there is no tearing. Off, pictures go out as soon as they are made. Takes hold at the next start (the row says so until then). |
 | **Message fade** | 2, 3, 5, 8, 10, 15 or 30 s, or Never. Default 5 s | How long the message box stays on screen after its newest message. Never keeps it there. |
 | **Shut doors from close up** | On (default) / Off | In the original, a door you shut while standing just inside its swing hits you and swings open again. On, such a door (up to a quarter of a square inside its space) shuts all the same, and you are not moved. Off is the original's rule. |
 | **Easier door targeting** | On (default) / Off | On, you can point at a door by its frame and by its open leaf from either side, when nothing else is under the crosshair. Off, as the original, only the leaf itself counts. What using the door does is unchanged. |
@@ -142,7 +146,11 @@ Rows marked "card" are shown only when the graphics card and its driver can do w
 | **DLSS 5 style** | A - Default, B - Natural (default), C - Cinematic | The look DLSS 5 gives the picture. | Card with DLSS 5. |
 | **DLSS 5 intensity** | 0% to 100%, steps of 5. Default 100% | How strongly DLSS 5 changes the picture. | Card with DLSS 5. |
 | **DLSS 5 structure** | 0% to 100%, steps of 5. Default 100% | How much fine local detail DLSS 5 adds. | Card with DLSS 5. |
+| **DLSS 5 tone** | 0.00 to 2.00, steps of 0.05. Default 1.00 | DLSS 5's tone. Takes hold at the next start. | Card with DLSS 5 |
+| **DLSS 5 saturation** | 0.00 to 2.00, steps of 0.05. Default 1.15 | How strong DLSS 5 makes the colours. Takes hold at the next start. | Card with DLSS 5 |
 | **Bounced light** | On (default) / Off | Light that hits a wall or floor bounces on into the shadows, so they are less dark. | |
+| **Light bounces** | 1 (default) to 4, or As many as build up | How many times bounced light bounces again. Above 1 the light probes feed their light back. | Card with ray tracing |
+| **Bounce ray reach** | 2 to 32 tiles, steps of 1. Default 8 | How far a bounced light ray goes. Longer finds more light and costs a little more. | Card with ray tracing |
 | **Object shadows (.)** | On (default) / Off | Objects and creatures cast shadows. The `.` key switches it in the game too. | Ray tracing. |
 | **Textures** | Original (default), Upscaled 256, Upscaled 512 | The pictures on walls and floors: the game's own, or sharper copies enlarged to 256 or 512 pixels a side, in the same colours. | |
 | **Normal map detail** | As the textures (default), Original, 256, 512 | A normal map tells the light which way each point of a surface faces, which gives flat stone its bumps. This row picks how detailed those maps are: the same as the Textures row, the 64-pixel ones, or those made from the 256 or 512 pixel textures. | |
@@ -150,12 +158,19 @@ Rows marked "card" are shown only when the graphics card and its driver can do w
 | **Relief height map detail** | As the textures (default), Original, 256, 512 | The same choice for the height maps that the stones' own small shadows are cast from (see Relief shadows). | |
 | **Normal maps (F6)** | On (default) / Off | On, light picks out the bumps and grooves of the stone, so walls and floors look less flat. F6 switches it in the game too. | |
 | **Normal map strength** | 0.25 to 4.00, steps of 0.25. Default 1.00 | How deep the stone's bumps look. | Normal maps on. |
+| **Stone sheen** | 0.00 (default) to 1.00, steps of 0.05 | A shine on the stone walls and floors. 0 is none. | |
 | **Joint shadows (AO)** | Off, or 25% to 200% in steps of 25. Default 100% | Darkens the joints and hollows between the stones of walls and floors, where little light would reach ("ambient occlusion", AO). Higher is darker. | |
 | **Relief shadows** | Off, or Depth 1 to 8. Default Depth 3 | The stones cast small shadows of their own across walls and floors, away from each light. A higher depth treats the stone's relief as deeper, so the shadows are stronger. | |
+| **Sprite normal strength** | 0.00 to 1.00, steps of 0.05. Default 0.50 | How strongly the objects' and creatures' pictures are lit by their normal maps. 0 is flat. | |
+| **Sprite joint shadows** | 0.00 to 1.00, steps of 0.05. Default 0.50 | How dark the objects' and creatures' occlusion maps make their creases. 0 is none. | |
+| **Sprite relief depth** | 0 (default) to 4 texels, steps of 0.25 | How deep the objects' and creatures' height maps look. 0 is off. | |
 | **Light colour** | CAT16 (default) / Bradford | Firelight is orange, but an eye that has got used to it sees it as nearly white. These are two standard formulas for working out that shift; CAT16 is the newer one. The difference is subtle. | |
 | **Light fade** | 2 / 3 / 4 tiles (default) / Original | How light dims with distance. With 2 / 3 / 4 tiles a light is at half strength 2 tiles away, 30% at 3 and gone at 4 (a brighter light reaches further in the same proportion). Original uses the game's own shading by distance. | |
+| **Your light** | Over the head (default) / At the eye | Where your torch or lantern is held. | |
 | **Fire breathing** | Off, or 10% to 40% in steps of 10. Default 20% | Now and then a fire sags or flares for a few seconds, as real flames do. The value is how deep that swing goes. | |
 | **Light adaptation** | Automatic (default), or 0% to 100% in steps of 10 | How far the eye gets used to firelight. 0% leaves the fire's raw orange on everything; 100% makes it white. Automatic works out the amount for a torch-lit dungeon and shows it in brackets. | |
+| **Exposure** | 0.50 to 4.00, steps of 0.25. Default 2.00 | The picture's overall brightness before tone mapping. Takes hold at the next start. | |
+| **Light gamma** | 0.50 to 2.00, steps of 0.05. Default 1.00 | The lights' falloff curve. Higher keeps rooms brighter away from the lights. | |
 | **HDR output** | On (default) / Off | On an HDR monitor, with HDR switched on in Windows, fire and bright light go brighter than white, up to the monitor's peak. On a monitor that is not in HDR the row reads "On (this monitor: SDR)" and the picture is unchanged. | An HDR monitor. |
 | **HDR peak brightness** | The monitor's (default), or 400 to 4000 nits in steps of 100 | The brightest the highlights go. "The monitor's" uses the figure the monitor reports. (A nit is the unit of screen brightness.) | HDR. |
 | **HDR paper white** | 80 to 500 nits, steps of 10. Default 200 | How bright plain white is in HDR: the picture's normal range and the interface. | HDR. |
@@ -181,11 +196,14 @@ same room as the original. The game looks for them when it starts. The original 
 | **Particles** | On / Off | Sparks, smoke and dust in the air. |
 | **Decals** | On / Off | Marks left on floors and walls, such as blood. |
 | **Water** | On / Off | Water that moves and bends the view of what lies under it. |
+| **Fog and light shafts** | Off (default) / Low / Medium / High | Fog in the air, and shafts of light through it. (Its row did not show until 2026-11-18.) |
 | **Campfire smoke** | On (default) / Off | Grey smoke rises from every campfire, spreads under the ceiling and thins out over a few seconds. Needs Particles. |
 | **Water fog** | On (default) / Off | A thin pale fog lies over the water near you and drifts slowly. Needs Particles. |
 | **Glowing stones** | On (default) / Off | Glowing rocks, orbs and orb rocks shine and light the floor about a foot round them. Off, they are plain objects, as in the original. |
 | **Moonstone light** | Off, or 5% to 50% of a candle, steps of 5. Default 10% | The moonstone fills the room it lies in with a deep blue light, the same everywhere in the room, round corners too. It only shines while it lies on the floor, not in your pack. |
 | **Fire elemental light** | Off, or 10% to 100% of a candle, steps of 10. Default 30% | Fire elementals cast a smouldering orange light that moves with them. |
+| **Campfire swell** | 0.00 to 0.60, steps of 0.05. Default 0.35 | How much the campfires swell and shrink as they burn. 0 is steady. |
+| **Flame swell** | 0.00 to 0.50, steps of 0.05. Default 0.15 | How much the other fires (torches, braziers, burning things) swell and shrink. 0 is steady. |
 
 Particles, Decals and Water are off unless your settings file turns them on (the public download's does).
 
@@ -391,6 +409,7 @@ plays on.
 | **Hearing range** | Original (6 tiles), 9, 12, 16 or 24 tiles | How far away a sound can be heard. A sound is at full strength within one tile and fades evenly to nothing at the range. | Positional sound. |
 | **Footstep width** | Middle, then 50% to 800% in steps of 50; 100% reads Original | How far to the left and right your own two feet sound. Original is the game's own, barely apart. Middle puts both in the centre. 400% is half-way to each side. | Positional sound. |
 | **Footstep volume** | Off, or 10% to 200% in steps of 10. Default 80% | How loud footsteps are, yours and the creatures', next to the other sounds. | Positional sound. |
+| **Your own footsteps** | 0% to 200% in steps of 10. Default 100% | How loud your own footsteps are, on top of Footstep volume, so you can turn yours down and leave the creatures' as they are. 0% silences your own steps. | Positional sound. |
 | **Footstep echo** | Off, or 10% to 200% in steps of 10. Default 50% | How strongly footsteps echo in the room, next to other sounds' echoes. | Acoustics High. |
 | **Footsteps by floor** | On (default) / Off | On, a step sounds like the floor under it: wood, water, earth, metal and so on. Stone keeps the original's sound. Off, the original's two step sounds everywhere. | Positional sound. |
 | **Acoustics** | Off, On, High | Levels 2 and 3 above. | Positional sound. |
@@ -411,12 +430,16 @@ ear. Most players never need them. Each is heard at once.
 | --- | --- | --- |
 | **Music buffer** | 50 to 600 ms, steps of 25. Default 150 | How much music is kept ready ahead of the sound device. More means fewer gaps in the tune when the computer is busy; the music then answers a little later. |
 | **Music thread first** | On (default) / Off | The part of the program that makes the music runs ahead of the game's other work, so a busy moment does not leave a gap in the tune. |
-| **Music in the menu** | On (default) / Off | On, the music plays on while this menu is open, though the game is paused. Off, the music stops with the game. |
+| **Music volume, clean** | On (default) / Off | On, the Roland plays the music at the original level and the Music volume turns the finished sound down, at full precision: each step is as loud as before. Off, the volume is turned down inside the Roland, as before 2026-11-18: the Roland then worked 38 dB down at Music volume 15, its reverb included (in a quiet passage 36 different sample values against 2,617 at full volume). Only while our positional sound plays the effects (otherwise they come from the same Roland and the old way stays). |
+| **Roland voices** | 32 to 256, steps of 32. Default 256 | How many notes the Roland can sound at once for the music. The real MT-32 and CM-32L have 32 ("32 (original)"), and in a busy passage the unit cuts sounding notes short to start new ones (the main theme loses some 36 notes between 9.7 and 13 seconds). More voices: no note is cut. Heard from the next start. |
+| **Music in the menu** | On (default) / Off | On, the music plays on while this menu is open, though the game is paused, and while a new level is being built (the game waits for its picture; in DOS the music played on through a level's load too). Off, the music stops with the game. |
 
 ### With Positional sound
 
 | Row | Values | What it does |
 | --- | --- | --- |
+| **Heat shimmer** | 0% to 300%, steps of 10. Default 100% | Hot air is uneven, and sound travels faster through its warmer pockets, so a sound that crosses the rising air over a fire, lava or a blast is bent this way and that and flickers a little in loudness, the high notes most. The hot places are the ones the fog and smoke use (flames, lava, blasts, at the Fog and smoke page's temperatures), whether the fog and smoke are shown or not. A sound only ever dips (by up to about 4.5 dB in the high notes through a campfire's plume at 100%), never gets louder; your own sounds and a sound whose fire is its own source are left alone. 0% turns it off. Fog and smoke themselves are not added: damp air and smoke change nothing you could hear over a dungeon's distances. Shown while Acoustics is on. |
+| **Loudness limiter** | On (default) / Off | OpenAL's own limiter on everything our positional sound plays. With it off, a moment where many loud sounds land together can add up past full scale, and on a sound card that takes float samples (as most do now) Windows then cuts the peaks flat, which you hear as a crackle. On, the whole is turned down for that moment instead; below full scale it does nothing at all. The sound starts again when you change it, which takes a moment. |
 | **Own footsteps plain** | On / Off (default) | Your own footsteps exactly as the Roland plays them: no echo, no floor sound, no placing for headphones, no muffling. A way to compare by ear with everything else left on. |
 | **Roland's own reverb** | Automatic (default) / On / Off | The Roland sound module adds a small room echo of its own to every sound effect. Automatic turns it off while Acoustics is On or High, because the game then adds the echo of the real room you stand in; with Acoustics off it stays, as in the original. On keeps it always, Off never. The effects are made again when you change it, which takes a moment. |
 | **Effects interrupt music** | On / Off (default) | The original took a music channel for every sound effect, so notes of the tune went missing while you walked or fought. Off, the music plays whole, because the positional sound plays the effects. On is the original's behaviour. |
@@ -454,6 +477,7 @@ These shape the OpenAL reverb of level 2. At High the echoes come from Steam Aud
 
 | Row | Values | What it does |
 | --- | --- | --- |
+| **Fast echo rays** | On (default) / Off | The sound rays behind the echoes are traced by Intel's Embree, which comes inside Steam Audio, on several of the processor's threads at once (a quarter of them, 2 to 8): about six times quicker than Steam Audio's own ray tracer on two threads, which Off goes back to. The echoes are the same either way; quicker, they follow you more closely and leave the processor freer. Steam Audio is started again when you change it, which takes a moment. |
 | **Sound by Steam Audio** | On (default) / Off | With Headphone 3D sound: each sound itself is made for your two ears by Steam Audio's binaural rendering, from the place where it happens. Off, OpenAL places it. |
 | **Muffling by Steam Audio** | On (default) / Off | With Sound by Steam Audio: what the walls, doors and floors between you and a sound let through is worked out by Steam Audio's rays, from what each surface is made of. Off, by the game's own rays. |
 | **Sound level (Steam Audio)** | 0% to 100%, steps of 2. Default 30% | With Sound by Steam Audio: how loud those sounds are against the game's own mix. |
@@ -473,6 +497,7 @@ These shape the OpenAL reverb of level 2. At High the echoes come from Steam Aud
 | Row | Values | What it does |
 | --- | --- | --- |
 | **Mouse sensitivity** | 0.1 to 4.0, steps of 0.1. Default 1.0 | How fast the mouse turns the view. Higher is faster. |
+| **Invert mouse** | On / Off (default) | On, moving the mouse forward looks down, as a flight stick. |
 
 The keys themselves are listed in [KEYBINDS.md](KEYBINDS.md), and can be changed on the Keys tab.
 
@@ -564,3 +589,28 @@ The settings file has one more switch with no row: `llm=0` keeps the model from 
 is Rules by default and the model loads only when that row asks for it, the row does the same job.
 
 More about the creatures' AI and the language model: [LLM_NPC_AI.md](../LLM_NPC_AI.md).
+
+## Enhancements
+
+Changes the original game does not have, and fixes for its faults, each Off until turned on. They are kept in
+uw1port.cfg's `enhance=` line, the same line `--enhance NAME` writes, and act at once. The ones our display always
+has on (mouse-look, the modern keys, the rune keys, combined moves, the wide look up and down) are set by the
+Display row and have no row here; invert-look follows Controls > Invert mouse; smart hunting follows AI > Creature AI.
+The tab is not shown with the original's display, which has every enhancement off.
+
+| Row | What it does |
+| --- | --- |
+| **Skip the introduction** | The game starts at its main menu, without the title and the introduction (from the next start). |
+| **Menus wrap around** | The start menu and the saved games wrap from the last item to the first. |
+| **Fast panels** | The right-hand panel slides twice as fast. |
+| **Free heading** | Sliding along a wall no longer turns your view. |
+| **Cutscene subtitles** | Cutscenes show their text while the speech plays. |
+| **Skill messages** | Says which skill a skill point or a trainer raised, and to what. |
+| **Straight walls when looking up** | In the original's 3D picture, floors, ceilings and walls stay straight when the view pitches. |
+| **Full-size sprites when looking up** | In the original's 3D picture, creatures and objects keep their size when the view pitches. |
+| **Key ring** | A key that does not fit tries the other keys you carry, bags included, and uses the one that fits. |
+| **Fix: lost object slots** | A stack too heavy to take part of no longer loses an object slot, and lost slots are freed. Changes play. |
+| **Fix: restore at rest** | A restored game starts at rest, without the motion or fall it was saved in. Changes play. |
+| **Fix: broken enchanted things** | An enchanted object that breaks loses its spell, so its debris casts nothing. Changes play. |
+| **Fix: armour spells** | Resist Blows, Thick Skin and Iron Flesh add to your armour, as they were meant to. Changes play. |
+| **Fix: enchantment names** | A melee weapon's enchantment is named for what it does (Damage or Accuracy); the original names them the other way round. |

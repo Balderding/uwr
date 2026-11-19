@@ -1,13 +1,16 @@
-/* smoothtext.c: see smoothtext.h. Each face and size is a set of 224 glyphs (characters 32-255 of the Windows
- * ANSI page), each drawn once by GDI in white on black into a small bitmap whose red channel is kept as the
- * letter's coverage; drawing is then a blend of the colour by that coverage. Up to 12 sets are kept (the menu
- * uses four); the oldest is given up for a new one. */
+/* smoothtext.c: smooth (anti-aliased) interface text for the Windows build; see smoothtext.h.
+ * Each face and size is a set of 224 glyphs (characters 32-255 of the Windows ANSI page), each drawn once by GDI in
+ * white on black into a small bitmap whose red channel is kept as the letter's coverage; drawing is then a blend of
+ * the colour by that coverage. Up to 12 sets are kept; the oldest is given up for a new one. Also finds the faces
+ * the Esc menu offers (this PC's readable fonts plus font files in the fonts folder). */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "smoothtext.h"
+#include "rlog.h"
+#define LOG_TAG "text"
 
 typedef struct {
     int face, em, cw, ch, pad, height;
@@ -20,12 +23,14 @@ static Set sets[NSETS];
 static unsigned set_clock;
 static char font_name[64];
 
+/* EnumFontFamiliesEx callback: any hit means the face exists */
 static int CALLBACK font_seen(const LOGFONTA *lf, const TEXTMETRICA *tm, DWORD type, LPARAM p)
 {
     (void)lf, (void)tm, (void)type;
     *(int *)p = 1;
     return 0;
 }
+/* 1 if this PC has a font family of that name */
 static int face_there(const char *name)
 {
     HDC dc = CreateCompatibleDC(NULL);
@@ -36,28 +41,29 @@ static int face_there(const char *name)
     if (dc) EnumFontFamiliesExA(dc, &lf, font_seen, (LPARAM)&found, 0), DeleteDC(dc);
     return found;
 }
+/* the face in use: Segoe UI if this PC has it, else Tahoma, until st_set_face picks another */
 const char *st_font_name(void)
 {
     if (!font_name[0]) strcpy(font_name, face_there("Segoe UI") ? "Segoe UI" : "Tahoma");
     return font_name;
 }
-/* the faces the Esc menu's Font offers (the user, 2026-11-14: "change the font to something that is easy to read ...
-   options in the esc menu to change the font and font size", then "could we include other fonts?"): Windows' own
-   readable faces that this PC has, then every font file in the fonts folder beside the game (st_load_font_dir: loaded
-   for this program only, AddFontResourceEx FR_PRIVATE; nothing installed), by its family name. Choosing another drops
-   every set made (they are made again in the new face as they are used). */
+/* The faces the Esc menu's Font offers: Windows' own readable faces that this PC has, then every font file in the
+   fonts folder beside the game (st_load_font_dir: loaded for this program only, FR_PRIVATE; nothing installed), by
+   its family name. Choosing another drops every set made (they are made again in the new face as they are used). */
 static const char *const WIN_FACES[] = { "Segoe UI", "Verdana", "Georgia", "Tahoma", "Palatino Linotype", "Calibri",
                                          "Cambria", "Candara", "Constantia", "Corbel", "Trebuchet MS", "Book Antiqua",
                                          "Garamond", "Consolas" };
 #define MAXFACES 64
 static char faces[MAXFACES][32];
 static int nfaces = -1;
+/* adds a face name to the menu's list unless it is empty, already there (any case) or the list is full */
 static void faces_add(const char *name)
 {
     if (!name[0] || nfaces >= MAXFACES) return;
     for (int i = 0; i < nfaces; i++) if (!_stricmp(faces[i], name)) return;
     strncpy(faces[nfaces], name, 31), faces[nfaces][31] = 0, nfaces++;
 }
+/* fills the list with the readable Windows faces this PC has (Tahoma if none), once */
 static void faces_init(void)
 {
     if (nfaces >= 0) return;
@@ -100,6 +106,8 @@ static void ttf_family(const unsigned char *b, size_t n, char *out, size_t cap)
         return;
     }
 }
+/* loads every .ttf / .otf in dir for this program only and adds its family name to the faces list; a file that
+   cannot be read or loaded is logged and skipped */
 void st_load_font_dir(const char *dir)
 {
     char pat[MAX_PATH];
@@ -113,29 +121,40 @@ void st_load_font_dir(const char *dir)
             char path[MAX_PATH], fam[64];
             snprintf(path, sizeof path, "%s\\%s", dir, fd.cFileName);
             FILE *f = fopen(path, "rb");
-            if (!f) continue;
+            if (!f) {
+                RLOG_W(LOG_TAG, "cannot open font %s: %s", path, rlog_errno());
+                continue;
+            }
             fseek(f, 0, SEEK_END);
             long n = ftell(f);
+            if (n <= 0) RLOG_W(LOG_TAG, "cannot get the size of font %s: %s", path, rlog_errno());
             fseek(f, 0, SEEK_SET);
             unsigned char *b = n > 0 && n < (32L << 20) ? malloc((size_t)n) : NULL;
+            if (!b && n > 0 && n < (32L << 20)) RLOG_E(LOG_TAG, "out of memory (%zu bytes)", (size_t)n);
             size_t got = b ? fread(b, 1, (size_t)n, f) : 0;
+            if (b && got != (size_t)n) RLOG_W(LOG_TAG, "cannot read font %s: got %zu of %ld bytes", path, got, n);
             fclose(f);
             fam[0] = 0;
             if (b && got == (size_t)n) ttf_family(b, got, fam, sizeof fam);
             free(b);
             if (fam[0] && AddFontResourceExA(path, FR_PRIVATE, 0) > 0) faces_add(fam);
+            else if (fam[0]) RLOG_W(LOG_TAG, "font %s could not be loaded", path);
         } while (FindNextFileA(h, &fd));
         FindClose(h);
     }
 }
+/* how many faces the menu offers */
 int st_face_count(void) { faces_init(); return nfaces; }
+/* the name of face i (the first one for a bad index) */
 const char *st_face_label(int i) { faces_init(); return i >= 0 && i < nfaces ? faces[i] : faces[0]; }
+/* the index of the face with this name (any case), -1 if none */
 int st_face_find(const char *name)
 {
     faces_init();
     for (int i = 0; i < nfaces; i++) if (!_stricmp(faces[i], name)) return i;
     return -1;
 }
+/* switches to face i and drops every glyph set made in the old one */
 void st_set_face(int i)
 {
     const char *want = st_face_label(i);
@@ -144,9 +163,12 @@ void st_set_face(int i)
     for (int k = 0; k < NSETS; k++) free(sets[k].cov), sets[k].cov = NULL;
 }
 static int size_pct = 100;
+/* the text size as a percentage of the default, kept within 20..300 */
 void st_set_size_pct(int pct) { size_pct = pct < 20 ? 20 : pct > 300 ? 300 : pct; }
 int st_size_pct(void) { return size_pct; }
 
+/* the glyph set for this face and size (em clamped to 6..96): the kept one, else a new one drawn by GDI into a free
+   slot or the least recently used; NULL if it cannot be made (logged once) */
 static Set *set_get(int face, int em)
 {
     Set *s = NULL, *old = &sets[0];
@@ -170,6 +192,15 @@ static Set *set_get(int face, int em)
     HFONT f = CreateFontA(-em, 0, 0, 0, face == ST_SEMIBOLD ? FW_SEMIBOLD : FW_NORMAL, 0, 0, 0, ANSI_CHARSET, OUT_TT_PRECIS,
                           CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_SWISS, st_font_name());
     s->cov = bm && f ? calloc(224, (size_t)s->cw * s->ch) : NULL;
+    if (!s->cov) {
+        static int said;   /* (called for every piece of text: say it once) */
+        if (!said) {
+            said = 1;
+            if (bm && f) RLOG_E(LOG_TAG, "out of memory (%zu bytes)", (size_t)224 * s->cw * s->ch);
+            else RLOG_E(LOG_TAG, "cannot make the letters of %s at %d: the bitmap or the font could not be created",
+                        st_font_name(), em);
+        }
+    }
     if (s->cov) {
         HGDIOBJ ob = SelectObject(dc, bm), of = SelectObject(dc, f);
         TEXTMETRICA tm;
@@ -197,12 +228,14 @@ static Set *set_get(int face, int em)
     return s;
 }
 
+/* the height of a line in this face and size (em if its letters cannot be made) */
 int st_height(int face, int em)
 {
     Set *s = set_get(face, em);
     return s ? s->height : em;
 }
 
+/* the width of text t in window pixels (0 if its letters cannot be made) */
 int st_width(int face, int em, const char *t)
 {
     Set *s = set_get(face, em);
@@ -215,6 +248,8 @@ int st_width(int face, int em, const char *t)
     return w;
 }
 
+/* blends text t in colour rgb (0xRRGGBB) into the 0xAABBGGRR pixels at (x, y) by each letter's coverage; returns the
+   x after the last letter */
 int st_draw(unsigned *rgba, int w, int h, int x, int y, int face, int em, const char *t, unsigned rgb)
 {
     Set *s = set_get(face, em);
@@ -246,6 +281,7 @@ int st_draw(unsigned *rgba, int w, int h, int x, int y, int face, int em, const 
     return x;
 }
 
+/* the text size (em, 6..60) for a window this high, scaled by the size setting */
 int st_game_em(int window_h)
 {
     int e = (window_h * 19 * size_pct / 100 + 540) / 1080;

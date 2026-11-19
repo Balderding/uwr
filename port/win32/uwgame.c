@@ -12,6 +12,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "rlog.h"
 #include "uwgame.h"
 #include "uwinv.h"
 #include "uwlook.h"
@@ -111,8 +112,8 @@ static void gv_notify(int ev)
 {
     static int dbg = -1;
     if (dbg < 0) dbg = getenv("UWPV_LOG") != NULL;
-    if (dbg) fprintf(stderr, "pv: ev %d renders %u shown %u on %d regular %d effect %d at %llu\n", ev, port_view.renders,
-                     port_view.shown, port_view.on_screen, port_view.regular, port_view.effect, (unsigned long long)GetTickCount64());
+    if (dbg) RLOG_I("game", "pv: ev %d renders %u shown %u on %d regular %d effect %d at %llu", ev, port_view.renders,
+                    port_view.shown, port_view.on_screen, port_view.regular, port_view.effect, (unsigned long long)GetTickCount64());
     AcquireSRWLockExclusive(&lock);
     gv.x = port_view.x, gv.y = port_view.y, gv.z = port_view.z;
     gv.facing = port_view.heading, gv.pitch = port_view.pitch, gv.bank = port_view.bank;

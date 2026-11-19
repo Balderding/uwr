@@ -1,5 +1,5 @@
 /* uwsteam_path_test.c: Steam Audio's pathing in port\win32\uwsteam.c, alone (2026-11-16). Built and run by hand,
-   not by fxcheck: clang as fxcheck.py's clang() with port\win32's uwsteam.c, uwacoustic.c and uwacmat.c.
+   not by fxcheck: clang as fxcheck.py's clang() with port\win32's uwsteam.c, uwacoustic.c, uwacmat.c and rlog.c.
        uwsteam_path_test.exe BINDIR [DUMP]
    The fixture is uwsteam_test.c's: room A 4 x 4 (x 10-13, z 10-13), room B 12 x 12 (x 15-26, z 10-21), the wall column
    x 14 between them, a doorway at (14, 11) with a door. Prints what is measured; PASS / FAIL lines. */

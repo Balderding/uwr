@@ -1,10 +1,12 @@
-/* uwinv.c: the player's inventory, as the original's own code holds it, for our panel (src\uwinv_draw.c). Taken on
-   the game's thread where uwgame.c takes the 3D frame (reading only): INVPANEL.C's Inventory[] (the slots, each a link
-   to an object of the player's contents), SlotToDisplay / DisplayToSlot and InvDisplay (the panel's rectangles; an open
-   bag's eight objects are slots 20..27 shown in positions 12..19), CursorObjPtr (the object on the cursor), the
-   weights (INVDATA.C's ItemWeight, PlayerDat's weight and max_weight) and the names (UI's get_name). Nothing of the
-   game is changed, but for uwi_want_panel: the original's own pull_chain, run at the next frame, when the right-hand
-   panel shows the rune bag or the statistics instead of the inventory. */
+/* uwinv.c: holds the player's inventory for our panel (src\uwinv_draw.c): a snapshot of what the original's own code
+   holds, and the commands our panel sends back. The snapshot is taken on the game's thread where uwgame.c takes the 3D
+   frame, reading only: INVPANEL.C's Inventory[] (the slots, each a link to an object of the player's contents),
+   SlotToDisplay / DisplayToSlot and InvDisplay (the panel's rectangles; an open bag's eight objects are slots 20..27
+   shown in positions 12..19), CursorObjPtr (the object on the cursor), the weights (INVDATA.C's ItemWeight, PlayerDat's
+   weight and max_weight) and the names (UI's get_name). The commands (uwi_cmd) are run on the game's thread between
+   the main loop's passes, using the original's own rules. The one other change to the game is uwi_want_panel: the
+   original's own pull_chain, run at the next frame, when the right-hand panel shows the rune bag or the statistics
+   instead of the inventory. */
 #include "compat.h"
 #include "combat.h"
 #include "gfx.h"
@@ -19,16 +21,19 @@
 #include <stdlib.h>
 #include <string.h>
 #include "uwinv.h"
+#include "rlog.h"
 
 void far pull_chain(int how);   /* INTERACT.C */
 
 static UwiSnap snap;
 static atomic_flag lk = ATOMIC_FLAG_INIT;
 static atomic_int have, want_panel, g_mode;
+/* the game's input mode as last captured */
 int uwi_input_mode(void) { return atomic_load(&g_mode); }
 static void lock(void) { while (atomic_flag_test_and_set_explicit(&lk, memory_order_acquire)) {} }
 static void unlock(void) { atomic_flag_clear_explicit(&lk, memory_order_release); }
 
+/* asks for the right-hand panel to be switched back to the inventory at the next frame */
 void uwi_want_panel(void) { atomic_store(&want_panel, 1); }
 
 /* the body slot an object is worn or wielded in (INV_*), -1 none: armour (MAJOR_HACK, minor 2 and 3) by its Armor
@@ -62,6 +67,7 @@ static int wear_slot(struct Object far *obj)
     return slot;
 }
 
+/* fills t from an object: its name, quantity, weight, worth, condition, and its weapon or armour numbers */
 static void thing(UwiThing *t, struct Object far *obj)
 {
     memset(t, 0, sizeof *t);
@@ -109,15 +115,18 @@ static void thing(UwiThing *t, struct Object far *obj)
 }
 
 static atomic_int active;
+/* turns the capture on or off */
 void uwi_set_active(int on) { atomic_store(&active, on); }
 
 /* ---- the whole of what is carried, for our grid: the pack's eight (Inventory[11..18]) and each container's contents
    (its ol link, then each object's qn link: the original's own chains), bags in bags to 4 deep. The rune bag (inner
    class 0xF) is a thing, not a bag: OpenTheBag shows the rune panel for it. ---- */
+/* whether the object is a bag that opens (the rune bag is not) */
 static int is_bag(struct Object far *o)
 {
     return o && OBJ_MAJOR(o) == MAJOR_MISC && OBJ_MINOR(o) == MINOR_CONTAINER && OBJ_INCLASS(o) != 0xF;
 }
+/* adds an object to the snapshot's tree of carried things */
 static void tree_add(UwiSnap *s, struct Object far *o, int parent, int depth, int slot)
 {
     int me;
@@ -127,6 +136,7 @@ static void tree_add(UwiSnap *s, struct Object far *o, int parent, int depth, in
     s->node[me].obj = Obj_MemTPtr(o), s->node[me].parent = parent, s->node[me].depth = depth, s->node[me].slot = slot;
     s->node[me].bag = is_bag(o);
 }
+/* fills the snapshot's tree with the pack's objects and the contents of every bag */
 static void tree_build(UwiSnap *s)
 {
     int k, i;
@@ -148,7 +158,7 @@ static void tree_build(UwiSnap *s)
 /* ---- show an object in the original's panel (uwi_reveal): its bags opened from the pack in, then the open bag scrolled
    to it, all by the original's own routines (BAGS.C: FixBagArea gives the pack back, OpenTheBag opens one on show,
    ScrollItemsUp shows the next row of four). Run on the game's thread before the snapshot. ---- */
-/* a look at an object carried (our panel's left click, the user's: what it is), as the original's inv_look
+/* a look at an object carried (our panel's left click: what it is), as the original's inv_look
    (INTERACT.C): the Lore roll kept in its heading, then LookAt; without inv_look's DoInventoryMouse(-1), which would act
    on the original's pointer */
 static atomic_int want_look;
@@ -194,6 +204,7 @@ static int scroll_to(int obj)  /* scroll the open bag until obj is on show: its 
     }
     return -1;
 }
+/* opens the bags round an object and scrolls to it so that the original's panel shows it */
 static void reveal(const UwiSnap *t, int obj)
 {
     int path[8], n = 0, i, node = -1, d;
@@ -223,6 +234,7 @@ static void reveal(const UwiSnap *t, int obj)
 #define CMDN 32
 static struct { int op, a, b, c; } cmds[CMDN];
 static atomic_int cmd_w, cmd_r;
+/* queues a command for the game's thread; 0 when the queue is full */
 int uwi_cmd(int op, int a, int b, int c)
 {
     int w = atomic_load_explicit(&cmd_w, memory_order_relaxed);
@@ -231,6 +243,7 @@ int uwi_cmd(int op, int a, int b, int c)
     atomic_store_explicit(&cmd_w, w + 1, memory_order_release);
     return 1;
 }
+/* how many commands are still waiting */
 int uwi_cmd_pending(void) { return atomic_load(&cmd_w) - atomic_load(&cmd_r); }
 
 extern void (*port_inv_hook)(void);               /* MAINLOOP.C, port only: called between the main loop's passes */
@@ -572,6 +585,7 @@ static int inv_dbg(void)   /* UWPORT_INVDBG (the checks), read once */
 }
 /* our save screen (plat_win32.c's menu pages): the description for the next save, and the game's own save and restore */
 static char save_desc[40];
+/* keeps the description typed for the next save */
 void uwi_save_desc(const char *d) { snprintf(save_desc, sizeof save_desc, "%s", d ? d : ""); }
 extern char *port_save_desc;               /* GAMEWRAP.C, uw-new: SaveGame's description given, no prompt */
 void far DoSaveRest(int restore, int slot); /* GAMEWRAP.C: save or restore slot 1..4 and say how it went */
@@ -587,7 +601,7 @@ static void cmds_run(void)
         op = cmds[r % CMDN].op, a = cmds[r % CMDN].a, b = cmds[r % CMDN].b, c = cmds[r % CMDN].c;
         atomic_store_explicit(&cmd_r, r + 1, memory_order_release);
         if (OpenBag != 0 && RightPanel == PANEL_INV) FixBagArea();   /* the original's panel kept on the pack (never used) */
-        if (dbg) fprintf(stderr, "uwinv: cmd %d (%d, %d, %d) panel %d cursor %p\n", op, a, b, c, (int)RightPanel, (void *)CursorObjPtr);
+        if (dbg) RLOG_I("inv", "cmd %d (%d, %d, %d) panel %d cursor %p", op, a, b, c, (int)RightPanel, (void *)CursorObjPtr);
         switch (op) {
         case UWI_OP_PICK: take(a, b); break;
         case UWI_OP_PUT_ON: put_on(a); break;
@@ -634,7 +648,7 @@ static void cmds_run(void)
             }
             break;
         }
-        if (dbg) fprintf(stderr, "uwinv:   -> cursor %p mode %d weight %d\n", (void *)CursorObjPtr, (int)GameInputMode, (int)player->weight);
+        if (dbg) RLOG_I("inv", "  -> cursor %p mode %d weight %d", (void *)CursorObjPtr, (int)GameInputMode, (int)player->weight);
     }
     cmd_busy = 0;
 }
@@ -714,6 +728,7 @@ static void sheet_full(UwiSnap *s)
 static char wlab[6][20], wskn[20][24];
 extern uint16 curZoom;       /* VIEW3D.C */
 static int zoom_ours;        /* we set curZoom */
+/* takes the snapshot of the inventory and runs the queued commands (game thread, once a frame) */
 void uwi_capture(void)
 {
     static UwiSnap s;
@@ -734,7 +749,7 @@ void uwi_capture(void)
     if (curZoom == 0x61A8) zoom_ours = 1, curZoom = 0x7ED2, cZoom(curZoom);
     if (RightPanel == PANEL_INV) atomic_store(&want_panel, 0);   /* (already there) */
     else if (RightPanel != PANEL_TURNING && atomic_exchange(&want_panel, 0)) pull_chain(0);   /* kept while the page turns */
-    if (inv_dbg()) { static int was = -99; if (RightPanel != was) fprintf(stderr, "uwinv: RightPanel %d\n", RightPanel), was = RightPanel; }
+    if (inv_dbg()) { static int was = -99; if (RightPanel != was) RLOG_I("inv", "RightPanel %d", RightPanel), was = RightPanel; }
     memset(&s, 0, sizeof s);
     tree_build(&s);
     if (inv_dbg()) {   /* the tree, whenever it changes (the checks) */
@@ -743,10 +758,18 @@ void uwi_capture(void)
         for (d = 0; d < s.nnodes; d++) h = (h ^ (unsigned)(s.node[d].obj * 131 + s.node[d].parent * 7 + s.node[d].t.item + s.node[d].t.qty * 977)) * 16777619u;
         if (h != last) {
             last = h;
-            fprintf(stderr, "uwinv: tree %d nodes, weight %d:", s.nnodes, (int)player->weight);
-            for (d = 0; d < s.nnodes; d++) fprintf(stderr, " [%d obj %d item %d x%d p%d s%d]", d, s.node[d].obj, s.node[d].t.item, s.node[d].t.qty, s.node[d].parent, s.node[d].slot);
-            for (d = 0; d < INV_PACK; d++) if (Inventory[d].f.index) fprintf(stderr, " {slot %d obj %d}", d, (int)Inventory[d].f.index);
-            fputc('\n', stderr);
+            char tb[1024];   /* the tree as a header line, then the nodes in lines of under 900 bytes (none is cut) */
+            int tn = 0;
+            RLOG_I("inv", "tree %d nodes, weight %d:", s.nnodes, (int)player->weight);
+            for (d = 0; d < s.nnodes; d++) {
+                if (tn > 850) RLOG_I("inv", "%s", tb), tn = 0;
+                tn += snprintf(tb + tn, sizeof tb - tn, " [%d obj %d item %d x%d p%d s%d]", d, s.node[d].obj, s.node[d].t.item, s.node[d].t.qty, s.node[d].parent, s.node[d].slot);
+            }
+            for (d = 0; d < INV_PACK; d++) if (Inventory[d].f.index) {
+                if (tn > 850) RLOG_I("inv", "%s", tb), tn = 0;
+                tn += snprintf(tb + tn, sizeof tb - tn, " {slot %d obj %d}", d, (int)Inventory[d].f.index);
+            }
+            if (tn) RLOG_I("inv", "%s", tb);
         }
     }
     {   /* a thing asked to be shown (our grid's click on one in a bag): the original's panel brought to it first */
@@ -808,6 +831,7 @@ void uwi_capture(void)
     atomic_store(&have, 1);
 }
 
+/* copies the last snapshot out; 0 when none yet */
 int uwi_snapshot(UwiSnap *out)
 {
     if (!atomic_load(&have)) return 0;
@@ -817,7 +841,7 @@ int uwi_snapshot(UwiSnap *out)
     return 1;
 }
 
-/* uwinv.h: health, mana and poison for our HUD's beakers (read only) */
+/* health, mana and poison for our HUD's beakers (read only) */
 void uwi_vitals(int v[5])
 {
     v[0] = player->health, v[1] = player->maxhealth, v[2] = player->play_mana, v[3] = player->max_mana;

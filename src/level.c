@@ -1,3 +1,5 @@
+#include "par.h"   /* (2026-11-18: the cells and the fills on several threads) */
+#undef PF_MAX      /* (windows.h's, through par.h: level_mesh has its own) */
 #include "level.h"
 
 #include <math.h>
@@ -632,9 +634,16 @@ static void relief_stretch(Mesh *m, const float r[4], int cell, const Image *img
          * once, by the same sums, the texel's value by the same sum from them: the same bytes. And where every
          * texel falls on one of the map's own with no weight to its neighbours (a map of the cell's own size, as
          * the user's are) the sum gives that texel's value itself: copied.) */
-        size_t mark = arena_mark();
-        int *xa = arena_alloc(sizeof(int) * (size_t)n * 4), *xb = xa + n, *ya = xb + n, *yb = ya + n;
-        float *ax = arena_alloc(sizeof(float) * (size_t)n * 2), *ay = ax + n;
+        /* (2026-11-18: malloc's memory, not the arena's: this runs on par_for's threads, level_cell) */
+        int *xa = malloc(sizeof(int) * (size_t)n * 4);
+        float *ax = malloc(sizeof(float) * (size_t)n * 2);
+        if (!xa || !ax) {
+            free(xa), free(ax);
+            free(k->px), k->px = NULL, k->n = 0;
+            return;
+        }
+        int *xb = xa + n, *ya = xb + n, *yb = ya + n;
+        float *ay = ax + n;
         bool same = img->w == n && img->h == n;
         for (int x = 0; x < n; x++) {
             float fx = (x + 0.5f) * (float)img->w / (float)n - 0.5f;
@@ -662,7 +671,7 @@ static void relief_stretch(Mesh *m, const float r[4], int cell, const Image *img
                     px[(size_t)y * n + x] = (u8)(h + 0.5f);
                 }
             }
-        arena_reset(mark);
+        free(xa), free(ax);
     }
     for (int y = 0; y < n; y++) {
         u8 *d = m->natlas + ((size_t)((int)r[1] * 4 + y) * NATLAS_SIZE + (size_t)((int)r[0] * 4)) * 4 + channel;
@@ -670,6 +679,74 @@ static void relief_stretch(Mesh *m, const float r[4], int cell, const Image *img
         for (int x = 0; x < n; x++) d[x * 4] = q[x];
     }
 }
+/* (2026-11-18) a wall's or floor's cell in the three atlases from its pictures, found beforehand (level_mesh): the
+ * normal map, the height and occlusion maps, the texture (has: 1 when there). Only this cell's texels and
+ * relief_kept[i] are written, so the cells are built on several threads at once (par.h); the bytes are the loop's
+ * before, one cell after another. */
+typedef struct {
+    Image pic[4];   /* 0 the normal map, 1 the height map, 2 the occlusion map, 3 the texture */
+    bool has[4];
+} CellPics;
+typedef struct {
+    Mesh *m;
+    const CellPics *c;
+    const int *which;
+} CellJob;
+static void level_cell(Mesh *m, int i, const CellPics *c) {
+    bool wall = i < 210;
+    int k = wall ? i : i - 210;
+    float r[4];
+    if (wall) wall_rect(k, r);
+    else floor_rect(k, r);
+    int cell = (int)r[2];
+    if (c->has[0]) put_cell(m->natlas, NATLAS_SIZE, &c->pic[0], (int)r[0] * 4, (int)r[1] * 4, cell * 4);
+    if (c->has[1]) relief_stretch(m, r, cell, &c->pic[1], 3, &relief_kept[i][0]);
+    for (int y = 0; y < cell * 4; y++)
+        for (int x = 0; x < cell * 4; x++)
+            m->natlas[((size_t)((int)r[1] * 4 + y) * NATLAS_SIZE + (size_t)((int)r[0] * 4 + x)) * 4 + 2] = 255;
+    if (c->has[2]) {
+        const Image *img = &c->pic[2];
+        for (int y = 0; y < cell; y++)
+            for (int x = 0; x < cell; x++)
+                m->saoatlas[(size_t)((int)r[1] + y) * ATLAS_SIZE + (size_t)((int)r[0] + x)] =
+                    img->rgba[((size_t)(y * img->h / cell) * img->w + (size_t)(x * img->w / cell)) * 4];
+        relief_stretch(m, r, cell, img, 2, &relief_kept[i][1]);
+    }
+    if (c->has[3]) put_cell(m->atlas, ATLAS_SIZE, &c->pic[3], (int)r[0], (int)r[1], cell);
+    else
+        for (int y = 0; y < cell; y++) /* magenta check: missing texture */
+            for (int x = 0; x < cell; x++) {
+                u8 *d = m->atlas + ((size_t)((int)r[1] + y) * ATLAS_SIZE + (size_t)((int)r[0] + x)) * 4;
+                bool on = ((x / 8) ^ (y / 8)) & 1;
+                d[0] = on ? 255 : 40, d[1] = 0, d[2] = on ? 255 : 40, d[3] = 255;
+            }
+}
+static void level_cell_job(void *ctx, int j) {
+    CellJob *cj = ctx;
+    int i = cj->which[j];
+    level_cell(cj->m, i, &cj->c[i]);
+}
+/* (2026-11-18) the atlases' first fill, by bands of rows on par_for's threads: the normal atlases flat, (0.5, 0.5, 1)
+ * up out of the surface, height 1; the occlusion 1 */
+typedef struct {
+    Mesh *m;
+} FillJob;
+#define FILL_BANDS 64
+static void level_fill_job(void *ctx, int band) {
+    Mesh *m = ((FillJob *)ctx)->m;
+    size_t a = (size_t)NATLAS_SIZE * NATLAS_SIZE * (size_t)band / FILL_BANDS, b = (size_t)NATLAS_SIZE * NATLAS_SIZE * (size_t)(band + 1) / FILL_BANDS;
+    for (size_t i = a; i < b; i++) {
+        u8 *d = m->natlas + i * 4;
+        d[0] = d[1] = 128, d[2] = 255, d[3] = 255;
+    }
+    a = (size_t)ATLAS_SIZE * ATLAS_H * (size_t)band / FILL_BANDS, b = (size_t)ATLAS_SIZE * ATLAS_H * (size_t)(band + 1) / FILL_BANDS;
+    for (size_t i = a; i < b; i++) {
+        u8 *d = m->snatlas + i * 4;
+        d[0] = d[1] = 128, d[2] = 255, d[3] = 255;
+    }
+    memset(m->saoatlas + a, 255, b - a);
+}
+
 bool level_mesh(const Level *lv, const char *data_dir, const float (*orbs)[6], int norbs, Mesh *m) {
     memset(m, 0, sizeof *m);
     clock_t lm_t[8];   /* (2026-11-17: the parts timed, UWVIEW_BUILD_LOG=1) */
@@ -679,16 +756,12 @@ bool level_mesh(const Level *lv, const char *data_dir, const float (*orbs)[6], i
     m->atlas = arena_alloc((size_t)ATLAS_SIZE * ATLAS_H * 4);
     m->natlas = arena_alloc((size_t)NATLAS_SIZE * NATLAS_SIZE * 4);
     m->snatlas = arena_alloc((size_t)ATLAS_SIZE * ATLAS_H * 4);
-    for (size_t i = 0; i < (size_t)ATLAS_SIZE * ATLAS_H; i++) {
-        u8 *d = m->snatlas + i * 4;
-        d[0] = d[1] = 128, d[2] = 255, d[3] = 255;
-    }
     m->saoatlas = arena_alloc((size_t)ATLAS_SIZE * ATLAS_H);   /* no occlusion where a picture has no map */
-    memset(m->saoatlas, 255, (size_t)ATLAS_SIZE * ATLAS_H);
-    /* flat where a normal map is missing: (0.5, 0.5, 1) up out of the surface, height 1 */
-    for (size_t i = 0; i < (size_t)NATLAS_SIZE * NATLAS_SIZE; i++) {
-        u8 *d = m->natlas + i * 4;
-        d[0] = d[1] = 128, d[2] = 255, d[3] = 255;
+    /* flat where a normal map is missing: (0.5, 0.5, 1) up out of the surface, height 1 (2026-11-18: on several
+       threads, level_fill_job) */
+    {
+        FillJob fj = {m};
+        par_for(FILL_BANDS, level_fill_job, &fj);
     }
     char path[600];
     int missing = 0;
@@ -726,64 +799,62 @@ bool level_mesh(const Level *lv, const char *data_dir, const float (*orbs)[6], i
         png_prefetch(pp, n);
         arena_reset(mark);
     }
+    /* (2026-11-18) each texture's pictures found here, on this thread (png_exists, png_view: the tables), and each
+     * cell's pixels then put in on several threads at once (level_cell). A texture with a picture that was not read
+     * ahead (png_view's copy in the arena) has its cell built here and now, the arena then given back, as before. */
+    CellPics *cells = calloc(210 + 52, sizeof *cells);
+    int *par_cells = calloc(210 + 52, sizeof *par_cells), npar = 0;
     for (int i = 0; i < 210 + 52; i++) {
         bool wall = i < 210;
         int k = wall ? i : i - 210;
         size_t mark = arena_mark();
         Image img;
-        float r[4];
-        if (wall) wall_rect(k, r);
-        else floor_rect(k, r);
-        int cell = (int)r[2];
+        CellPics one, *c = cells ? &cells[i] : &one;
+        bool copied = false, cp;
+        memset(c, 0, sizeof *c);
         /* the normal map: the user's own made with Laigter (data\laigter\walls|floors\NNN_n.png, at the texture's size,
          * the same axes as ours: tools\laigter-cli) when there is one, else the engine's (textures\walls_normal ...) */
         snprintf(path, sizeof path, "%s\\laigter\\%s\\%03d_n.png", data_dir, wall ? "walls" : "floors", k);
         if (!png_exists(path))   /* (2026-11-17: png_exists, the disk asked once a run as for the other maps, not at every build) */
             snprintf(path, sizeof path, "%s\\textures\\%s_normal\\%03d.png", data_dir, wall ? "walls" : "floors", k);
-        if (png_read(path, &img)) {
-            put_cell(m->natlas, NATLAS_SIZE, &img, (int)r[0] * 4, (int)r[1] * 4, cell * 4);
+        if (png_view(path, &img, &cp)) {
+            c->pic[0] = img, c->has[0] = true;
             m->normal_maps++;
         }
-        arena_reset(mark);
+        copied |= cp;
         /* beside it (tools\laigter-cli\texture.preset, make-normals.cmd; the user, 2026-11-14): NNN_p.png, the
          * texture's height map, into the normal atlas's alpha (the shader casts the relief's shadows from it: smooth
          * between its texels, the texture repeating, at the atlas's 4x; 1 where there is none: no shadow), and
          * NNN_o.png, its occlusion map (the joints), into the pictures' AO atlas at the texture's own place (rows
          * the pictures do not use; 1 where there is none). Laigter's grey maps: their red channel. */
         snprintf(path, sizeof path, "%s\\laigter\\%s\\%03d_p.png", data_dir, wall ? "walls" : "floors", k);
-        if (png_exists(path) && png_read(path, &img) && img.w > 0 && img.h > 0) {
-            relief_stretch(m, r, cell, &img, 3, &relief_kept[i][0]);
+        if (png_exists(path)) {
+            if (png_view(path, &img, &cp) && img.w > 0 && img.h > 0) c->pic[1] = img, c->has[1] = true;
+            copied |= cp;
         }
-        arena_reset(mark);
         snprintf(path, sizeof path, "%s\\laigter\\%s\\%03d_o.png", data_dir, wall ? "walls" : "floors", k);
         /* the occlusion the shader reads is the normal atlas's BLUE (the user, 2026-11-16: occlusion maps larger
          * than the texture, 256 for the 64 texel walls: the atlas's 4x; the normal's z is worked out from its x, y
          * in the shader): 1 where there is no map, else the map smooth between its texels, the texture repeating */
-        for (int y = 0; y < cell * 4; y++)
-            for (int x = 0; x < cell * 4; x++)
-                m->natlas[((size_t)((int)r[1] * 4 + y) * NATLAS_SIZE + (size_t)((int)r[0] * 4 + x)) * 4 + 2] = 255;
-        if (png_exists(path) && png_read(path, &img) && img.w > 0 && img.h > 0) {
-            for (int y = 0; y < cell; y++)
-                for (int x = 0; x < cell; x++)
-                    m->saoatlas[(size_t)((int)r[1] + y) * ATLAS_SIZE + (size_t)((int)r[0] + x)] =
-                        img.rgba[((size_t)(y * img.h / cell) * img.w + (size_t)(x * img.w / cell)) * 4];
-            relief_stretch(m, r, cell, &img, 2, &relief_kept[i][1]);
+        if (png_exists(path)) {
+            if (png_view(path, &img, &cp) && img.w > 0 && img.h > 0) c->pic[2] = img, c->has[2] = true;
+            copied |= cp;
         }
-        arena_reset(mark);
         snprintf(path, sizeof path, "%s\\textures\\%s\\%03d.png", data_dir, wall ? "walls" : "floors", k);
-        if (png_read(path, &img)) {
-            put_cell(m->atlas, ATLAS_SIZE, &img, (int)r[0], (int)r[1], cell);
-        } else {
-            missing++;
-            for (int y = 0; y < cell; y++) /* magenta check: missing texture */
-                for (int x = 0; x < cell; x++) {
-                    u8 *d = m->atlas + ((size_t)((int)r[1] + y) * ATLAS_SIZE + (size_t)((int)r[0] + x)) * 4;
-                    bool on = ((x / 8) ^ (y / 8)) & 1;
-                    d[0] = on ? 255 : 40, d[1] = 0, d[2] = on ? 255 : 40, d[3] = 255;
-                }
-        }
-        arena_reset(mark);
+        if (png_view(path, &img, &cp)) c->pic[3] = img, c->has[3] = true;
+        else missing++;
+        copied |= cp;
+        if (copied || !cells || !par_cells) {
+            level_cell(m, i, c);   /* (here and now: its pictures are in the arena) */
+            arena_reset(mark);
+        } else
+            par_cells[npar++] = i;
     }
+    if (npar) {
+        CellJob cj = {m, cells, par_cells};
+        par_for(npar, level_cell_job, &cj);
+    }
+    free(cells), free(par_cells);
     if (missing) logf_("level: %d textures could not be read (drawn magenta)\n", missing);
     lm_t[lm_n++] = clock();
     /* the object pictures, at their own size in 32 x 32 cells below the textures */

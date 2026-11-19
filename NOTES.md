@@ -2013,3 +2013,12 @@ The user: "we want pathing from the steam audio", "and figure out where Baked pr
   3D picture and the positional sound stopped; and back, our full-screen view and the sound started again. Both
   exit 0. (From dist/UW1 on drvfs with the user's settings the game never left the title under llvmpipe, with or
   without this change's keys: three wasted runs, linuxorig.sh; use the ext4 package.)
+
+## 2026-11-19: the code made readable; the AI log row's own id
+- Our own uwr code (never the rules) was made easier to follow: long functions split into named steps, plain
+  comments, docs\CODE_MAP.md. Plan and spec in docs\superpowers. Every log line of ours goes through
+  port\win32\rlog.c (`[time] level tag: text`); the Esc menu's Game tab has a Log detail row (uw1port.cfg
+  log_detail), UWR_LOGLEVEL wins at start. Lines check scripts match by their start stay plain.
+- Fixed: the "AI log in the log file" row had the id 167 (it came after MO_AIXEND), the same as the first
+  enhancement's (MO_ENH + ENH_SKIP_INTRO), so stepping it toggled Skip the introduction and ai_log_file could not
+  be changed from the menu. It is now MO_AILOGFILE = 129 (uwfront.c). Checked: Windows and SDL3 build, hidden launch.

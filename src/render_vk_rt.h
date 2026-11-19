@@ -141,9 +141,9 @@ fail:
    (render.c's cards_as_build; the corners as its loop has them) */
 static void cards_as_build(const float eye[3])
 {
-    if (!T.ctlas.as || !T.cinst.ptr || !T.cpos.ptr) return;
+    if (!T.ctlas.as || !T.cinst.ptr || !T.cpos.ptr || !sprite_cpu) return;
     int n = V.nsprites / 3 * 3;
-    const Vertex *sp = V.sprite_vb.ptr;
+    const Vertex *sp = sprite_cpu;   /* (2026-11-18: not V.sprite_vb.ptr, the GPU's memory: render_vk.c's sprite_cpu) */
     /* the corners: a card (kind 2.5-4.5) stands upright at its bottom middle facing the eye across the floor, its
        corner offset in nrm (right, up) as scene.hlsl's vs turns it; anything else (a door, its frame) is where it is */
     for (int i = 0; i < n; i++) {

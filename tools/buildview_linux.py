@@ -40,8 +40,8 @@ cmd = [os.path.join(LLVM_BIN, 'clang.exe'), '--target=x86_64-linux-gnu', '--sysr
        '-fuse-ld=lld', '-shared', '-fPIC', '-fvisibility=hidden', '-std=c17', '-O2',
        '-Wall', '-Wextra', '-Wno-unused-parameter', '-Wno-missing-field-initializers',
        '-include', os.path.join(src, 'os_posix.h'),
-       '-I', src, '-I', os.path.join(HERE, 'dlss', 'include'), '-I', os.path.join(HERE, 'build', 'gen'), '-I', VULKAN_INC,
-       '-o', OUT] + [os.path.join(src, f) for f in SOURCES] + [
+       '-I', src, '-I', os.path.join(HERE, 'port', 'win32'), '-I', os.path.join(HERE, 'dlss', 'include'), '-I', os.path.join(HERE, 'build', 'gen'), '-I', VULKAN_INC,
+       '-o', OUT] + [os.path.join(src, f) for f in SOURCES] + [os.path.join(HERE, 'port', 'win32', 'rlog.c'),
        NGX_LIB, '-lstdc++', '-lSDL3', '-lm', '-ldl', '-lpthread',
        '-Wl,-z,defs', '-Wl,--exclude-libs,ALL', '-Wl,-soname,libuwview.so', '-Wl,-rpath,$ORIGIN']   # (NGX's own
 # functions kept inside: only the uwv_* entry points are exported)

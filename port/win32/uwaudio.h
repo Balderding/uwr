@@ -19,6 +19,7 @@ int  uwaudio_on(void);
 unsigned long long uwaudio_taken(void);   /* bit n: effect n is ours to play now (the game's copy to be silent) */
 void uwaudio_volume(float gain);          /* the menu's Sound volume, 0..1 */
 void uwaudio_level_change(void);          /* a level change under way (Steam Audio's pathing stands still) */
+void uwaudio_heat(const float *spots, int n, float level);   /* the hot air near the eye (uwv_heat_spots: 5 floats a spot) and the Heat shimmer row's strength (0 off, 1 the default) */
 void uwaudio_pump(void);                  /* once a frame (the hidden checks' loopback WAV) */
 int  uwaudio_setting(const char *datadir, const char *key, int dflt);   /* data\settings.txt's "key N" */
 /* HRTF (ALC_SOFT_HRTF; fx_hrtf 1 asks for it, the default): the context's ALC_HRTF_STATUS_SOFT (0 off, 1 on, 2 denied,
