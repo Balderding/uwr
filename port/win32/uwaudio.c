@@ -44,6 +44,9 @@
 #include <math.h>
 #include "uwaudio.h"
 #include "uwsteam.h"
+#ifndef _WIN32
+#include <dirent.h>   /* (uwaudio_heads) */
+#endif
 #include "rlog.h"
 
 #ifndef FX_MUTED
@@ -138,7 +141,7 @@ static struct {
 
 #define AL_MAX_GAIN 0x100E
 #define FX_STOP 8                          /* portgame.h's: the game silenced the effect (kill_effect) */
-#define NSRC 32
+#define NSRC 64                            /* OpenAL sources: the sounds at once (uwsteam.h UWST_VOICES as many) */
 static void *dev, *ctx;
 static int on;
 static int hrtf_status = -1;       /* ALC_HRTF_STATUS_SOFT of the context made (-1: no context) */
@@ -226,7 +229,19 @@ static float gain = 1.0f;          /* the menu's Sound volume */
      acoustics_steam_pathing 1   High, with the two above: a sound the level hides is heard along the ways Steam
                                  Audio's pathing finds through the level (uwsteam.h uwst_pathing), in place of our
                                  own way round a corner (acoustics_detour) for the sounds Steam Audio plays
-     acoustics_path_level 100    those ways' level, percent of what the straight line lost */
+     acoustics_path_level 100    those ways' level, percent of what the straight line lost
+   (2026-11-19, the sound review: work\soundreview\REPORT-2026-11-19.md, docs\SOUND_RESEARCH.md)
+     acoustics_echo_voices 16    High: the sounds with echoes at once (1-32); every sound is Steam Audio's itself
+     acoustics_surround 1        High, on 4, 5.1 or 7.1 speakers: Steam Audio's stream mixed for all of them (0: the
+                                 front two, as before); from the next start of the sound (hi_channels)
+     acoustics_direct_thread 1   High: the muffling's and the paths' sums on a thread of their own (0: in the mixing)
+     acoustics_steam_speakers 1  High, on speakers: the sound itself by Steam Audio too (panned), with its muffling
+                                 and paths (0: OpenAL's on speakers, as before)
+     acoustics_echo_order 1      High: the echoes' direction detail, 1 or 2 (from the next start of the echoes)
+     acoustics_head 0            High, headphones: the head the sound is made for: 0 Steam Audio's own, N the Nth
+                                 .sofa file in our data's hrtf folder (uwaudio_heads)
+     acoustics_scatter_by_mat 1  High: each material's own scattering (acoustics.txt "scatter"), else Wall roughness
+     acoustics_materials 0       the material table: 0 acoustics.txt (the research's), 1 acoustics-2026-11-14.txt */
 static struct {
     float makeup_stereo, makeup_hrtf, hi_level, decay, decay_hf, decay_lf, refl_delay, late_delay, reverb_gain, reverb_tc, filter_tc;
     int bounces, ahead, direct;
@@ -234,7 +249,8 @@ static struct {
     float dlevel, src_m;          /* that sound's level against the stream's; the source's size, metres */
     int spath;                    /* Steam Audio's pathing ... */
     float plevel;                 /* ... and its level */
-} TU = {MAKEUP_STEREO, MAKEUP_HRTF, 0.05f, 1, 1, 1, 1, 1, 0.32f, 0.17f, 0.3f, 0, 4, 1, 1, 1, 0.30f, 0.5f, 1, 1.0f};
+    int surround;                 /* Steam Audio's stream on every speaker of a surround set (acoustics_surround) */
+} TU = {MAKEUP_STEREO, MAKEUP_HRTF, 0.05f, 1, 1, 1, 1, 1, 0.32f, 0.17f, 0.3f, 0, 4, 1, 1, 1, 0.30f, 0.5f, 1, 1.0f, 1};
 /* UWPORT_FX_MAKEUP: the checks' own factor (tests\uwaudio_test.c's levels and reference were taken at 1) */
 static float makeup(void)
 {
@@ -798,8 +814,10 @@ static struct {
     int live, dry;               /* more blocks are to come; the times the source stopped though they were */
     volatile LONG kick;          /* counts the sounds started (hi_voice): the feed's idle against a sound just begun */
     int voice[NSRC];             /* each source's voice in uwsteam.c (-1 none) */
+    int nch, fmt_f, fmt_16;      /* the stream's channels (hi_channels) and its float and 16-bit buffer formats */
     float sim_acc;               /* a hidden run: seconds since the last simulation */
     HANDLE sim_thread, feed_thread, sim_wake;
+    HANDLE direct_thread;        /* (2026-11-19) the muffling's and the paths' sums (uwst_direct_tick) */
     volatile LONG quit;
 } HI;
 
@@ -809,9 +827,9 @@ static double hi_feed_ms_last, hi_feed_gap_last, hi_sim_ms_last;   /* the thread
 static DWORD hi_t0;                 /* when Acoustics High started (hi_start) */
 static void hi_feed(void)
 {
-    static float blk[UWST_FRAME * 2];
-    static short blk16[UWST_FRAME * 2];
-    int done = 0, queued = 0, st = 0;
+    static float blk[UWST_FRAME * UWST_MAXCH];
+    static short blk16[UWST_FRAME * UWST_MAXCH];
+    int done = 0, queued = 0, st = 0, ns = UWST_FRAME * HI.nch;   /* (ns: the samples of a block, every channel) */
     if (!HI.on) return;
     A.alGetSourcei(HI.src, AL_BUFFERS_PROCESSED, &done);
     while (done-- > 0 && HI.nfree < HI_BUFS) A.alSourceUnqueueBuffers(HI.src, 1, &HI.free_buf[HI.nfree]), HI.nfree++;
@@ -820,13 +838,13 @@ static void hi_feed(void)
         LONG kick = HI.kick;
         int busy = uwst_mix_float(blk, UWST_FRAME, AC.wet * HI_LEVEL, hrtf_status == 1 || hrtf_status == 4);
         unsigned b = HI.free_buf[--HI.nfree];
-        if (HI.is_float) A.alBufferData(b, AL_FORMAT_STEREO_FLOAT32, blk, (int)sizeof blk, HI_RATE);
+        if (HI.is_float) A.alBufferData(b, HI.fmt_f, blk, (int)(sizeof(float) * (size_t)ns), HI_RATE);
         else {
-            for (int i = 0; i < UWST_FRAME * 2; i++) {
+            for (int i = 0; i < ns; i++) {
                 float v = blk[i] * 32767.0f;
                 blk16[i] = (short)lrintf(v > 32767.0f ? 32767.0f : v < -32768.0f ? -32768.0f : v);
             }
-            A.alBufferData(b, AL_FORMAT_STEREO16, blk16, (int)sizeof blk16, HI_RATE);
+            A.alBufferData(b, HI.fmt_16, blk16, (int)(sizeof(short) * (size_t)ns), HI_RATE);
         }
         A.alSourceQueueBuffers(HI.src, 1, &b);
         queued++;
@@ -882,6 +900,17 @@ static DWORD WINAPI hi_feed_worker(LPVOID p)
     }
     return 0;
 }
+/* the muffling's and the paths' sums for the sounds Steam Audio plays (a sound card), every 8 ms: on a thread of
+   their own since 2026-11-19, out of the feed's way (they took 2.3-2.5 ms of each 10.7 ms block there) */
+static DWORD WINAPI hi_direct_worker(LPVOID p)
+{
+    (void)p;
+    while (!HI.quit) {
+        uwst_direct_tick();
+        Sleep(8);
+    }
+    return 0;
+}
 /* Acoustics High stopped: its threads ended and waited for, its stream and Steam Audio released */
 static void hi_stop(void)
 {
@@ -898,6 +927,10 @@ static void hi_stop(void)
         if (WaitForSingleObject(HI.feed_thread, 60000) != WAIT_OBJECT_0) RLOG_W("audio", "the echoes' feed thread did not end in a minute");
         CloseHandle(HI.feed_thread), HI.feed_thread = NULL;
     }
+    if (HI.direct_thread) {
+        if (WaitForSingleObject(HI.direct_thread, 60000) != WAIT_OBJECT_0) RLOG_W("audio", "the muffling's thread did not end in a minute");
+        CloseHandle(HI.direct_thread), HI.direct_thread = NULL;
+    }
     if (HI.sim_wake) CloseHandle(HI.sim_wake), HI.sim_wake = NULL;
     HI.on = 0;
     if (HI.dry) fprintf(stderr, "fx: acoustics high: the echo stream ran dry %d times\n", HI.dry);
@@ -907,6 +940,40 @@ static void hi_stop(void)
     A.alDeleteBuffers(HI_BUFS, HI.buf);
     uwst_shutdown();
 }
+/* The stream's channels for this start: the device's speakers when it has 4, 5.1 (6.1 too: a 5.1 stream, OpenAL
+   remixes the rest) or 7.1 and acoustics_surround is on; else 2 (headphones, stereo, the checks' loopback). The
+   stream's buffer formats with it (AL_EXT_MCFORMATS for more than 2); a device that takes neither multichannel
+   format gets the 2 channels, with a warning. */
+#define ALC_OUTPUT_MODE_SOFT 0x19AC
+static void hi_channels(void)
+{
+    static const int fmt_f[9] = {0, 0, AL_FORMAT_STEREO_FLOAT32, 0, 0x1206, 0, 0x120C, 0, 0x1212};   /* (QUAD32, 51CHN32, 71CHN32) */
+    static const int fmt_16[9] = {0, 0, AL_FORMAT_STEREO16, 0, 0x1205, 0, 0x120B, 0, 0x1211};
+    int mode = 0, n = 2;
+    /* (with headphones the mode is stereo HRTF, 0x19B2: 2 channels. hrtf_status is not read yet when this runs.) */
+    if (AC.rate <= 0 && TU.surround && dev && A.alcIsExtensionPresent(dev, "ALC_SOFT_output_mode")) {
+        A.alcGetIntegerv(dev, ALC_OUTPUT_MODE_SOFT, 1, &mode);
+        n = mode == 0x1503 ? 4 : mode == 0x1504 || mode == 0x1505 ? 6 : mode == 0x1506 ? 8 : 2;
+    }
+    if (n > 2) {   /* (the formats tried on a buffer of their own: one frame of silence each) */
+        static const float zf[UWST_MAXCH];
+        static const short zs[UWST_MAXCH];
+        unsigned t = 0;
+        int ok_f, ok_16;
+        A.alGetError();
+        A.alGenBuffers(1, &t);
+        A.alBufferData(t, fmt_f[n], zf, (int)(sizeof(float) * (size_t)n), HI_RATE);
+        ok_f = A.alGetError() == 0;
+        A.alBufferData(t, fmt_16[n], zs, (int)(sizeof(short) * (size_t)n), HI_RATE);
+        ok_16 = A.alGetError() == 0;
+        A.alDeleteBuffers(1, &t);
+        A.alGetError();
+        if (!ok_f && !ok_16) { RLOG_W("audio", "the speakers are %d channels, but OpenAL takes no such buffers: Steam Audio's sound on the front two", n); n = 2; }
+    }
+    HI.nch = n, HI.fmt_f = fmt_f[n], HI.fmt_16 = fmt_16[n];
+    uwst_channels(n);
+    RLOG_I("audio", "Steam Audio's stream: %d channels (the device's output mode 0x%x, surround %s)", n, (unsigned)mode, TU.surround ? "on" : "off");
+}
 /* after the acoustics are on: 1 when Steam Audio's reflections run (the EFX reverb then stays silent) */
 static int hi_start(void)
 {
@@ -914,6 +981,7 @@ static int hi_start(void)
     memset(&HI, 0, sizeof HI);
     for (int k = 0; k < NSRC; k++) HI.voice[k] = -1;
     if (!A.alSourceQueueBuffers || !A.alSourceUnqueueBuffers) { fprintf(stderr, "fx: acoustics high off (no buffer queues in OpenAL)\n"); return 0; }
+    hi_channels();
     if (!uwst_init(e && *e ? e : bin_dir, HI_RATE)) return 0;
     A.alGetError();
     A.alGenSources(1, &HI.src);
@@ -922,8 +990,8 @@ static int hi_start(void)
     for (int i = 0; i < HI_BUFS; i++) HI.free_buf[i] = HI.buf[i];
     HI.nfree = HI_BUFS, HI.idle = 1;
     {   /* float buffers when OpenAL takes them (OpenAL Soft does: AL_EXT_FLOAT32) */
-        static const float zero[8];
-        A.alBufferData(HI.buf[0], AL_FORMAT_STEREO_FLOAT32, zero, (int)sizeof zero, HI_RATE);
+        static const float zero[UWST_MAXCH * 4];
+        A.alBufferData(HI.buf[0], HI.fmt_f, zero, (int)(sizeof(float) * (size_t)HI.nch * 4), HI_RATE);
         HI.is_float = A.alGetError() == 0;
         if (!HI.is_float) RLOG_W("audio", "the echo stream in 16-bit samples (OpenAL takes no float ones)");
     }
@@ -932,8 +1000,9 @@ static int hi_start(void)
     A.alSourcef(HI.src, AL_ROLLOFF_FACTOR, 0);
     /* (the stream is the two ears' sound already, Steam Audio's own HRTF in it; as a plain stereo source it would go
        through OpenAL's HRTF again, a click on the left smeared over 63 samples and leaked to the right. Its two
-       channels go straight to the output's two.) */
-    A.alSourcei(HI.src, AL_DIRECT_CHANNELS_SOFT, TU.direct);
+       channels go straight to the output's two. On surround speakers each channel goes to its own speaker, and one
+       the device lacks (a 5.1 stream on 6.1) is remixed into the others: AL_REMIX_UNMATCHED_SOFT, 2.) */
+    A.alSourcei(HI.src, AL_DIRECT_CHANNELS_SOFT, TU.direct && HI.nch > 2 ? 2 : TU.direct);
     {
         int err = A.alGetError();
         if (err) RLOG_W("audio", "the echo stream's setup: OpenAL error 0x%x (it may be placed by OpenAL as well)", (unsigned)err);
@@ -945,6 +1014,8 @@ static int hi_start(void)
         HI.sim_wake = CreateEventA(NULL, FALSE, FALSE, NULL);
         HI.sim_thread = CreateThread(NULL, 0, hi_sim_worker, NULL, 0, NULL);
         HI.feed_thread = CreateThread(NULL, 0, hi_feed_worker, NULL, 0, NULL);
+        HI.direct_thread = CreateThread(NULL, 0, hi_direct_worker, NULL, 0, NULL);
+        if (!HI.direct_thread) RLOG_W("audio", "acoustics high: no thread for the muffling's sums (the mixing makes them)");
         /* (at normal priority, below OpenAL's mixer, and every core kept busy (work\soundprobe\stress.py, run
            stress1) the feed came every 30 to 77 ms instead of 10 and the stream, the sound itself with it on
            headphones, ran dry 173 times in a minute; the music's thread, time-critical, not once. The same priority
@@ -1051,7 +1122,7 @@ static int hi_voice(int k, unsigned al, float x, float y, float z, float g, floa
                 HI.idle = 0;
                 if (AC.rate > 0) uwst_simulate();    /* a hidden run: its response now, so the checks repeat */
                 else if (HI.sim_wake) SetEvent(HI.sim_wake);
-                return uwst_direct_on() && (hrtf_status == 1 || hrtf_status == 4);
+                return uwst_direct_for(hrtf_status == 1 || hrtf_status == 4);   /* (2026-11-19: speakers too) */
             }
             return 0;
         }
@@ -1254,6 +1325,22 @@ static void tune_read(const char *datadir)
     uwac_tune((int)setting_float(datadir, "acoustics_room_rays", 64.0f), (int)setting_float(datadir, "acoustics_room_legs", 12.0f),
               setting_float(datadir, "acoustics_room_reach", 16.0f), setting_float(datadir, "acoustics_way_reach", 12.0f));
     uwst_ear(setting_float(datadir, "acoustics_echo_first", 1.0f) != 0);
+    {   /* (2026-11-19, the sound review) */
+        uwst_echo_voices((int)clampf(setting_float(datadir, "acoustics_echo_voices", 16.0f), 1.0f, (float)UWST_ECHOES));
+        TU.surround = setting_float(datadir, "acoustics_surround", 1.0f) != 0;
+        uwst_direct_thread(setting_float(datadir, "acoustics_direct_thread", 1.0f) != 0);
+        uwst_speakers(setting_float(datadir, "acoustics_steam_speakers", 1.0f) != 0);
+        uwst_speaker_level(TU.makeup_stereo > 0 ? TU.makeup_hrtf / TU.makeup_stereo : 1.0f);   /* (the same loudness as on headphones) */
+        uwst_scatter_by_mat(setting_float(datadir, "acoustics_scatter_by_mat", 1.0f) != 0);
+        uwst_order((int)setting_float(datadir, "acoustics_echo_order", 1.0f));
+        {
+            static char names[32][96];
+            char p[800] = "";
+            int h = (int)setting_float(datadir, "acoustics_head", 0), n = uwaudio_heads(datadir, names, 32);
+            if (h >= 1 && h <= n) snprintf(p, sizeof p, "%s" UWOS_SEP "hrtf" UWOS_SEP "%s", datadir, names[h - 1]);
+            uwst_head(p);
+        }
+    }
     uwst_scatter(clampf(setting_float(datadir, "acoustics_scatter", 25.0f) / 100.0f, 0, 1.0f));
     uwst_length(clampf(setting_float(datadir, "acoustics_echo_ms", 2000.0f) / 1000.0f, 0.25f, 6.0f));
 }
@@ -1296,6 +1383,7 @@ static int ac_start(const char *datadir)
         return 0;
     }
 #undef GET
+    uwacmat_earlier(setting_float(datadir, "acoustics_materials", 0) == 1);   /* (2026-11-19: the Material table row) */
     uwacmat_write_default(datadir);                  /* data\acoustics.txt: the table we ship, when there is none yet */
     if (!uwacmat_load(datadir) && !uwacmat_load_default()) {
         RLOG_W("audio", "acoustics off (no materials: data\\acoustics.txt)");
@@ -1373,7 +1461,8 @@ void uwaudio_tune(const char *datadir)
         /* the longest ring is the response's size, taken when Steam Audio starts: started again when the row changed
            (the level's tiles are kept there; the sounds ringing lose their echoes) */
         float want = clampf(setting_float(datadir, "acoustics_echo_ms", 2000.0f) / 1000.0f, 0.25f, 6.0f);
-        if (uwst_length(want)) hi_stop(), hi_start();
+        int again = uwst_length(want);
+        if (again || uwst_restart_wanted()) hi_stop(), hi_start();   /* (2026-11-19: the echoes' order, the head) */
     }
     if (HI.on) {
         int err;
@@ -1392,6 +1481,38 @@ void uwaudio_tune(const char *datadir)
     }
 }
 int uwaudio_acoustics_on(void) { return AC.on ? (HI.on ? 2 : 1) : 0; }
+static int head_cmp(const void *a, const void *b) { return strcmp((const char *)a, (const char *)b); }
+int uwaudio_heads(const char *datadir, char names[][96], int max)
+{
+    char p[800];
+    int n = 0;
+    if (!datadir || max <= 0) return 0;
+#ifdef _WIN32
+    WIN32_FIND_DATAA fd;
+    HANDLE h;
+    snprintf(p, sizeof p, "%s\\hrtf\\*.sofa", datadir);
+    if ((h = FindFirstFileA(p, &fd)) != INVALID_HANDLE_VALUE) {
+        do {
+            if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && strlen(fd.cFileName) < 96 && n < max)
+                snprintf(names[n++], 96, "%s", fd.cFileName);
+        } while (FindNextFileA(h, &fd));
+        FindClose(h);
+    }
+#else
+    DIR *d;
+    struct dirent *de;
+    snprintf(p, sizeof p, "%s/hrtf", datadir);
+    if ((d = opendir(p)) != NULL) {
+        while ((de = readdir(d)) != NULL) {
+            size_t l = strlen(de->d_name);
+            if (l > 5 && l < 96 && !strcmp(de->d_name + l - 5, ".sofa") && n < max) snprintf(names[n++], 96, "%s", de->d_name);
+        }
+        closedir(d);
+    }
+#endif
+    qsort(names, (size_t)n, sizeof names[0], head_cmp);
+    return n;
+}
 /* what our rays measure where the listener stands now (the menu's read-only row; in Acoustics High too, where the
    EFX reverb these numbers drive is silent): the ring time by band, the room's mean free path and the mean distance
    to the first surface, metres. 0: no level yet, or the listener in rock. */

@@ -15,7 +15,11 @@
 #define UWSTEAM_H
 #include "uwacoustic.h"
 
-#define UWST_VOICES 8        /* the sounds that get reflections at once (the others stay dry) */
+#define UWST_VOICES 64       /* the sounds Steam Audio plays at once (its sound itself: one a source of uwaudio.c's,
+                                which has as many) */
+#define UWST_ECHOES 32       /* the echo slots: the sounds that can have echoes at once (uwst_echo_voices: the newest,
+                                up to this) */
+#define UWST_MAXCH 8         /* the most output channels the stream can have (7.1) */
 #define UWST_FRAME 512       /* frames a block at the rate given to uwst_init (10.7 ms at 48 kHz; 1024 until
                                 2026-11-15: a new sound's echoes came in behind three queued blocks, 60-100 ms) */
 
@@ -73,9 +77,39 @@ void uwst_listener(float x, float y, float z, float yaw);   /* yaw 0 looks north
 int  uwst_begin(float x, float y, float z, const short *mono, int frames, int rate, float gain);
 void uwst_end(int voice);                         /* the sound was cut (its echoes ring out) */
 void uwst_simulate(void);                         /* one run of the rays for the listener and the voices as they are now */
-/* the next `frames` frames of every voice's reflections, mixed to stereo (interleaved; binaural when hrtf); the
-   voices still sounding or ringing. `wet` scales it (1: as simulated). */
-int  uwst_mix(short *stereo, int frames, float wet, int hrtf);
-int  uwst_mix_float(float *stereo, int frames, float wet, int hrtf);   /* the same in float (1.0 full scale): the game's */
+/* The output's speakers: uwst_channels before uwst_init sets how many channels the stream has from the next start:
+   2 stereo (the default; binaural when hrtf), 4 quad, 6 5.1 or 8 7.1 (any other number: 2), in OpenAL's and Steam
+   Audio's order (front left, front right, centre, LFE, back left, back right, side left, side right). On more than
+   2 channels the sound is panned over the speakers and decoded for them, never binaural. Returns 1 when the running
+   start has another number, so the caller starts it again. uwst_channels_now: the running start's. */
+int  uwst_channels(int n);
+int  uwst_channels_now(void);
+/* the next `frames` frames of every voice's sound and reflections, interleaved with uwst_channels_now() channels
+   (binaural when hrtf and stereo); the voices still sounding or ringing. `wet` scales the echoes (1: as simulated). */
+int  uwst_mix(short *out, int frames, float wet, int hrtf);
+int  uwst_mix_float(float *out, int frames, float wet, int hrtf);   /* the same in float (1.0 full scale): the game's */
 int  uwst_triangles(void);                        /* of the scene in use (the checks) */
+/* (2026-11-19, the sound review: work\soundreview\REPORT-2026-11-19.md; each a row of the Esc menu's Sound tuning)
+   uwst_echo_voices: how many sounds have echoes at once (1..UWST_ECHOES; 16 as it comes), heard at once.
+   uwst_direct_thread: 1 (as it comes): the muffling's and the paths' sums are made by uwst_direct_tick, which the
+   caller calls on a thread of its own every few ms; 0, or no tick for 100 ms: the mixing makes them, as before.
+   uwst_speakers: 1 (as it comes): the sound itself is Steam Audio's on speakers too (panned, not by the HRTF), with
+   its muffling and paths; uwst_direct_for(hrtf): the sound itself is Steam Audio's for that output.
+   uwst_speaker_level: the sound itself on speakers at this times uwst_direct_level's (the makeups' ratio).
+   uwst_order: the echoes' ambisonic order, 1 (4 channels) or 2 (9: their directions clearer, about twice the work);
+   uwst_head: the head the binaural sound is made for, a SOFA file's path ("" or NULL: Steam Audio's own). Both are
+   taken when Steam Audio starts: 1 when the running one differs, so the caller starts it again (uwst_restart_wanted).
+   uwst_scatter_by_mat: 1 (as it comes): a material's own scattering (acoustics.txt "scatter S") where it has one,
+   else uwst_scatter's; the scene made again. uwst_head_now: the head in use (a name, for the log and the menu). */
+void uwst_echo_voices(int n);
+void uwst_direct_thread(int on);
+void uwst_direct_tick(void);
+void uwst_speakers(int on);
+int  uwst_direct_for(int hrtf);
+void uwst_speaker_level(float ratio);
+int  uwst_order(int order);
+int  uwst_head(const char *sofa_path);
+int  uwst_restart_wanted(void);
+void uwst_scatter_by_mat(int on);
+const char *uwst_head_now(void);
 #endif

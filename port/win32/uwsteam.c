@@ -61,6 +61,24 @@ static struct { volatile LONG on, occl, samples, rays; float radius; } D = {0, 1
    on: the setting; level: the paths' gain; range: how far a way may be, tiles; see: how far two probes may see each
    other, tiles. */
 static struct { volatile LONG on; float level, range, see; } P = {1, 1.0f, 24.0f, 6.0f};
+/* (2026-11-19, the sound review: work\soundreview\REPORT-2026-11-19.md) more of Steam Audio, each a row:
+   limit: the sounds that have echoes at once (the echoes have slots of their own, UWST_ECHOES, apart from the
+   sounds: every sound goes through Steam Audio's sound itself, the newest `limit` of them also through the echoes);
+   thread: the muffling's and the paths' sums made by uwst_direct_tick on the caller's thread of its own, not in the
+   mixing (block() makes them itself when no tick has come for 100 ms: the hidden runs, the row off); speakers: the
+   sound itself on speakers too (Steam Audio's panning, the paths panned); by_mat: a material's own scattering;
+   spk: the sound itself's level on speakers against dry_level's (the makeups' ratio, uwaudio.c). order_want /
+   head_want: the echoes' order and the head for the next start. */
+static struct { volatile LONG limit, thread, speakers, by_mat; volatile unsigned long long last_tick; float spk; } XT = {16, 1, 1, 1, 0, 1.0f};
+static int order_want = 1;
+static char head_want[512];
+static int ch_want = 2;   /* the output's channels for the next start (uwst_channels) */
+/* Steam Audio's speaker layout for a channel count (2, 4, 6 or 8) */
+static IPLSpeakerLayoutType layout_for(int ch)
+{
+    return ch == 8 ? IPL_SPEAKERLAYOUTTYPE_SURROUND_7_1 : ch == 6 ? IPL_SPEAKERLAYOUTTYPE_SURROUND_5_1
+         : ch == 4 ? IPL_SPEAKERLAYOUTTYPE_QUADRAPHONIC : IPL_SPEAKERLAYOUTTYPE_STEREO;
+}
 #define PROBE_UP 0.6f        /* a probe above its tile's floor, tiles (the eye is at 0.64) */
 #define PROBE_REACH 1.0f     /* a probe's radius of influence, tiles: every place in a tile is in its own probe's */
 
@@ -76,7 +94,8 @@ static struct { volatile LONG on; float level, range, see; } P = {1, 1.0f, 24.0f
     X(iplSourceRemove) X(iplSourceSetInputs) X(iplSourceGetOutputs) \
     X(iplBinauralEffectCreate) X(iplBinauralEffectRelease) X(iplBinauralEffectReset) X(iplBinauralEffectApply) \
     X(iplDirectEffectCreate) X(iplDirectEffectRelease) X(iplDirectEffectReset) X(iplDirectEffectApply) \
-    X(iplSimulatorRunDirect)     X(iplProbeBatchCreate) X(iplProbeBatchRelease) X(iplProbeBatchAddProbe) X(iplProbeBatchCommit)     X(iplProbeBatchGetNumProbes) X(iplPathBakerBake) X(iplPathBakerCancelBake)         X(iplSimulatorAddProbeBatch) X(iplSimulatorRemoveProbeBatch) X(iplSimulatorRunPathing)     X(iplPathEffectCreate) X(iplPathEffectRelease) X(iplPathEffectReset) X(iplPathEffectApply)
+    X(iplSimulatorRunDirect)     X(iplProbeBatchCreate) X(iplProbeBatchRelease) X(iplProbeBatchAddProbe) X(iplProbeBatchCommit)     X(iplProbeBatchGetNumProbes) X(iplPathBakerBake) X(iplPathBakerCancelBake)         X(iplSimulatorAddProbeBatch) X(iplSimulatorRemoveProbeBatch) X(iplSimulatorRunPathing)     X(iplPathEffectCreate) X(iplPathEffectRelease) X(iplPathEffectReset) X(iplPathEffectApply) \
+    X(iplPanningEffectCreate) X(iplPanningEffectRelease) X(iplPanningEffectReset) X(iplPanningEffectApply)
 #define X(n) static __typeof__(n) *p_##n;
 FUNCS(X)
 #undef X
@@ -109,33 +128,47 @@ static int st_threads(void)
     return n < 1 ? 1 : n > 16 ? 16 : n;
 }
 
+/* a sound (2026-11-19: its echoes in an Echo slot of their own, below) */
 typedef struct {
-    IPLSource src;
-    IPLReflectionEffect fx;
     float *pcm;              /* the sound, mono, at the module's rate, its gain in it */
     int frames, pos;
     float p[3];
-    int state;               /* 0 free, 1 sounding, 2 its echoes ringing out */
-    int applied;             /* the audio's own: this sound has gone through the effect (there is a tail to ring out) */
+    int state;               /* 0 free, 1 sounding */
+    int slot;                /* its echoes' slot in S.e (-1: none) */
     IPLSource dsrc;          /* in the direct simulator (always added) */
     IPLDirectEffect dfx;
     IPLBinauralEffect bfx;
+    IPLPanningEffect nfx;    /* (on speakers: the sound placed by panning, not by the HRTF) */
     IPLPathEffect pfx;       /* the sound as it comes along Steam Audio's paths */
-    IPLPathEffectParams pp;  /* ... the last run's (its shCoeffs are the source's own) */
+    IPLPathEffectParams pp;  /* ... the last run's (its shCoeffs pointing at sh) */
+    float sh[16];            /* ... their directional coefficients, copied from the run (first order: 4) */
     int path_ok;             /* a pathing run has been made for this sound */
     float pgain;             /* the paths' gain at the end of the last block (eased over the next) */
     float heard[3];          /* where the sound is heard from (its place, or the opening its way round comes through) */
     float gain[3];           /* uwaudio.c's gains by band (ours) ... */
     int floor;               /* ... 1: a floor under Steam Audio's; 0: the gains themselves */
     float occ, trans[3];     /* Steam Audio's last: the share not occluded, what the surfaces between let through */
-    float echo;              /* its echoes' share of its level (1 unless told: a footstep's) */
     int rel;                 /* 1: heard from a place fixed to the listener's head (the player's own sounds) ... */
     float rel_right, rel_ahead;   /* ... this far to the right and ahead, tiles */
-    int fresh;               /* 1: a new sound since the last block (the effect's memory to be cleared) */
-    int ring;                /* blocks its echoes have rung since the sound ended */
-    int added, simulated;    /* in the simulator; a response for this sound's place exists */
+    int fresh;               /* 1: a new sound since the last block (the effects' memory to be cleared) */
     unsigned gen;            /* counts the sounds this voice has had */
 } Voice;
+/* a sound's echoes: fed by its sound while that sounds, then ringing out on their own (the sound's voice may have a
+   new sound by then) */
+typedef struct {
+    IPLSource src;
+    IPLReflectionEffect fx;
+    float p[3];              /* where its sound was */
+    int state;               /* 0 free, 1 fed by its sound, 2 ringing out */
+    int voice;               /* the sound feeding it ... */
+    unsigned vgen;           /* ... that sound's gen (a newer sound on that voice does not feed it) */
+    float echo;              /* the echoes' share of the sound's level (1 unless told: a footstep's) */
+    int applied;             /* the audio's own: it has gone through the effect (there is a tail to ring out) */
+    int fresh;               /* 1: new since the last block (the effect's memory to be cleared) */
+    int ring;                /* blocks it has rung since its sound ended */
+    int added, simulated;    /* in the simulator; a response for its place exists */
+    unsigned gen;            /* counts the sounds this slot has had */
+} Echo;
 
 static struct {
     HMODULE dll;
@@ -161,7 +194,8 @@ static struct {
     unsigned path_tick;
     unsigned path_key;       /* the level S.probes were made for (level_key) */
     CRITICAL_SECTION scene_lock;   /* the scene's change against a direct run */
-    float dry[2][UWST_FRAME];
+    float dry[UWST_MAXCH][UWST_FRAME];   /* the sounds themselves this block, a row a channel */
+    int och;                 /* the output's channels this start (2 stereo, 4, 6 or 8: uwst_channels) */
     IPLSource ear;
     int ear_added, ear_ok;   /* in the simulator; a response exists */
     float ear_at[3];         /* where it was made */
@@ -173,7 +207,11 @@ static struct {
     int ceil_mat, ndoors, have_tiles, level_dirty;
     float tile_m, lis[3], yaw;
     Voice v[UWST_VOICES];
-    float fifo[UWST_FRAME * 2];
+    Echo e[UWST_ECHOES];
+    int order, nch;          /* the echoes' ambisonic order this start, its channels ((order + 1)^2) */
+    char head[512];          /* the SOFA file this start's head is ("": Steam Audio's own) */
+    int hrtf_now;            /* the output the last block was mixed for (1 headphones' HRTF, 0 speakers) */
+    float fifo[UWST_FRAME * UWST_MAXCH];
     int fifo_at, fifo_n;
 } S;
 
@@ -329,7 +367,7 @@ static IPLStaticMesh mesh_make(IPLScene scene, const UwaTile *tiles, int ceil_ma
     for (int i = 0; i < nm; i++) {
         const UwaMaterial *u = uwacmat_get(i);
         for (int b = 0; b < 3; b++) mats[i].absorption[b] = u->absorb[b], mats[i].transmission[b] = u->transmit[b];
-        mats[i].scattering = T.scatter;
+        mats[i].scattering = XT.by_mat && u->scatter >= 0 ? u->scatter : T.scatter;   /* (2026-11-19: by material) */
     }
     for (int i = 0; i < m.nt; i++) if (m.m[i] < 0 || m.m[i] >= nm) m.m[i] = 0;
     memset(&ms, 0, sizeof ms);
@@ -342,11 +380,14 @@ static IPLStaticMesh mesh_make(IPLScene scene, const UwaTile *tiles, int ceil_ma
     return fresh;
 }
 /* the scene's mesh made again from the tiles and doors given (the simulation's thread) */
+static double st_ms(void) { LARGE_INTEGER c, f; QueryPerformanceCounter(&c), QueryPerformanceFrequency(&f); return (double)c.QuadPart * 1000.0 / (double)f.QuadPart; }
 static void scene_build(const UwaTile *tiles, int ceil_mat, const UwaDoor *doors, int nd)
 {
     int tris = 0;
+    double t0 = st_ms(), t1;
     IPLStaticMesh fresh = mesh_make(S.scene, tiles, ceil_mat, doors, nd, &tris);
     if (!fresh) return;
+    t1 = st_ms();
     EnterCriticalSection(&S.scene_lock);             /* (never under a direct run: block()) */
     if (S.mesh) p_iplStaticMeshRemove(S.mesh, S.scene), p_iplStaticMeshRelease(&S.mesh);
     S.mesh = fresh;
@@ -355,6 +396,8 @@ static void scene_build(const UwaTile *tiles, int ceil_mat, const UwaDoor *doors
     p_iplSimulatorCommit(S.dsim);
     S.tris = tris;
     LeaveCriticalSection(&S.scene_lock);
+    /* (2026-11-19: what a door's opening costs, the whole level made again; UWR_LOGLEVEL=3) */
+    RLOG_D("steam", "the level's sound shape made again: %d triangles, %.1f ms to make, %.1f ms to put in", tris, t1 - t0, st_ms() - t1);
 }
 
 /* --- Steam Audio's pathing: the level's probes and the ways between them, baked in a thread of its own --- */
@@ -553,15 +596,20 @@ static void release_all(void)
 {
     if (S.ctx) bake_stop();
     for (int i = 0; i < UWST_VOICES; i++) {
-        if (S.v[i].fx) p_iplReflectionEffectRelease(&S.v[i].fx);
-        if (S.v[i].src) p_iplSourceRelease(&S.v[i].src);
         if (S.v[i].dfx) p_iplDirectEffectRelease(&S.v[i].dfx);
         if (S.v[i].bfx) p_iplBinauralEffectRelease(&S.v[i].bfx);
+        if (S.v[i].nfx) p_iplPanningEffectRelease(&S.v[i].nfx);
         if (S.v[i].pfx) p_iplPathEffectRelease(&S.v[i].pfx);
         if (S.v[i].dsrc) p_iplSourceRelease(&S.v[i].dsrc);
         free(S.v[i].pcm);
     }
     memset(S.v, 0, sizeof S.v);
+    for (int i = 0; i < UWST_VOICES; i++) S.v[i].slot = -1;
+    for (int i = 0; i < UWST_ECHOES; i++) {
+        if (S.e[i].fx) p_iplReflectionEffectRelease(&S.e[i].fx);
+        if (S.e[i].src) p_iplSourceRelease(&S.e[i].src);
+    }
+    memset(S.e, 0, sizeof S.e);
     if (S.ctx) {
         if (S.in.data) p_iplAudioBufferFree(S.ctx, &S.in);
         if (S.amb.data) p_iplAudioBufferFree(S.ctx, &S.amb);
@@ -627,6 +675,9 @@ int uwst_init(const char *bindir, int rate)
     }
     if (!S.lock_made) InitializeCriticalSection(&S.lock), InitializeCriticalSection(&S.scene_lock), S.lock_made = 1;
     S.rate = rate, S.ir_s = T.length, S.irsize = (int)(S.ir_s * rate);
+    S.order = order_want == 2 ? 2 : 1, S.nch = (S.order + 1) * (S.order + 1);
+    snprintf(S.head, sizeof S.head, "%s", head_want);
+    S.och = ch_want;
     if (S.tile_m <= 0.1f) S.tile_m = 2.4f;
     memset(&cs, 0, sizeof cs);
     cs.version = STEAMAUDIO_VERSION, cs.simdLevel = IPL_SIMDLEVEL_AVX2;
@@ -634,13 +685,13 @@ int uwst_init(const char *bindir, int rate)
     ss.type = IPL_SCENETYPE_DEFAULT;
     memset(&sim, 0, sizeof sim);
     sim.flags = IPL_SIMULATIONFLAGS_REFLECTIONS, sim.sceneType = IPL_SCENETYPE_DEFAULT, sim.reflectionType = IPL_REFLECTIONEFFECTTYPE_CONVOLUTION;
-    sim.maxNumOcclusionSamples = 16, sim.maxNumRays = 8192, sim.numDiffuseSamples = 32, sim.maxDuration = S.ir_s, sim.maxOrder = 1;
-    sim.maxNumSources = UWST_VOICES + 1, sim.numThreads = 2, sim.rayBatchSize = 1, sim.numVisSamples = 1;
+    sim.maxNumOcclusionSamples = 16, sim.maxNumRays = 8192, sim.numDiffuseSamples = 32, sim.maxDuration = S.ir_s, sim.maxOrder = S.order;
+    sim.maxNumSources = UWST_ECHOES + 1, sim.numThreads = 2, sim.rayBatchSize = 1, sim.numVisSamples = 1;
     sim.numThreads = st_threads();
     sim.samplingRate = rate, sim.frameSize = UWST_FRAME;
     memset(&hs, 0, sizeof hs);
     hs.type = IPL_HRTFTYPE_DEFAULT, hs.volume = 1.0f, hs.normType = IPL_HRTFNORMTYPE_NONE;
-    rs.type = IPL_REFLECTIONEFFECTTYPE_CONVOLUTION, rs.irSize = S.irsize, rs.numChannels = 4;
+    rs.type = IPL_REFLECTIONEFFECTTYPE_CONVOLUTION, rs.irSize = S.irsize, rs.numChannels = S.nch;
     if (p_iplContextCreate(&cs, &S.ctx) != IPL_STATUS_SUCCESS) why = "iplContextCreate failed";
     if (!why && st_fast) {
         if (!p_iplEmbreeDeviceCreate) *(FARPROC *)&p_iplEmbreeDeviceCreate = GetProcAddress(S.dll, "iplEmbreeDeviceCreate");
@@ -656,21 +707,36 @@ int uwst_init(const char *bindir, int rate)
     if (why) ;
     else if (p_iplSceneCreate(S.ctx, &ss, &S.scene) != IPL_STATUS_SUCCESS) why = "no scene";
     else if (p_iplSimulatorCreate(S.ctx, &sim, &S.sim) != IPL_STATUS_SUCCESS) why = "no simulator";
-    else if (p_iplHRTFCreate(S.ctx, &au, &hs, &S.hrtf) != IPL_STATUS_SUCCESS) why = "no HRTF";
+    else {
+        /* (2026-11-19) the head: a SOFA file's when one is asked for (its loudness evened out by RMS, as measured heads
+           differ), else, or when it cannot be read, Steam Audio's own */
+        if (S.head[0]) {
+            IPLHRTFSettings sofa = hs;
+            sofa.type = IPL_HRTFTYPE_SOFA, sofa.sofaFileName = S.head, sofa.normType = IPL_HRTFNORMTYPE_RMS;
+            IPLerror herr = p_iplHRTFCreate(S.ctx, &au, &sofa, &S.hrtf);
+            if (herr != IPL_STATUS_SUCCESS) {
+                RLOG_W("steam", "the head %s could not be read (%d): Steam Audio's own head instead", S.head, (int)herr);
+                S.hrtf = NULL, S.head[0] = 0;
+            }
+        }
+        if (!S.hrtf && p_iplHRTFCreate(S.ctx, &au, &hs, &S.hrtf) != IPL_STATUS_SUCCESS) why = "no HRTF";
+    }
+    if (why) ;
     else if (p_iplReflectionMixerCreate(S.ctx, &au, &rs, &S.mixer) != IPL_STATUS_SUCCESS) why = "no reflection mixer";
     if (!why) {
         memset(&ds, 0, sizeof ds);
-        ds.speakerLayout.type = IPL_SPEAKERLAYOUTTYPE_STEREO, ds.hrtf = S.hrtf, ds.maxOrder = 1;
+        ds.speakerLayout.type = layout_for(S.och), ds.hrtf = S.hrtf, ds.maxOrder = S.order;
         if (p_iplAmbisonicsDecodeEffectCreate(S.ctx, &au, &ds, &S.decode) != IPL_STATUS_SUCCESS) why = "no ambisonics decoder";
         else if (p_iplAudioBufferAllocate(S.ctx, 1, UWST_FRAME, &S.in) != IPL_STATUS_SUCCESS ||
-                 p_iplAudioBufferAllocate(S.ctx, 4, UWST_FRAME, &S.amb) != IPL_STATUS_SUCCESS ||
-                 p_iplAudioBufferAllocate(S.ctx, 2, UWST_FRAME, &S.out) != IPL_STATUS_SUCCESS) why = "no audio buffers";
+                 p_iplAudioBufferAllocate(S.ctx, S.nch, UWST_FRAME, &S.amb) != IPL_STATUS_SUCCESS ||
+                 p_iplAudioBufferAllocate(S.ctx, S.och, UWST_FRAME, &S.out) != IPL_STATUS_SUCCESS) why = "no audio buffers";
     }
-    for (int i = 0; i < UWST_VOICES && !why; i++) {
+    for (int i = 0; i < UWST_ECHOES && !why; i++) {   /* (the echoes' slots) */
         IPLSourceSettings so = {IPL_SIMULATIONFLAGS_REFLECTIONS};
-        if (p_iplSourceCreate(S.sim, &so, &S.v[i].src) != IPL_STATUS_SUCCESS) why = "no source";
-        else if (p_iplReflectionEffectCreate(S.ctx, &au, &rs, &S.v[i].fx) != IPL_STATUS_SUCCESS) why = "no reflection effect";
+        if (p_iplSourceCreate(S.sim, &so, &S.e[i].src) != IPL_STATUS_SUCCESS) why = "no source";
+        else if (p_iplReflectionEffectCreate(S.ctx, &au, &rs, &S.e[i].fx) != IPL_STATUS_SUCCESS) why = "no reflection effect";
     }
+    for (int i = 0; i < UWST_VOICES; i++) S.v[i].slot = -1;
     if (!why) {
         IPLSourceSettings so = {IPL_SIMULATIONFLAGS_REFLECTIONS};
         if (p_iplSourceCreate(S.sim, &so, &S.ear) != IPL_STATUS_SUCCESS) why = "no source";
@@ -681,8 +747,11 @@ int uwst_init(const char *bindir, int rate)
         IPLBinauralEffectSettings be = {S.hrtf};
         IPLSourceSettings so = {IPL_SIMULATIONFLAGS_DIRECT | IPL_SIMULATIONFLAGS_PATHING};
         IPLPathEffectSettings pe;
+        IPLPanningEffectSettings pn;
+        memset(&pn, 0, sizeof pn);
+        pn.speakerLayout.type = layout_for(S.och);
         memset(&pe, 0, sizeof pe);
-        pe.maxOrder = 1, pe.spatialize = IPL_TRUE, pe.speakerLayout.type = IPL_SPEAKERLAYOUTTYPE_STEREO, pe.hrtf = S.hrtf;
+        pe.maxOrder = 1, pe.spatialize = IPL_TRUE, pe.speakerLayout.type = layout_for(S.och), pe.hrtf = S.hrtf;
         memset(&ds2, 0, sizeof ds2);
         ds2.flags = IPL_SIMULATIONFLAGS_DIRECT | IPL_SIMULATIONFLAGS_PATHING, ds2.sceneType = st_scene_type, ds2.reflectionType = IPL_REFLECTIONEFFECTTYPE_CONVOLUTION;
         ds2.maxNumOcclusionSamples = 64, ds2.maxNumRays = 256, ds2.numDiffuseSamples = 8, ds2.maxDuration = 0.5f, ds2.maxOrder = 1;
@@ -691,13 +760,14 @@ int uwst_init(const char *bindir, int rate)
         if (p_iplSimulatorCreate(S.ctx, &ds2, &S.dsim) != IPL_STATUS_SUCCESS) why = "no direct simulator";
         else if (p_iplAudioBufferAllocate(S.ctx, 1, UWST_FRAME, &S.din) != IPL_STATUS_SUCCESS ||
                  p_iplAudioBufferAllocate(S.ctx, 1, UWST_FRAME, &S.dmono) != IPL_STATUS_SUCCESS ||
-                 p_iplAudioBufferAllocate(S.ctx, 2, UWST_FRAME, &S.bin) != IPL_STATUS_SUCCESS ||
-                 p_iplAudioBufferAllocate(S.ctx, 2, UWST_FRAME, &S.pbin) != IPL_STATUS_SUCCESS) why = "no audio buffers";
+                 p_iplAudioBufferAllocate(S.ctx, S.och, UWST_FRAME, &S.bin) != IPL_STATUS_SUCCESS ||
+                 p_iplAudioBufferAllocate(S.ctx, S.och, UWST_FRAME, &S.pbin) != IPL_STATUS_SUCCESS) why = "no audio buffers";
         for (int i = 0; i < UWST_VOICES && !why; i++) {
             if (p_iplSourceCreate(S.dsim, &so, &S.v[i].dsrc) != IPL_STATUS_SUCCESS) why = "no direct source";
             else if (p_iplDirectEffectCreate(S.ctx, &au, &de, &S.v[i].dfx) != IPL_STATUS_SUCCESS) why = "no direct effect";
             else if (p_iplBinauralEffectCreate(S.ctx, &au, &be, &S.v[i].bfx) != IPL_STATUS_SUCCESS) why = "no binaural effect";
             else if (p_iplPathEffectCreate(S.ctx, &au, &pe, &S.v[i].pfx) != IPL_STATUS_SUCCESS) why = "no path effect";
+            else if (p_iplPanningEffectCreate(S.ctx, &au, &pn, &S.v[i].nfx) != IPL_STATUS_SUCCESS) why = "no panning effect";
             else p_iplSourceAdd(S.v[i].dsrc, S.dsim);
         }
     }
@@ -714,6 +784,8 @@ int uwst_init(const char *bindir, int rate)
     S.on = 1;
     fprintf(stderr, "fx: acoustics high on (Steam Audio %d.%d.%d, %s's rays, %d threads)\n", STEAMAUDIO_VERSION_MAJOR, STEAMAUDIO_VERSION_MINOR, STEAMAUDIO_VERSION_PATCH,
             st_scene_type == IPL_SCENETYPE_EMBREE ? "Embree" : "Steam Audio", sim.numThreads);
+    RLOG_I("steam", "%d sounds, echoes for %d of them at once (order %d, %d channels); the head: %s; out to %s", UWST_VOICES, (int)XT.limit,
+           S.order, S.nch, uwst_head_now(), S.och == 8 ? "7.1 speakers" : S.och == 6 ? "5.1 speakers" : S.och == 4 ? "4 speakers" : "stereo");
     return 1;
 }
 
@@ -787,6 +859,43 @@ void uwst_frames(int on)
     S.level_dirty = S.have_tiles;
     LeaveCriticalSection(&S.lock);
 }
+void uwst_echo_voices(int n) { InterlockedExchange(&XT.limit, n < 1 ? 1 : n > UWST_ECHOES ? UWST_ECHOES : n); }
+void uwst_direct_thread(int on) { InterlockedExchange(&XT.thread, on != 0); }
+void uwst_speakers(int on) { InterlockedExchange(&XT.speakers, on != 0); }
+int uwst_direct_for(int hrtf) { return S.on && D.on && (hrtf || XT.speakers); }
+void uwst_speaker_level(float ratio) { XT.spk = ratio < 0 ? 0 : ratio > 8.0f ? 8.0f : ratio; }
+int uwst_channels(int n)
+{
+    ch_want = n == 4 || n == 6 || n == 8 ? n : 2;
+    return S.on && ch_want != S.och;
+}
+int uwst_channels_now(void) { return S.on ? S.och : ch_want; }
+int uwst_order(int order)
+{
+    order_want = order == 2 ? 2 : 1;
+    return S.on && order_want != S.order;
+}
+int uwst_head(const char *sofa_path)
+{
+    snprintf(head_want, sizeof head_want, "%s", sofa_path ? sofa_path : "");
+    return S.on && strcmp(head_want, S.head) != 0;
+}
+int uwst_restart_wanted(void) { return S.on && (order_want != S.order || strcmp(head_want, S.head) != 0); }
+const char *uwst_head_now(void)
+{
+    const char *h = S.on ? S.head : head_want, *b = h;
+    for (const char *c = h; *c; c++) if (*c == '\\' || *c == '/') b = c + 1;
+    return *b ? b : "Steam Audio's own";
+}
+void uwst_scatter_by_mat(int on)
+{
+    if ((on != 0) == (XT.by_mat != 0)) return;
+    InterlockedExchange(&XT.by_mat, on != 0);
+    if (!S.on) return;
+    EnterCriticalSection(&S.lock);
+    S.level_dirty = S.have_tiles;
+    LeaveCriticalSection(&S.lock);
+}
 void uwst_direct_mode(int on, int steam_occlusion, float radius_m, int samples, int rays)
 {
     InterlockedExchange(&D.on, on != 0), InterlockedExchange(&D.occl, steam_occlusion != 0);
@@ -811,9 +920,11 @@ int uwst_pathing_heard(int voice, float eq[3], float sh[4])
 {
     int ok;
     if (!S.on || voice < 0 || voice >= UWST_VOICES) return 0;
-    ok = S.v[voice].path_ok && S.v[voice].pp.shCoeffs != NULL;
+    EnterCriticalSection(&S.lock);
+    ok = S.v[voice].path_ok;
     for (int k = 0; k < 3; k++) eq[k] = ok ? S.v[voice].pp.eqCoeffs[k] : 0;
-    for (int k = 0; k < 4; k++) sh[k] = ok ? S.v[voice].pp.shCoeffs[k] : 0;
+    for (int k = 0; k < 4; k++) sh[k] = ok ? S.v[voice].sh[k] : 0;
+    LeaveCriticalSection(&S.lock);
     return ok;
 }
 void uwst_relative(int voice, float right, float ahead)
@@ -827,7 +938,10 @@ void uwst_echo(int voice, float share)
 {
     if (!S.on || voice < 0 || voice >= UWST_VOICES) return;
     EnterCriticalSection(&S.lock);
-    S.v[voice].echo = share < 0 ? 0 : share;
+    {
+        int s = S.v[voice].slot;
+        if (s >= 0 && S.e[s].voice == voice && S.e[s].vgen == S.v[voice].gen) S.e[s].echo = share < 0 ? 0 : share;
+    }
     LeaveCriticalSection(&S.lock);
 }
 void uwst_direct(int voice, const float heard[3], const float gain[3], int floor)
@@ -853,8 +967,8 @@ void uwst_listener(float x, float y, float z, float yaw)
     S.lis[0] = x, S.lis[1] = y, S.lis[2] = z, S.yaw = yaw;
     LeaveCriticalSection(&S.lock);
 }
-/* a sound starts at (x, y, z): its samples to the module's rate with its gain in them, on a free voice (else the
-   one rung out longest); the voice, or -1 */
+/* a sound starts at (x, y, z): its samples to the module's rate with its gain in them, on a free voice; its echoes
+   on a free slot of the first XT.limit (else the one rung out longest; none when all are fed); the voice, or -1 */
 int uwst_begin(float x, float y, float z, const short *mono, int frames, int rate, float gain)
 {
     int k = -1, n;
@@ -876,33 +990,53 @@ int uwst_begin(float x, float y, float z, const short *mono, int frames, int rat
     }
     EnterCriticalSection(&S.lock);
     for (int i = 0; i < UWST_VOICES && k < 0; i++) if (!S.v[i].state) k = i;
-    /* none free (a walk's footsteps, each ringing some 3 s, can hold six of the eight, and the sounds after them
-       would have no echoes): the one whose echoes have rung out longest gives way */
-    for (int i = 0; i < UWST_VOICES && k < 0; i++) if (S.v[i].state == 2) k = i;
-    for (int i = 0; i < UWST_VOICES && k >= 0 && S.v[k].state == 2; i++) if (S.v[i].state == 2 && S.v[i].ring > S.v[k].ring) k = i;
     if (k >= 0) {
         Voice *v = &S.v[k];
-        v->ring = 0;
+        int s = -1, lim = (int)XT.limit;
         free(v->pcm);
         v->pcm = pcm, v->frames = n, v->pos = 0, v->p[0] = x, v->p[1] = y, v->p[2] = z;
-        v->state = 1, v->fresh = 1, v->simulated = 0, v->gen++;
+        v->state = 1, v->fresh = 1, v->gen++, v->slot = -1;
         v->heard[0] = x, v->heard[1] = y, v->heard[2] = z, v->gain[0] = v->gain[1] = v->gain[2] = 0, v->floor = 1;
-        v->occ = 1, v->trans[0] = v->trans[1] = v->trans[2] = 1, v->echo = 1, v->rel = 0, v->path_ok = 0;
+        v->occ = 1, v->trans[0] = v->trans[1] = v->trans[2] = 1, v->rel = 0, v->path_ok = 0;
+        /* its echoes: a free slot, else the one whose echoes have rung out longest (a walk's footsteps ring some
+           3 s each); with every slot fed by a sound, none */
+        for (int i = 0; i < lim && s < 0; i++) if (!S.e[i].state) s = i;
+        for (int i = 0; i < lim && s < 0; i++) if (S.e[i].state == 2) s = i;
+        for (int i = 0; i < lim && s >= 0 && S.e[s].state == 2; i++) if (S.e[i].state == 2 && S.e[i].ring > S.e[s].ring) s = i;
+        if (s >= 0) {
+            Echo *e = &S.e[s];
+            e->state = 1, e->voice = k, e->vgen = v->gen, e->echo = 1, e->fresh = 1, e->simulated = 0, e->ring = 0, e->gen++;
+            memcpy(e->p, v->p, sizeof e->p);
+            v->slot = s;
+        } else {
+            static int said;
+            if (!said++) RLOG_I("steam", "every echo slot fed by a sound: a new sound plays without echoes (%d slots in use)", lim);
+        }
     }
     LeaveCriticalSection(&S.lock);
     if (k < 0) {
         static int said;
         free(pcm);
-        if (!said++) RLOG_W("steam", "every voice sounding: a new sound gets no echoes (%d voices)", UWST_VOICES);
+        if (!said++) RLOG_W("steam", "every voice sounding: a new sound is not Steam Audio's (%d voices)", UWST_VOICES);
     }
     return k;
+}
+/* a voice's sound over (cut, or at its end; under S.lock): the voice free, its echoes ringing out */
+static void voice_over(int i)
+{
+    Voice *v = &S.v[i];
+    if (v->slot >= 0) {
+        Echo *e = &S.e[v->slot];
+        if (e->voice == i && e->vgen == v->gen && e->state == 1) e->state = 2, e->ring = 0;
+    }
+    v->state = 0, v->slot = -1;
 }
 /* the voice's sound cut: its echoes ring out */
 void uwst_end(int voice)
 {
     if (!S.on || voice < 0 || voice >= UWST_VOICES) return;
     EnterCriticalSection(&S.lock);
-    if (S.v[voice].state == 1) S.v[voice].state = 2, S.v[voice].ring = 0;
+    if (S.v[voice].state == 1) voice_over(voice);
     LeaveCriticalSection(&S.lock);
 }
 
@@ -915,9 +1049,9 @@ void uwst_simulate(void)
     static UwaTile tiles[N * N];
     static UwaDoor doors[128];
     IPLSimulationSharedInputs sh;
-    float lis[3], yaw, place[UWST_VOICES][3];
-    unsigned gen[UWST_VOICES];
-    int live[UWST_VOICES], dirty, nd, ceil_mat, any = 0, ear = (int)T.ear, stale;
+    float lis[3], yaw, place[UWST_ECHOES][3];
+    unsigned gen[UWST_ECHOES];
+    int live[UWST_ECHOES], dirty, nd, ceil_mat, any = 0, ear = (int)T.ear, stale;
     if (!S.on) return;
     EnterCriticalSection(&S.lock);
     dirty = S.level_dirty, S.level_dirty = 0, nd = S.ndoors, ceil_mat = S.ceil_mat;
@@ -925,7 +1059,7 @@ void uwst_simulate(void)
     memcpy(lis, S.lis, sizeof lis), yaw = S.yaw;
     /* (a voice ringing out leaves the simulation, its tail needs no new response: a walk keeps the two or three
        voices still sounding live, not the six that ring, each adding to every run's time) */
-    for (int i = 0; i < UWST_VOICES; i++) live[i] = S.v[i].state == 1, any |= live[i], gen[i] = S.v[i].gen, memcpy(place[i], S.v[i].p, sizeof place[i]);
+    for (int i = 0; i < UWST_ECHOES; i++) live[i] = S.e[i].state == 1, any |= live[i], gen[i] = S.e[i].gen, memcpy(place[i], S.e[i].p, sizeof place[i]);
     stale = !S.ear_ok || (lis[0] - S.ear_at[0]) * (lis[0] - S.ear_at[0]) + (lis[1] - S.ear_at[1]) * (lis[1] - S.ear_at[1]) +
             (lis[2] - S.ear_at[2]) * (lis[2] - S.ear_at[2]) > 0.0625f;
     LeaveCriticalSection(&S.lock);
@@ -933,8 +1067,8 @@ void uwst_simulate(void)
     path_service(tiles, doors, nd, ceil_mat, dirty);
     if (dirty) InterlockedExchange(&path_hold, 0);   /* (the new level's tiles are in: its own probes decide from here) */
     if (!S.tris) return;                             /* no level yet: nothing to ring in */
-    for (int i = 0; i < UWST_VOICES; i++) {
-        Voice *v = &S.v[i];
+    for (int i = 0; i < UWST_ECHOES; i++) {
+        Echo *v = &S.e[i];
         if (live[i] && !v->added) p_iplSourceAdd(v->src, S.sim), v->added = 1;
         if (!live[i] && v->added) p_iplSourceRemove(v->src, S.sim), v->added = 0;
         if (live[i]) {
@@ -968,14 +1102,14 @@ void uwst_simulate(void)
     }
     memset(&sh, 0, sizeof sh);
     sh.listener = space_at(lis, yaw);
-    sh.numRays = (int)q_rays, sh.numBounces = (int)q_bounces, sh.duration = S.ir_s, sh.order = 1, sh.irradianceMinDistance = 1.0f;
+    sh.numRays = (int)q_rays, sh.numBounces = (int)q_bounces, sh.duration = S.ir_s, sh.order = S.order, sh.irradianceMinDistance = 1.0f;
     p_iplSimulatorSetSharedInputs(S.sim, IPL_SIMULATIONFLAGS_REFLECTIONS, &sh);
     p_iplSimulatorCommit(S.sim);
     if (!any && !(ear && (stale || dirty))) return;  /* nothing sounds and the listener's response stands: no rays */
     p_iplSimulatorRunReflections(S.sim);
     EnterCriticalSection(&S.lock);
-    for (int i = 0; i < UWST_VOICES; i++)
-        if (live[i] && S.v[i].gen == gen[i]) S.v[i].simulated = 1;   /* (a newer sound on the voice waits for its own run) */
+    for (int i = 0; i < UWST_ECHOES; i++)
+        if (live[i] && S.e[i].gen == gen[i]) S.e[i].simulated = 1;   /* (a newer sound on the slot waits for its own run) */
     if (ear) S.ear_ok = 1, memcpy(S.ear_at, lis, sizeof S.ear_at);
     LeaveCriticalSection(&S.lock);
 }
@@ -1059,13 +1193,31 @@ static void direct_run(const float lis[3], float yaw)
                 if (S.v[i].state == 1 && S.v[i].gen == gen[i]) {
                     S.v[i].occ = out.direct.occlusion;
                     for (int k = 0; k < 3; k++) S.v[i].trans[k] = out.direct.transmission[k];
-                    if (paths) S.v[i].pp = out.pathing, S.v[i].path_ok = 1;
+                    if (paths) {   /* (copied: the run's own memory is written again by the next run, on another thread) */
+                        S.v[i].pp = out.pathing;
+                        if (out.pathing.shCoeffs) memcpy(S.v[i].sh, out.pathing.shCoeffs, sizeof(float) * 4);
+                        S.v[i].pp.shCoeffs = S.v[i].sh, S.v[i].path_ok = out.pathing.shCoeffs != NULL;
+                    }
                 }
                 LeaveCriticalSection(&S.lock);
             }
         }
     }
     LeaveCriticalSection(&S.scene_lock);
+}
+/* the muffling's and the paths' sums, on the caller's thread of its own (2026-11-19: they took 2.3 to 2.5 ms of
+   every 10.7 ms block in the mixing, on the thread that must not be late) */
+void uwst_direct_tick(void)
+{
+    float lis[3], yaw;
+    int hrtf;
+    if (!S.on || !XT.thread) return;
+    XT.last_tick = GetTickCount64();
+    if (!D.on || !D.occl) return;
+    EnterCriticalSection(&S.lock);
+    memcpy(lis, S.lis, sizeof lis), yaw = S.yaw, hrtf = S.hrtf_now;
+    LeaveCriticalSection(&S.lock);
+    if (hrtf || XT.speakers) direct_run(lis, yaw);
 }
 /* one block: every voice's next samples through its response into the mixer, the mixer decoded into S.out; with the
    sound itself Steam Audio's (D.on, and a listener on headphones: hrtf), every sounding voice's samples through its
@@ -1075,14 +1227,16 @@ static int block(int hrtf)
     IPLReflectionEffectParams mp;
     IPLAmbisonicsDecodeEffectParams dp;
     float lis0[3] = {0, 0, 0}, lis[3], yaw;
-    int busy = 0, direct = D.on && hrtf;
+    if (S.och != 2) hrtf = 0;                    /* (binaural is for two ears: surround speakers are panned) */
+    int busy = 0, direct = D.on && (hrtf || XT.speakers);   /* (2026-11-19: on speakers too, panned) */
     memset(&mp, 0, sizeof mp);
-    mp.type = IPL_REFLECTIONEFFECTTYPE_CONVOLUTION, mp.numChannels = 4, mp.irSize = S.irsize;
+    mp.type = IPL_REFLECTIONEFFECTTYPE_CONVOLUTION, mp.numChannels = S.nch, mp.irSize = S.irsize;
     EnterCriticalSection(&S.lock);
-    yaw = S.yaw, memcpy(lis, S.lis, sizeof lis);
+    yaw = S.yaw, memcpy(lis, S.lis, sizeof lis), S.hrtf_now = hrtf;
     LeaveCriticalSection(&S.lock);
     memset(S.dry, 0, sizeof S.dry);
-    if (direct && D.occl) direct_run(lis, yaw);
+    /* the muffling's and the paths' sums: uwst_direct_tick's, unless no tick has come for 100 ms */
+    if (direct && D.occl && (!XT.thread || GetTickCount64() - XT.last_tick > 100)) direct_run(lis, yaw);
     {   /* UWPORT_DIRECT_LOG=1 (the checks, for a sound that cuts out): every
            24 blocks (about a quarter second) the listener and each sounding voice's direct numbers */
         static int dl = -1, tick;
@@ -1097,69 +1251,119 @@ static int block(int hrtf)
             LeaveCriticalSection(&S.lock);
         }
     }
-    for (int i = 0; i < UWST_VOICES; i++) {
-        Voice *v = &S.v[i];
+    /* the echoes: each slot fed by its sound's next samples while that sounds (before the sounds below move on),
+       then its tail */
+    for (int i = 0; i < UWST_ECHOES; i++) {
+        Echo *e = &S.e[i];
         IPLSimulationOutputs out;
-        int state, simulated, fresh, pos, frames, by_ear, floor, n = 0;
-        float *pcm, heard[3], gain[3];
+        int state, simulated, fresh, by_ear;
         EnterCriticalSection(&S.lock);
-        state = v->state, simulated = v->simulated, fresh = v->fresh, pos = v->pos, frames = v->frames, pcm = v->pcm;
+        state = e->state, simulated = e->simulated, fresh = e->fresh, e->fresh = 0;
         by_ear = !simulated && S.ear_ok && T.ear;   /* its own response not made yet: the listener's place's */
-        memcpy(heard, v->heard, sizeof heard), memcpy(gain, v->gain, sizeof gain), floor = v->floor;
-        if (v->rel) {   /* fixed to the head: it walks and turns with the listener (ours: yaw 0 looks north, +z) */
-            heard[0] = lis[0] + cosf(yaw) * v->rel_right + sinf(yaw) * v->rel_ahead, heard[1] = lis[1];
-            heard[2] = lis[2] - sinf(yaw) * v->rel_right + cosf(yaw) * v->rel_ahead;
-        }
-        v->fresh = 0;
         if (state == 1) {
-            n = frames - pos < UWST_FRAME ? frames - pos : UWST_FRAME;
+            const Voice *v = &S.v[e->voice];
             memset(S.in.data[0], 0, sizeof(float) * UWST_FRAME);
-            memset(S.din.data[0], 0, sizeof(float) * UWST_FRAME);
-            if (n > 0 && (simulated || by_ear)) {    /* (with no response at all: silence, in step) */
-                memcpy(S.in.data[0], pcm + pos, sizeof(float) * (size_t)n);
-                if (v->echo != 1.0f) for (int k = 0; k < n; k++) S.in.data[0][k] *= v->echo;
-            }
-            if (n > 0 && direct) memcpy(S.din.data[0], pcm + pos, sizeof(float) * (size_t)n);
-            v->pos = pos + UWST_FRAME;
-            if (v->pos >= frames) v->state = 2, v->ring = 0;
-        } else if (state == 2) v->ring++;
+            if (v->state == 1 && v->gen == e->vgen) {
+                int n = v->frames - v->pos < UWST_FRAME ? v->frames - v->pos : UWST_FRAME;
+                if (n > 0 && (simulated || by_ear)) {    /* (with no response at all: silence, in step) */
+                    memcpy(S.in.data[0], v->pcm + v->pos, sizeof(float) * (size_t)n);
+                    if (e->echo != 1.0f) for (int k = 0; k < n; k++) S.in.data[0][k] *= e->echo;
+                }
+                if (v->pos + UWST_FRAME >= v->frames) e->state = 2, e->ring = 0;   /* (this block has its last) */
+            } else e->state = 2, e->ring = 0;           /* (its sound was cut) */
+        } else if (state == 2) e->ring++;
         LeaveCriticalSection(&S.lock);
         if (!state) continue;
         busy++;
-        if (fresh) p_iplReflectionEffectReset(v->fx), p_iplDirectEffectReset(v->dfx), p_iplBinauralEffectReset(v->bfx), p_iplPathEffectReset(v->pfx), v->applied = 0;
-        if (state == 1 && direct && n > 0) {         /* the sound itself */
+        if (fresh) p_iplReflectionEffectReset(e->fx), e->applied = 0;
+        if (state == 1) {
+            if (!simulated && !by_ear) continue;     /* nothing to ring with yet */
+            memset(&out, 0, sizeof out);
+            p_iplSourceGetOutputs(by_ear ? S.ear : e->src, IPL_SIMULATIONFLAGS_REFLECTIONS, &out);
+            if (!out.reflections.ir) continue;
+            out.reflections.type = IPL_REFLECTIONEFFECTTYPE_CONVOLUTION, out.reflections.numChannels = S.nch, out.reflections.irSize = S.irsize;
+            p_iplReflectionEffectApply(e->fx, &out.reflections, &S.in, &S.amb, S.mixer);
+            e->applied = 1;
+        } else if (!e->applied || p_iplReflectionEffectGetTail(e->fx, &S.amb, S.mixer) == IPL_AUDIOEFFECTSTATE_TAILCOMPLETE) {
+            /* (a cut sound that never went through the effect has no tail) */
+            EnterCriticalSection(&S.lock);
+            if (e->state == 2) e->state = 0;         /* rung out: the slot is free */
+            LeaveCriticalSection(&S.lock);
+        }
+    }
+    /* the sounds themselves */
+    for (int i = 0; i < UWST_VOICES; i++) {
+        Voice *v = &S.v[i];
+        int state, fresh, floor, rel, path_ok, n = 0;
+        float heard[3], gain[3], p[3], occ, trans[3], sh[16];
+        IPLPathEffectParams pp;
+        EnterCriticalSection(&S.lock);
+        state = v->state, fresh = v->fresh, v->fresh = 0;
+        if (state == 1) {
+            n = v->frames - v->pos < UWST_FRAME ? v->frames - v->pos : UWST_FRAME;
+            memset(S.din.data[0], 0, sizeof(float) * UWST_FRAME);
+            if (n > 0 && direct) memcpy(S.din.data[0], v->pcm + v->pos, sizeof(float) * (size_t)n);
+            memcpy(heard, v->heard, sizeof heard), memcpy(gain, v->gain, sizeof gain), memcpy(p, v->p, sizeof p), floor = v->floor;
+            occ = v->occ, memcpy(trans, v->trans, sizeof trans), rel = v->rel, path_ok = v->path_ok;
+            pp = v->pp, memcpy(sh, v->sh, sizeof sh), pp.shCoeffs = sh;
+            if (rel) {   /* fixed to the head: it walks and turns with the listener (ours: yaw 0 looks north, +z) */
+                heard[0] = lis[0] + cosf(yaw) * v->rel_right + sinf(yaw) * v->rel_ahead, heard[1] = lis[1];
+                heard[2] = lis[2] - sinf(yaw) * v->rel_right + cosf(yaw) * v->rel_ahead;
+            }
+            v->pos += UWST_FRAME;
+            if (v->pos >= v->frames) voice_over(i);
+        }
+        LeaveCriticalSection(&S.lock);
+        if (state != 1) continue;
+        busy++;
+        if (fresh) p_iplDirectEffectReset(v->dfx), p_iplBinauralEffectReset(v->bfx), p_iplPanningEffectReset(v->nfx), p_iplPathEffectReset(v->pfx);
+        if (direct && n > 0) {                       /* the sound itself */
             IPLDirectEffectParams de;
-            IPLBinauralEffectParams be;
             /* Steam Audio's paths for this sound (the last direct run made them): our own way round a corner stands
                back, the sound's straight share comes from its own place and the rest along the paths */
-            int paths = D.occl && S.path_ran && v->path_ok && v->pp.shCoeffs && !v->rel;
-            if (paths) memcpy(heard, v->p, sizeof heard), floor = 0;
+            int paths = D.occl && S.path_ran && path_ok && !rel;
+            if (paths) memcpy(heard, p, sizeof heard), floor = 0;
             float d[3] = {heard[0] - lis[0], heard[1] - lis[1], heard[2] - lis[2]}, l = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
-            memset(&de, 0, sizeof de), memset(&be, 0, sizeof be);
+            float lvl = hrtf ? 1.0f : XT.spk;        /* (on speakers: the makeups' ratio, uwaudio.c) */
+            memset(&de, 0, sizeof de);
             de.flags = IPL_DIRECTEFFECTFLAGS_APPLYOCCLUSION | IPL_DIRECTEFFECTFLAGS_APPLYTRANSMISSION;
             de.transmissionType = IPL_TRANSMISSIONTYPE_FREQDEPENDENT;
             de.occlusion = 0;                        /* (all of it by the three bands below) */
             for (int k = 0; k < 3; k++) {
-                float g = D.occl ? v->occ + (1.0f - v->occ) * v->trans[k] : gain[k];
+                float g = D.occl ? occ + (1.0f - occ) * trans[k] : gain[k];
                 if (D.occl && floor && gain[k] > g) g = gain[k];   /* (the way round a corner, ours: never quieter than that) */
                 /* (a sound fixed to the head is the player's own, placed a third of a tile ahead; facing a wall
                    nearer than that the place is in the rock and the step would come 39 dB down
                    (work\steptwitch\steptest.c). Nothing stands between the player and their own sound:
                    uwaudio.c's own filters never muffle it either, AC.here.) */
-                if (v->rel) g = 1.0f;
+                if (rel) g = 1.0f;
                 de.transmission[k] = g < 0 ? 0 : g > 1 ? 1 : g;
             }
             p_iplDirectEffectApply(v->dfx, &de, &S.din, &S.dmono);
             /* the direction in the listener's own frame (x right, y up, -z ahead; ours: yaw 0 looks north, +z) */
-            if (l > 0.05f) {
-                float ax = sinf(yaw), az = cosf(yaw);
-                be.direction.x = (d[0] * az - d[2] * ax) / l, be.direction.y = d[1] / l, be.direction.z = -(d[0] * ax + d[2] * az) / l;
-                be.spatialBlend = 1.0f;
-            } else be.direction.x = 0, be.direction.y = 0, be.direction.z = -1.0f, be.spatialBlend = 0;   /* at the listener: in the head */
-            be.interpolation = IPL_HRTFINTERPOLATION_BILINEAR, be.hrtf = S.hrtf;
-            p_iplBinauralEffectApply(v->bfx, &be, &S.dmono, &S.bin);
-            for (int c = 0; c < 2; c++)
-                for (int k = 0; k < UWST_FRAME; k++) S.dry[c][k] += S.bin.data[c][k];
+            {
+                IPLVector3 dir = {0, 0, -1.0f};
+                float blend = 0;
+                if (l > 0.05f) {
+                    float ax = sinf(yaw), az = cosf(yaw);
+                    dir.x = (d[0] * az - d[2] * ax) / l, dir.y = d[1] / l, dir.z = -(d[0] * ax + d[2] * az) / l;
+                    blend = 1.0f;
+                }
+                if (hrtf) {
+                    IPLBinauralEffectParams be;
+                    memset(&be, 0, sizeof be);
+                    be.direction = dir, be.spatialBlend = blend;   /* (at the listener, blend 0: in the head) */
+                    be.interpolation = IPL_HRTFINTERPOLATION_BILINEAR, be.hrtf = S.hrtf;
+                    p_iplBinauralEffectApply(v->bfx, &be, &S.dmono, &S.bin);
+                } else {   /* speakers: panned (at the listener: the middle) */
+                    IPLPanningEffectParams pe;
+                    if (blend == 0) dir.x = 0, dir.y = 0, dir.z = -1.0f;
+                    pe.direction = dir;
+                    p_iplPanningEffectApply(v->nfx, &pe, &S.dmono, &S.bin);
+                }
+            }
+            for (int c = 0; c < S.och; c++)
+                for (int k = 0; k < UWST_FRAME; k++) S.dry[c][k] += S.bin.data[c][k] * lvl;
             if (paths) {
                 /* The paths' level. Steam Audio's coefficients carry 1 / the way's length in metres (measured:
                    the first is 0.2821 / metres), and the sound's samples already carry the game's own falloff by
@@ -1167,40 +1371,25 @@ static int block(int hrtf)
                    straight line plays at that level, and a longer one at straight / way of it: `way` undoes the
                    metres down to that. `share` is what the straight line lost (in plain sight none). The bands'
                    gains never 0 into the effect (4.8.1 gave NaN from then on). */
-                IPLPathEffectParams pp = v->pp;
-                float a = fabsf(pp.shCoeffs[0]) / 0.2820948f, way = l * S.tile_m, share = (1.0f - v->occ) * P.level;
+                float a = fabsf(sh[0]) / 0.2820948f, way = l * S.tile_m, share = (1.0f - occ) * P.level;
                 if (way < 1.0f) way = 1.0f;
                 if (a > 1e-6f && way > 1.0f / a) way = 1.0f / a;
-                share = a > 1e-6f && share > 0 ? share * way : 0;
-                pp.order = 1, pp.binaural = IPL_TRUE, pp.hrtf = S.hrtf, pp.listener = space_at(lis, yaw), pp.normalizeEQ = IPL_FALSE;
+                share = a > 1e-6f && share > 0 ? share * way * lvl : 0;
+                pp.order = 1, pp.binaural = hrtf ? IPL_TRUE : IPL_FALSE, pp.hrtf = S.hrtf, pp.listener = space_at(lis, yaw), pp.normalizeEQ = IPL_FALSE;
                 for (int k = 0; k < 3; k++) pp.eqCoeffs[k] = pp.eqCoeffs[k] < 0.001f ? 0.001f : pp.eqCoeffs[k] > 1.0f ? 1.0f : pp.eqCoeffs[k];
                 p_iplPathEffectApply(v->pfx, &pp, &S.din, &S.pbin);
                 {
                     float g0 = fresh ? share : v->pgain, dg = (share - g0) / UWST_FRAME;
-                    for (int c = 0; c < 2; c++)
+                    for (int c = 0; c < S.och; c++)
                         for (int k = 0; k < UWST_FRAME; k++) S.dry[c][k] += S.pbin.data[c][k] * (g0 + dg * (float)k);
                     v->pgain = share;
                 }
             } else v->pgain = 0;
         }
-        if (state == 1) {
-            if (!simulated && !by_ear) continue;     /* nothing to ring with yet */
-            memset(&out, 0, sizeof out);
-            p_iplSourceGetOutputs(by_ear ? S.ear : v->src, IPL_SIMULATIONFLAGS_REFLECTIONS, &out);
-            if (!out.reflections.ir) continue;
-            out.reflections.type = IPL_REFLECTIONEFFECTTYPE_CONVOLUTION, out.reflections.numChannels = 4, out.reflections.irSize = S.irsize;
-            p_iplReflectionEffectApply(v->fx, &out.reflections, &S.in, &S.amb, S.mixer);
-            v->applied = 1;
-        } else if (!v->applied || p_iplReflectionEffectGetTail(v->fx, &S.amb, S.mixer) == IPL_AUDIOEFFECTSTATE_TAILCOMPLETE) {
-            /* (a cut sound that never went through the effect has no tail) */
-            EnterCriticalSection(&S.lock);
-            if (v->state == 2) v->state = 0;         /* rung out: the voice is free */
-            LeaveCriticalSection(&S.lock);
-        }
     }
     p_iplReflectionMixerApply(S.mixer, &mp, &S.amb);
     memset(&dp, 0, sizeof dp);
-    dp.order = 1, dp.hrtf = S.hrtf, dp.orientation = space_at(lis0, yaw), dp.binaural = hrtf ? IPL_TRUE : IPL_FALSE;
+    dp.order = S.order, dp.hrtf = S.hrtf, dp.orientation = space_at(lis0, yaw), dp.binaural = hrtf ? IPL_TRUE : IPL_FALSE;
     p_iplAmbisonicsDecodeEffectApply(S.decode, &dp, &S.amb, &S.out);
     return busy;
 }
@@ -1210,37 +1399,38 @@ static int block(int hrtf)
    work\review\agents\tail) */
 static float dry_level = 1.0f;   /* the sound itself against the stream (uwst_direct_level) */
 void uwst_direct_level(float g) { dry_level = g < 0 ? 0 : g; }
-/* frames of the stream (stereo float): blocks made as needed, the echoes at `wet` and the sound itself at dry_level;
-   the voices still sounding or ringing */
-int uwst_mix_float(float *stereo, int frames, float wet, int hrtf)
+/* frames of the stream (float, interleaved, uwst_channels_now() channels): blocks made as needed, the echoes at
+   `wet` and the sound itself at dry_level; the voices still sounding or ringing */
+int uwst_mix_float(float *out, int frames, float wet, int hrtf)
 {
-    int busy = 0, done = 0;
-    if (!S.on) { memset(stereo, 0, sizeof(float) * 2 * (size_t)frames); return 0; }
+    int busy = 0, done = 0, ch = uwst_channels_now();
+    if (!S.on) { memset(out, 0, sizeof(float) * (size_t)ch * (size_t)frames); return 0; }
     while (done < frames) {
         if (S.fifo_at >= S.fifo_n) {
             busy = block(hrtf);
             for (int i = 0; i < UWST_FRAME; i++)
-                for (int c = 0; c < 2; c++) S.fifo[2 * i + c] = S.out.data[c][i] * wet + S.dry[c][i] * dry_level;
+                for (int c = 0; c < ch; c++) S.fifo[ch * i + c] = S.out.data[c][i] * wet + S.dry[c][i] * dry_level;
             S.fifo_at = 0, S.fifo_n = UWST_FRAME;
         }
         int n = S.fifo_n - S.fifo_at < frames - done ? S.fifo_n - S.fifo_at : frames - done;
-        memcpy(stereo + 2 * done, S.fifo + 2 * S.fifo_at, sizeof(float) * 2 * (size_t)n);
+        memcpy(out + ch * done, S.fifo + ch * S.fifo_at, sizeof(float) * (size_t)ch * (size_t)n);
         S.fifo_at += n, done += n;
     }
     for (int i = 0; i < UWST_VOICES; i++) busy += S.v[i].state != 0;
+    for (int i = 0; i < UWST_ECHOES; i++) busy += S.e[i].state != 0;
     return busy;
 }
 /* the same as 16-bit samples, rounded (the checks) */
-int uwst_mix(short *stereo, int frames, float wet, int hrtf)
+int uwst_mix(short *out, int frames, float wet, int hrtf)
 {
-    static float f[UWST_FRAME * 2];
-    int busy = 0, done = 0;
+    static float f[UWST_FRAME * UWST_MAXCH];
+    int busy = 0, done = 0, ch = uwst_channels_now();
     while (done < frames) {
         int n = frames - done < UWST_FRAME ? frames - done : UWST_FRAME;
         busy = uwst_mix_float(f, n, wet, hrtf);
-        for (int i = 0; i < 2 * n; i++) {
+        for (int i = 0; i < ch * n; i++) {
             float v = f[i] * 32767.0f;
-            stereo[2 * done + i] = (short)lrintf(v > 32767.0f ? 32767.0f : v < -32768.0f ? -32768.0f : v);
+            out[ch * done + i] = (short)lrintf(v > 32767.0f ? 32767.0f : v < -32768.0f ? -32768.0f : v);
         }
         done += n;
     }

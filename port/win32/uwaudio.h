@@ -41,6 +41,9 @@ void uwaudio_acoustics(const UwaTile *t, int ceil_mat, const UwaDoor *d, int nd)
 void uwaudio_things(const UwaBox *b, int n);   /* the things standing in the level (tables, pillars...) as boxes of a material */
 void uwaudio_tune(const char *datadir);   /* (also fx_footsteps: the footsteps by their floor, 1 unless written 0) */
 int  uwaudio_acoustics_on(void);
+/* (2026-11-19) the heads for Steam Audio's binaural sound: the .sofa files in our data's hrtf folder, sorted by
+   name, up to max (settings.txt acoustics_head N: the Nth, 0 Steam Audio's own); the count */
+int  uwaudio_heads(const char *datadir, char names[][96], int max);
 void uwaudio_stand_down(int yes);         /* 1: the game's device is not the Roland: our renderings of its effects are not played */
 /* what our rays measure where the listener stands now: the ring time by band (seconds: low, mid, high), the room's
    mean free path and the mean distance to the first surface (metres). 0: no level yet or the listener in rock.

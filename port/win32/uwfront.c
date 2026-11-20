@@ -1698,6 +1698,15 @@ static const struct { const char *key; int dflt, lo, hi, step, kind, need; const
     /* 38 */ {"fx_limiter", 1, 0, 1, 1, DK_ONOFF, DN_AUDIO, ""},   /* (OpenAL Soft's output limiter, uwaudio.c context_attrs; the sound started again) */
     /* 39 */ {"fx_heat_shimmer", 100, 0, 300, 10, DK_NUM, DN_AC, "%"},   /* (uwaudio.c heat_step, volfog.inc uwv_heat_spots) */
     /* 40 */ {"fx_own_step_volume", 100, 0, 200, 10, DK_NUM, DN_AUDIO, "%"},   /* (uwaudio.c own_step_vol, on top of Footstep volume) */
+    /* (2026-11-19, the sound review: work\soundreview\REPORT-2026-11-19.md) */
+    /* 41 */ {"acoustics_echo_voices", 16, 1, 32, 1, DK_NUM, DN_HIGH, " sounds"},
+    /* 42 */ {"acoustics_direct_thread", 1, 0, 1, 1, DK_ONOFF, DN_HIGH, ""},
+    /* 43 */ {"acoustics_steam_speakers", 1, 0, 1, 1, DK_ONOFF, DN_HIGH, ""},
+    /* 44 */ {"acoustics_head", 0, 0, 31, 1, DK_NUM, DN_HIGH, ""},       /* (dial_text: the file's name) */
+    /* 45 */ {"acoustics_echo_order", 1, 1, 2, 1, DK_NUM, DN_HIGH, ""},  /* (Steam Audio started again: uwaudio_tune) */
+    /* 46 */ {"acoustics_scatter_by_mat", 1, 0, 1, 1, DK_ONOFF, DN_HIGH, ""},
+    /* 47 */ {"acoustics_materials", 0, 0, 1, 1, DK_NUM, DN_AC, ""},     /* (the sound started again: the table is read then) */
+    /* 48 */ {"acoustics_surround", 1, 0, 1, 1, DK_ONOFF, DN_HIGH, ""},  /* (the sound started again: uwaudio.c hi_channels) */
 };
 #define SOUND_NDIALS ((int)(sizeof SOUND_DIALS / sizeof SOUND_DIALS[0]))
 static int dial_val[sizeof SOUND_DIALS / sizeof SOUND_DIALS[0]], dials_read;
@@ -1775,6 +1784,20 @@ static void dial_text(int i, char *out, size_t n)
     case DK_AUTO: snprintf(out, n, "%s", v == 2 ? "Automatic" : v ? "On" : "Off"); break;
     default: snprintf(out, n, "%d%s", v, SOUND_DIALS[i].unit); break;
     }
+    if (i == 44) {   /* the head: Steam Audio's own, or a .sofa file of our data's hrtf folder */
+        static char names[32][96];
+        char data[UWF_PATH];
+        uwf_our_data(data, sizeof data);
+        int nh = uwaudio_heads(data, names, 32);
+        if (v == 0) snprintf(out, n, "Steam Audio's own");
+        else if (v <= nh) {
+            snprintf(out, n, "%s", names[v - 1]);
+            size_t l = strlen(out);
+            if (l > 5 && !strcmp(out + l - 5, ".sofa")) out[l - 5] = 0;
+        } else snprintf(out, n, "(file %d is not there)", v);
+    }
+    if (i == 45) snprintf(out, n, "%s", v == 2 ? "Fine (2nd order, 9 channels)" : "Plain (1st order, 4 channels)");
+    if (i == 47) snprintf(out, n, "%s", v == 1 ? "Earlier (2026-11-14)" : "Researched (2026-11-19)");
     if (i == 36) {   /* the Roland voices: 32 is the real unit; a change is heard from the next start */
         size_t l = strlen(out);
         if (v == 32 && l < n) snprintf(out + l, n - l, " (original)"), l = strlen(out);
@@ -1796,10 +1819,17 @@ static void dial_step(int i, int step)
     else if (SOUND_DIALS[i].kind == DK_AUTO) v = (v + (step > 0 ? 1 : 2)) % 3;
     else v += step > 0 ? SOUND_DIALS[i].step : -SOUND_DIALS[i].step;
     v = v < SOUND_DIALS[i].lo ? SOUND_DIALS[i].lo : v > SOUND_DIALS[i].hi ? SOUND_DIALS[i].hi : v;
+    if (i == 44) {   /* (the head: no further than the files there are) */
+        static char names[32][96];
+        char data[UWF_PATH];
+        uwf_our_data(data, sizeof data);
+        int nh = uwaudio_heads(data, names, 32);
+        if (v > nh) v = nh;
+    }
     if (v == dial_val[i]) return;
     dial_val[i] = v;
     fx_setting_save(SOUND_DIALS[i].key, v);
-    if (i == 34 || i == 35 || i == 38) { fx_restart_soon(); return; }   /* (the Roland's own reverb is in the renderings: made again;
+    if (i == 34 || i == 35 || i == 38 || i == 47 || i == 48) { fx_restart_soon(); return; }   /* (the Roland's own reverb is in the renderings: made again;
                                                                the limiter is the device's: opened again;
                                                                the echoes' ray tracer is chosen as Steam Audio starts) */
     fx_acoustics_tune();   /* heard at once */
@@ -1911,6 +1941,12 @@ static const struct { int id; const char *label; int opt; const char *hint; } ME
     {MO_HEAD, "#Sound tuning", -1, ""},
     {MO_ROOMINFO, "Room measured here", -1, "Information only: how long this room echoes (low / middle / high notes) and how far sound travels between its walls."},
     {MO_DIAL + 35, "Fast echo rays", -1, "On: the echoes' sound rays are traced by Intel's Embree on several threads, about six times quicker. Off: Steam Audio's own, on two. Default On."},
+    {MO_DIAL + 41, "Sounds with echoes", -1, "How many sounds at once have their own echoes: 1 to 32. Up to 64 sounds play at once, every one shaped by Steam Audio; the newest this many also echo. More costs processor time. Default 16."},
+    {MO_DIAL + 42, "Muffling on its own thread", -1, "On: Steam Audio's muffling and sound paths are worked out on a thread of their own, so the sound is never late waiting for them. Off: worked out while the sound is mixed, as before. Default On."},
+    {MO_DIAL + 43, "Steam Audio on speakers", -1, "On: with speakers (no Headphone 3D) Steam Audio still shapes each sound, with its muffling and its paths round corners, panned between the speakers. Off: speakers get OpenAL's sound, as before. Default On."},
+    {MO_DIAL + 48, "Surround speakers", -1, "On: with 4, 5.1 or 7.1 speakers, Steam Audio's sound and echoes come from every speaker around you. Off: from the front two only. Headphones are not changed. Starts the sound again. Default On."},
+    {MO_DIAL + 44, "Head shape", -1, "The head your headphone sound is made for: Steam Audio's own, or a measured head (.sofa file) in uwr\\hrtf. Pick the one where sounds behind and above you sound most real. Starts the echoes again."},
+    {MO_DIAL + 45, "Echo direction detail", -1, "Plain: echoes come from 4 broad directions. Fine: 9, so each echo comes more clearly from its wall; about twice the work. Starts the echoes again. Default Plain."},
     {MO_DIAL + 21, "Sound by Steam Audio", -1, "On: Steam Audio shapes each sound for your two ears. Off: OpenAL does. Needs Headphone 3D sound. Default On."},
     {MO_DIAL + 22, "Muffling by Steam Audio", -1, "On: Steam Audio works out what walls, doors and floors let through, by their material. Off: the game's own rays."},
     {MO_DIAL + 23, "Sound level (Steam Audio)", -1, "How loud the sounds played by Steam Audio are, next to the game's own mix: 0% to 100%. Default 30%."},
@@ -1934,6 +1970,8 @@ static const struct { int id; const char *label; int opt; const char *hint; } ME
     {MO_DIAL + 2, "Longest echo", -1, "The longest an echo may ring: 0.5 to 6 seconds. A change starts the echoes again. Default 2 s."},
     {MO_DIAL + 3, "Echo bounces", -1, "How often a sound ray bounces before it is dropped: 4 to 64. Too few cuts echoes short. Default: As Echo detail."},
     {MO_DIAL + 4, "Wall roughness", -1, "How much of each bounce scatters every way instead of reflecting as off a mirror: 0% to 100%. Default 25%."},
+    {MO_DIAL + 46, "Roughness by material", -1, "On: each material scatters as it would (rough rock and cloth a lot, marble, metal and water hardly), as acoustics.txt says; Wall roughness for any it does not. Off: Wall roughness for all. Default On."},
+    {MO_DIAL + 47, "Material table", -1, "Researched: stone, rock, brick, marble, plaster, wood and the rest from published measurements (marble halls ring longer). Earlier: every stone surface rough rock, as until 2026-11-19. Starts the sound again."},
     {MO_DIAL + 19, "Echo buffer", -1, "Blocks of echo (11 ms each) kept ready ahead: 2 to 6. Too few: crackling. More: echoes come later. Default 4."},
     {MO_DIAL + 20, "Echoes straight to the ears", -1, "On: echoes go to your headphones as made. Off: placed again by Headphone 3D sound, duller. Default On."},
     {MO_DIAL + 5, "Ring time", -1, "How long rooms echo, against what the sound rays measure: 10% to 400%. 100% (the default): as measured."},
@@ -2899,7 +2937,7 @@ static void tab_preset_apply(int k)
             if (!dial_shown(i) || dial_val[i] == SOUND_DIALS[i].dflt) continue;
             dial_val[i] = SOUND_DIALS[i].dflt, any = 1;
             fx_setting_save(SOUND_DIALS[i].key, dial_val[i]);
-            if (i == 34 || i == 35 || i == 38) again = 1;   /* (the Roland's own reverb, the echoes' ray tracer, the limiter: started again, as dial_step) */
+            if (i == 34 || i == 35 || i == 38 || i == 47 || i == 48) again = 1;   /* (the Roland's own reverb, the echoes' ray tracer, the limiter: started again, as dial_step) */
         }
         if (again) fx_restart_soon();
         else if (any) fx_acoustics_tune();
