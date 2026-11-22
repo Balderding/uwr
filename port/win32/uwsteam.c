@@ -149,7 +149,7 @@ typedef struct {
     int floor;               /* ... 1: a floor under Steam Audio's; 0: the gains themselves */
     float occ, trans[3];     /* Steam Audio's last: the share not occluded, what the surfaces between let through */
     int rel;                 /* 1: heard from a place fixed to the listener's head (the player's own sounds) ... */
-    float rel_right, rel_ahead;   /* ... this far to the right and ahead, tiles */
+    float rel_right, rel_ahead, rel_below;   /* ... this far to the right, ahead and under the ears, tiles */
     int fresh;               /* 1: a new sound since the last block (the effects' memory to be cleared) */
     unsigned gen;            /* counts the sounds this voice has had */
 } Voice;
@@ -927,11 +927,11 @@ int uwst_pathing_heard(int voice, float eq[3], float sh[4])
     LeaveCriticalSection(&S.lock);
     return ok;
 }
-void uwst_relative(int voice, float right, float ahead)
+void uwst_relative(int voice, float right, float ahead, float below)
 {
     if (!S.on || voice < 0 || voice >= UWST_VOICES) return;
     EnterCriticalSection(&S.lock);
-    S.v[voice].rel = 1, S.v[voice].rel_right = right, S.v[voice].rel_ahead = ahead;
+    S.v[voice].rel = 1, S.v[voice].rel_right = right, S.v[voice].rel_ahead = ahead, S.v[voice].rel_below = below;
     LeaveCriticalSection(&S.lock);
 }
 void uwst_echo(int voice, float share)
@@ -1307,7 +1307,7 @@ static int block(int hrtf)
             occ = v->occ, memcpy(trans, v->trans, sizeof trans), rel = v->rel, path_ok = v->path_ok;
             pp = v->pp, memcpy(sh, v->sh, sizeof sh), pp.shCoeffs = sh;
             if (rel) {   /* fixed to the head: it walks and turns with the listener (ours: yaw 0 looks north, +z) */
-                heard[0] = lis[0] + cosf(yaw) * v->rel_right + sinf(yaw) * v->rel_ahead, heard[1] = lis[1];
+                heard[0] = lis[0] + cosf(yaw) * v->rel_right + sinf(yaw) * v->rel_ahead, heard[1] = lis[1] - v->rel_below;
                 heard[2] = lis[2] - sinf(yaw) * v->rel_right + cosf(yaw) * v->rel_ahead;
             }
             v->pos += UWST_FRAME;

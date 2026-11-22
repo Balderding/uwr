@@ -735,6 +735,17 @@ int uwi_panel(const UwiSnap *s, int mx, int my, int sheet, int draw, float *fx, 
             if (x1 >= OX + OW) x1 = OX + OW - 1;
             if (x1 >= x0 && y1 >= y0) blit_pic(main, x0, y0, x1 - x0 + 1, y1 - y0 + 1, L.px + x0 - OX, L.py + y0 - OY);
         }
+        /* a redrawn picture (the Esc menu's Sprites tab) in a shoulder, hand or ring hole (display positions 6..11):
+           the original drew its own 16 x 16 picture there; the hole's empty art again (MAIN.png), then ours, as in the
+           pack's holes below. The worn armour on the figure is not an object picture and stays the original's */
+        for (k = 6; k <= 11 && main; k++) {
+            int it = s->t[k].item, x0 = s->rect[k][0], y0 = s->rect[k][1], x1 = s->rect[k][2], y1 = s->rect[k][3];
+            if (it < 0 || it >= 512 || !ui_new_sprite[it] || x1 < x0 || y1 < y0) continue;
+            if (!ui_pic("newsprites\\objects", it)) continue;   /* (switched on but its file is gone: the original's stays) */
+            if (x0 < OX || y0 < OY || x1 >= OX + OW || y1 >= OY + L.top_h) continue;
+            blit_pic(main, x0, y0, x1 - x0 + 1, y1 - y0 + 1, L.px + x0 - OX, L.py + y0 - OY);
+            thing_in(&s->t[k], L.px + x0 - OX, L.py + y0 - OY, x1 - x0 + 1, y1 - y0 + 1);
+        }
         top_keep(L.top_h, L.px, L.py);
     } else if (main) blit_pic(main, OX, OY, OW, L.top_h, L.px, L.py);
     for (k = 0; k < L.nrows && main; k++) {
@@ -782,7 +793,8 @@ int uwi_panel(const UwiSnap *s, int mx, int my, int sheet, int draw, float *fx, 
         if (!uwv_sheet_full) sheet_tip(s, sx, sy, x, y);
         else if (full_hot != -100) sheet_tip_k(s, full_hot, x, y);
     }
-    if (s->held && s->h.item >= 0) thing_in(&s->h, x - 8, y - 8, 16, 16);
+    if (ui_pointer_take(s->held && s->h.item >= 0 ? s->h.item : -1, s->held && s->h.item >= 0 ? s->h.qty : 0)) ;   /* the system's cursor shows it */
+    else if (s->held && s->h.item >= 0) thing_in(&s->h, x - 8, y - 8, 16, 16);
     else ui_cursor(10, x, y);   /* the game's cursor (the host's never shows over our display) */
     return hit;
 }

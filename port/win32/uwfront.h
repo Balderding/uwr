@@ -100,6 +100,9 @@ void uwp_title(const char *t);               /* the window's title */
 void uwp_capture(int on);                    /* the pointer held in the window and the host's cursor hidden, or freed */
 int uwp_cursor_hidden(void);                 /* the host's cursor hidden by us */
 void uwp_cursor_hide(int hide);              /* the host's cursor hidden (1) or shown (0), if not so already */
+/* the host's cursor made this picture over the client area (argb 0xAARRGGBB straight alpha, w x h, its point at hx, hy)
+   at once; NULL: the window's own arrow again (our panels' pointer as the system's cursor, the Esc row Pointer in menus) */
+void uwp_cursor_picture(const unsigned *argb, int w, int h, int hx, int hy);
 int uwp_pointer_pos(int *x, int *y);         /* the pointer's place in client pixels: 1, or 0 not known */
 /* the pointer held in the client rectangle x0,y0-x1,y1 (held again only if it moved on the screen, or first); first:
    put in its middle too, *mx, *my that point in client pixels, and 1 */

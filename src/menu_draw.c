@@ -18,6 +18,22 @@
 #include "../rlog.h"
 #endif
 #define LOG_TAG "menu"
+#include <time.h>
+
+/* UWVIEW_MENU_TIMING=1 (the checks, 2026-11-22: the menu's slow frames): where md_rows' time goes, every 120 calls */
+static double md_ms(void) { struct timespec t; timespec_get(&t, TIME_UTC); return (double)t.tv_sec * 1000.0 + t.tv_nsec / 1e6; }
+static int md_timing_on(void) { static int on = -1; if (on < 0) { const char *e = getenv("UWVIEW_MENU_TIMING"); on = e && *e == '1'; } return on; }
+static double md_t[8];
+static int md_tn;
+static void md_timing(const double *t, int ui_w, int ui_h)
+{
+    for (int i = 0; i < 7; i++) md_t[i] += t[i + 1] - t[i];
+    if (++md_tn < 120) return;
+    RLOG_I(LOG_TAG, "md_rows at %dx%d, ms a call: clear %.2f, panel+rows+foot %.2f, composite %.2f, smooth text %.2f, "
+           "cursor clear %.2f, cursor blend %.2f, dump %.2f", ui_w, ui_h, md_t[0] / md_tn, md_t[1] / md_tn, md_t[2] / md_tn,
+           md_t[3] / md_tn, md_t[4] / md_tn, md_t[5] / md_tn, md_t[6] / md_tn);
+    memset(md_t, 0, sizeof md_t), md_tn = 0;
+}
 
 /* the menu's list scrolled: the first row shown, and the scrollbar as last drawn (overlay pixels) for the backend's
  * wheel and clicks */
@@ -157,11 +173,18 @@ static int menu_wrap(const char *v, bool smooth, int em, int room, char lines[][
 #undef WRAP_W
     return n;
 }
-static void md_blend(unsigned *d, int ui_w, int ui_h);
+static void md_blend(unsigned *d, int ui_w, int ui_h, int bx0, int by0, int bx1, int by1);
 /* the panel's ground: one dark brown under the rows and the foot's text, with a gold line round it; 0 the leather
  * (the row Menu background) */
 static int md_solid = 1;
 void md_set_solid(int on) { md_solid = on != 0; }
+/* the row Quick menu drawing (2026-11-22, the menu's slow frames: 18.7 ms a frame at 1920x1080, the mouse jerky): 1
+ * the menu's finished picture kept and laid down again while nothing in it changed (its overlay, its text, the
+ * picture under it all the same as last frame), and the pointer laid over its own small box, not the whole window;
+ * 0 everything drawn again every frame (as before) */
+static int md_fast = 1;
+void md_set_fast(int on) { md_fast = on != 0; }
+int md_get_fast(void) { return md_fast; }
 
 /* ---- the menu drawn in steps: md_rows fills a MenuFrame on its stack and passes it from step to step ---- */
 #define MD_ROW 15                          /* one row's height, overlay pixels */
@@ -272,7 +295,8 @@ static void md_draw_panel(MenuFrame *m)
     const Overlay *o = m->o;
     const int x = m->x, y = m->y, w = m->w, h = m->h, px = m->px, py = m->py;
     const bool smooth = m->smooth;
-    ui_fill(0, 0, o->w, o->h, 0, 0, 0, 140);
+    if (md_fast) ui_fill_empty(0, 0, 0, 140);   /* (the game dimmed: md_rows has just emptied the overlay) */
+    else ui_fill(0, 0, o->w, o->h, 0, 0, 0, 140);
     if (md_solid) {
         ui_fill(x, y, w, h, 26, 16, 10, 255);
         ui_fill(x, y, w, 1, 120, 96, 40, 255), ui_fill(x, y + h - 1, w, 1, 120, 96, 40, 255);
@@ -462,6 +486,93 @@ static void md_smooth_text(MenuFrame *m)
 #undef SMT
 }
 
+/* Quick menu drawing's kept picture: the layer under the menu as it came (under), the finished picture (done), the
+ * overlay (opx) and the interface font's text layer (ttx, its drawn rectangle) the picture was made from, and what the
+ * smooth text drew (sig) */
+static struct {
+    unsigned *under, *done, *ttx;
+    u8 *opx;
+    size_t cap, ocap, tcap;
+    int w, h, ow, oh, tx0, ty0, tx1, ty1, valid;
+    unsigned sig;
+} K;
+static unsigned fnv_s(unsigned h, const char *t) { for (; t && *t; t++) h = (h ^ (unsigned char)*t) * 16777619u; return (h ^ 0xFF) * 16777619u; }
+static unsigned fnv_i(unsigned h, int v) { return (h ^ (unsigned)v) * 16777619u; }
+/* everything md_smooth_text draws from */
+static unsigned md_text_sig(const MenuFrame *m)
+{
+    unsigned h = 2166136261u;
+    h = fnv_i(h, m->smooth), h = fnv_i(h, m->x), h = fnv_i(h, m->y), h = fnv_i(h, m->w), h = fnv_i(h, m->s);
+    h = fnv_i(h, m->em), h = fnv_i(h, m->em_tab), h = fnv_i(h, m->rw), h = fnv_i(h, m->n), h = fnv_i(h, m->vis);
+    h = fnv_i(h, m->TOP), h = fnv_i(h, m->fy), h = fnv_i(h, m->ui_w), h = fnv_i(h, m->ui_h), h = fnv_i(h, menu_top);
+    h = fnv_s(h, st_font_name()), h = fnv_i(h, st_size_pct()), h = fnv_s(h, m->ttl);
+    h = fnv_i(h, md_tab_n), h = fnv_i(h, md_tab_open);
+    for (int i = 0; i < md_tab_n; i++)
+        h = fnv_s(h, md_tab_name[i]), h = fnv_i(h, md_tab_box[i][0]), h = fnv_i(h, md_tab_box[i][1]), h = fnv_i(h, md_tab_box[i][2]);
+    for (int r = menu_top; r < menu_top + m->vis && r < m->n && r < MD_MAXROWS; r++)
+        h = fnv_s(h, m->labels[r]), h = fnv_s(h, m->M[r].drawn), h = fnv_i(h, m->M[r].vw), h = fnv_i(h, m->M[r].em);
+    h = fnv_s(h, m->foot1), h = fnv_i(h, m->fe1), h = fnv_i(h, m->fe2), h = fnv_i(h, m->nf2);
+    for (int i = 0; i < m->nf2; i++) h = fnv_s(h, m->foot2[i]);
+    return h;
+}
+static int grow(void **p, size_t *cap, size_t want)
+{
+    if (*cap >= want) return 1;
+    void *n = realloc(*p, want);
+    if (!n) { RLOG_E(LOG_TAG, "out of memory (%zu bytes) for the kept menu picture: drawn every frame", want); return 0; }
+    *p = n, *cap = want;
+    return 1;
+}
+/* 1 when last frame's finished picture is this frame's too: then it is laid down (d) */
+static int md_kept(const MenuFrame *m, unsigned sig)
+{
+    const Overlay *o = m->o;
+    const size_t all = (size_t)m->ui_w * (size_t)m->ui_h;
+    unsigned *d = (unsigned *)m->ui_buf;
+    int x0, y0, x1, y1, ts;
+    const unsigned *t = ui_text_rect(&x0, &y0, &x1, &y1, &ts);
+    if (!K.valid || sig != K.sig || K.w != m->ui_w || K.h != m->ui_h || K.ow != o->w || K.oh != o->h) return 0;
+    if (x0 != K.tx0 || y0 != K.ty0 || x1 != K.tx1 || y1 != K.ty1) return 0;
+    if (memcmp(K.opx, o->px, (size_t)o->w * o->h * 4)) return 0;
+    if (t && x1 >= x0)
+        for (int y = y0; y <= y1; y++)
+            if (memcmp(K.ttx + (size_t)(y - y0) * (x1 - x0 + 1), t + (size_t)y * ts + x0, (size_t)(x1 - x0 + 1) * 4)) return 0;
+    /* the layer under it the same as last frame's: laid over by the finished picture in the same pass (one read of
+       the window's pixels, not two); at the first pixel that differs, what was laid down so far is put back */
+    {   /* (in blocks of 16 KB: the library's memcmp and memcpy, each over a block still in the cache) */
+        const size_t bytes = all * 4, B = 16384;
+        unsigned char *dd = (unsigned char *)d;
+        const unsigned char *uu = (const unsigned char *)K.under, *kk = (const unsigned char *)K.done;
+        for (size_t at = 0; at < bytes; at += B) {
+            size_t len = bytes - at < B ? bytes - at : B;
+            if (memcmp(dd + at, uu + at, len)) { memcpy(dd, uu, at); return 0; }
+            memcpy(dd + at, kk + at, len);
+        }
+    }
+    return 1;
+}
+/* before the drawing: what it is made from, kept (the layer under it, the overlay, the text layer); 0 no room */
+static int md_keep_from(const MenuFrame *m, unsigned sig)
+{
+    const Overlay *o = m->o;
+    const size_t all = (size_t)m->ui_w * (size_t)m->ui_h;
+    int x0, y0, x1, y1, ts;
+    const unsigned *t = ui_text_rect(&x0, &y0, &x1, &y1, &ts);
+    size_t tn = t && x1 >= x0 ? (size_t)(x1 - x0 + 1) * (size_t)(y1 - y0 + 1) : 0;
+    K.valid = 0;
+    if (!grow((void **)&K.under, &K.cap, all * 4) || !grow((void **)&K.opx, &K.ocap, (size_t)o->w * o->h * 4)) return 0;
+    if (tn && !grow((void **)&K.ttx, &K.tcap, tn * 4)) return 0;
+    {   /* (done: the same size as under) */
+        static size_t dcap;
+        if (!grow((void **)&K.done, &dcap, all * 4)) return 0;
+    }
+    memcpy(K.under, m->ui_buf, all * 4);
+    memcpy(K.opx, o->px, (size_t)o->w * o->h * 4);
+    for (int y = y0; tn && y <= y1; y++) memcpy(K.ttx + (size_t)(y - y0) * (x1 - x0 + 1), t + (size_t)y * ts + x0, (size_t)(x1 - x0 + 1) * 4);
+    K.w = m->ui_w, K.h = m->ui_h, K.ow = o->w, K.oh = o->h, K.tx0 = x0, K.ty0 = y0, K.tx1 = x1, K.ty1 = y1, K.sig = sig;
+    return 1;
+}
+
 /* UWVIEW_MENU_DUMP=FILE (the checks): what was drawn, a line a row, written when it changes; tools\menucheck.py reads
  * the "menu: tab" and "menu: sel" lines from stderr as they are, so they stay plain lines, not logger lines */
 static void md_dump(const MenuFrame *m)
@@ -512,6 +623,9 @@ int md_rows(unsigned char *ui_buf, int ui_w, int ui_h, bool smooth, const char *
             const char *const *values, const char *const *hints, int n, int sel, int mx, int my)
 {
     if (!ui_buf) return -1;   /* (the caller has started ui.c: ui_start) */
+    double tt[8];
+    const int timed = md_timing_on();
+    if (timed) tt[0] = md_ms();
     ui_set_scale(3);
     static RowInfo M[MD_MAXROWS];
     MenuFrame m = {0};
@@ -524,32 +638,72 @@ int md_rows(unsigned char *ui_buf, int ui_w, int ui_h, bool smooth, const char *
     m.em = 14 * m.s * 6 / 10, m.em_foot = 22 * m.s / 3;
     m.hit = -1;
     m.M = M;
+    if (timed) tt[1] = md_ms();
     md_tabs_measure(&m);
     md_layout(&m);
     md_draw_panel(&m);
     md_measure_rows(&m);
     md_draw_rows(&m);
     md_foot(&m);
-    md_composite(&m);
-    if (smooth) md_smooth_text(&m);
-    if (mx >= 0 && my >= 0) {   /* the game's cursor (the game is paused under the menu), over the text */
+    if (timed) tt[2] = md_ms();
+    {   /* Quick menu drawing: last frame's picture again when nothing in it changed */
+        unsigned sig = md_fast ? md_text_sig(&m) : 0;
+        int kept = md_fast && md_kept(&m, sig);
+        static int verify = -1;   /* UWVIEW_MENU_VERIFY=1 (the checks): each kept picture against the menu drawn again */
+        if (verify < 0) { const char *e = getenv("UWVIEW_MENU_VERIFY"); verify = e && *e == '1'; }
+        if (kept && verify) {
+            static unsigned *tmp;
+            static size_t tcap;
+            static int hits, bad;
+            const size_t all = (size_t)ui_w * ui_h;
+            if (grow((void **)&tmp, &tcap, all * 4)) {
+                memcpy(tmp, ui_buf, all * 4);
+                memcpy(ui_buf, K.under, all * 4);
+                md_composite(&m);
+                if (smooth) md_smooth_text(&m);
+                size_t diff = 0;
+                for (size_t i = 0; i < all; i++) diff += tmp[i] != ((unsigned *)ui_buf)[i];
+                hits++, bad += diff != 0;
+                if (diff || hits % 240 == 1) RLOG_I(LOG_TAG, "menu verify: kept picture %d: %zu pixels differ from the menu drawn again (%d of %d differed)", hits, diff, bad, hits);
+            }
+        }
+        if (!kept) {
+            int keep = md_fast && md_keep_from(&m, sig);
+            md_composite(&m);
+            if (timed) tt[3] = md_ms();
+            if (smooth) md_smooth_text(&m);
+            if (keep) memcpy(K.done, ui_buf, (size_t)ui_w * ui_h * 4), K.valid = 1;
+            if (!md_fast) K.valid = 0;
+        } else if (timed) tt[3] = md_ms();
+    }
+    if (timed) tt[4] = tt[5] = tt[6] = md_ms();
+    if (mx >= 0 && my >= 0 && !ui_pointer_take(-1, 0)) {   /* (else the system's cursor shows it) the game's cursor (the game is paused under the menu), over the text */
         ui_clear();
         ui_cursor(10, m.px, m.py);
-        md_blend((unsigned *)ui_buf, ui_w, ui_h);
+        if (timed) tt[5] = md_ms();
+        if (md_fast) md_blend((unsigned *)ui_buf, ui_w, ui_h, m.px - 16, m.py - 16, m.px + 17, m.py + 17);   /* (the small cross: 12 by 11) */
+        else md_blend((unsigned *)ui_buf, ui_w, ui_h, 0, 0, 1 << 20, 1 << 20);
+        if (timed) tt[6] = md_ms();
     }
     md_dump(&m);
+    if (timed) tt[7] = md_ms(), md_timing(tt, ui_w, ui_h);
     ui_set_scale(0);   /* the window's own scale again for the HUD and the panels */
     return m.hit;
 }
-/* the overlay (only the cursor now) laid over the window pixels d, then the smooth text layer */
-static void md_blend(unsigned *d, int ui_w, int ui_h)
+/* the overlay (only the cursor now) laid over the window pixels d, then the smooth text layer; only the overlay's
+ * pixels bx0..bx1-1, by0..by1-1 (the cursor's box; the whole overlay when Quick menu drawing is off) */
+static void md_blend(unsigned *d, int ui_w, int ui_h, int bx0, int by0, int bx1, int by1)
 {
     Overlay *o = ui_overlay();
-    for (int yy = 0; yy < ui_h; yy++) {
+    if (bx0 < 0) bx0 = 0;
+    if (by0 < 0) by0 = 0;
+    if (bx1 > o->w) bx1 = o->w;
+    if (by1 > o->h) by1 = o->h;
+    for (int yy = by0 * o->scale; yy < by1 * o->scale && yy < ui_h; yy++) {
         int oy = yy / o->scale;
         if (oy >= o->h) break;
         const u8 *orow = o->px + (size_t)oy * o->w * 4;
-        for (int xx = 0; xx < ui_w; xx++) {
+        for (int xx = bx0 * o->scale; xx < bx1 * o->scale && xx < ui_w; xx++) {
             int ox = xx / o->scale;
             if (ox >= o->w) break;
             const u8 *p = orow + ox * 4;

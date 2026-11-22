@@ -61,6 +61,7 @@ enum { MO_AIX0 = 150, MO_AIX1, MO_AIX2, MO_AIX3, MO_AIX4, MO_AIX5, MO_AIX6, MO_A
                                            MO_AIXEND it would be 167, the first enhancement's) */
 unsigned cun_fired_count(int part);     /* how often the part was used this session */
 int port_ai_logfile(int v);
+int port_feud_mode(int v);              /* the row Rival creatures fight (underworld-exhumed port\sys\feud.c): 0 Off, 1 Rare, 2 Sometimes */
 /* a part's row value: On / Off, and how often it was used this session once it was */
 static void ai_part_value(char *b, int part)
 {
@@ -550,6 +551,7 @@ static struct view {
     void (*clip_shot)(void);
     int (*option)(int id, int step, char *value, int n);
     int (*inventory)(const UwiSnap *s, int mx, int my, int sheet);
+    unsigned (*pointer)(unsigned *out, int cap, int *w, int *h, int *hx, int *hy);   /* our panels' pointer picture (uwv_pointer) */
     int (*inv_hit)(const UwiSnap *s, int mx, int my, int sheet, float *fx, float *fy);
     void (*inv_wheel)(int notches);           /* the open bags' rows scrolled (the wheel over our panel: up positive) */
     int (*inv_click)(int mx, int my, int down); /* a left press / release on their slider: 1 taken */
@@ -590,6 +592,7 @@ static struct view {
     void (*fx_event)(int kind, float x, float y, float z, int fx, int mob);   /* the effects (uwv_fx_event) */
     int (*ac_grid)(UwvAcTile out[64 * 64], int *ceil_tex);   /* the level for the sound (uwv_acoustic_*) */
     int (*ac_doors)(UwvAcDoor *out, int cap);
+    int (*seen)(unsigned char out[64 * 64]);   /* what the player can see this frame, for our map (uwv_seen; optional) */
     int (*ac_things)(UwvAcBox *out, int cap);   /* (optional: an older renderer has none) */
     unsigned (*ac_epoch)(void);
     int ok, cw, ch;                     /* started, at this client size */
@@ -685,6 +688,7 @@ static void view_open(const char *dll)
     V.menu_tabs = (void (*)(const char *const *, int, int))uwp_lib_sym(V.dll, "uwv_menu_tabs");
     V.menu_tab_at = (int (*)(int, int))uwp_lib_sym(V.dll, "uwv_menu_tab_at");
     V.inventory = (int (*)(const UwiSnap *, int, int, int))uwp_lib_sym(V.dll, "uwv_inventory");
+    V.pointer = (unsigned (*)(unsigned *, int, int *, int *, int *, int *))uwp_lib_sym(V.dll, "uwv_pointer");
     V.inv_hit = (int (*)(const UwiSnap *, int, int, int, float *, float *))uwp_lib_sym(V.dll, "uwv_inv_hit");
     V.inv_wheel = (void (*)(int))uwp_lib_sym(V.dll, "uwv_inv_wheel");
     V.inv_click = (int (*)(int, int, int))uwp_lib_sym(V.dll, "uwv_inv_click");
@@ -713,6 +717,7 @@ static void view_open(const char *dll)
     V.shade_scale = (void (*)(float))uwp_lib_sym(V.dll, "uwv_shade_scale");
     V.fx_event = (void (*)(int, float, float, float, int, int))uwp_lib_sym(V.dll, "uwv_fx_event");
     V.ac_grid = (int (*)(UwvAcTile *, int *))uwp_lib_sym(V.dll, "uwv_acoustic_grid");
+    V.seen = (int (*)(unsigned char *))uwp_lib_sym(V.dll, "uwv_seen");
     V.ac_doors = (int (*)(UwvAcDoor *, int))uwp_lib_sym(V.dll, "uwv_acoustic_doors");
     V.ac_things = (int (*)(UwvAcBox *, int))uwp_lib_sym(V.dll, "uwv_acoustic_things");
     V.ac_epoch = (unsigned (*)(void))uwp_lib_sym(V.dll, "uwv_acoustic_epoch");
@@ -774,6 +779,24 @@ static void log_detail_to_view(int level)
 {
     char v[32];
     if (V.option) V.option(OPT_LOG_DETAIL, level + 1, v, sizeof v);
+}
+
+/* The Esc menu's "Map what I saw" (Game tab, 2026-11-21): the map screen shows every tile our picture let the player
+   see (uwview.c uwv_seen: in the lens, a clear line, lit), kept by the game's side (underworld-exhumed port\sys\seenmap.c,
+   in SAVE0\UWRMAP.DAT with the saves); Off: the original's map alone (its 16-deep, lit-only vision grid). Default On,
+   uw1port.cfg map_seen. The game's own PlayersMap, its saves and the experience for seen tiles are not touched. */
+extern int port_seen_on;
+extern int port_map_arrows8, port_map_notes_fixed;   /* the rows Map level arrows, Map notes kept right (AUTOMAP.C) */
+void port_seen_mark(int lev, const unsigned char *vis);
+static void seen_mark_frame(void)
+{
+    static uint64_t last;
+    static unsigned char vis[64 * 64];
+    uint64_t now = ms_now();
+    if (!V.seen || !port_seen_on || display_mode == 1 || now - last < 100) return;   /* (ten times a second is plenty) */
+    last = now;
+    int lev = V.seen(vis);
+    if (lev) port_seen_mark(lev, vis);
 }
 
 /* (re)started at the window's client size; 0: GDI from now on */
@@ -1550,7 +1573,7 @@ enum { MO_VOLPAGE = 105, MO_PRESET = 106, MO_DEFAULTS = 107, MO_VOL = 400 };
 enum { MO_KEYPAGE = 108, MO_KEYDEFAULT = 109, MO_KEY = 2000 };
 /* the Sprites tab (spr_rows_build): MO_SPRPAGE stands in MENU_ROWS where the rows of our own object pictures go
    (MO_SPR + the object: one for each picture that is in uwr\newsprites\objects, none when there is none) */
-enum { MO_SPRPAGE = 110, MO_SPR = 3000 };
+enum { MO_SPRPAGE = 110, MO_SPR = 3000, MO_SPRALL = 3999 };   /* MO_SPRALL: the tab's first row, every picture at once (uwv_option 1999) */
 static int menu_page;
 static char slot_desc[4][48], slot_time[4][24];
 static int slot_used[4];
@@ -1616,6 +1639,7 @@ enum { MO_CARDMUSIC = 196, MO_CARDSPEECH = 197, MO_ROOMINFO = 199, MO_DIAL = 200
    does not set), Quick fades, and the port's own settings screen (F11) */
 enum { MO_RVSYNC = 111, MO_REXPOSE, MO_RGAMMA, MO_RINVERT, MO_RHAND, MO_RSHEEN, MO_RBOUNCES, MO_RRAYLEN, MO_RSPRN, MO_RSPRAO,
        MO_RSPRH, MO_RD5TONE, MO_RD5SAT, MO_RCAMPSW, MO_RFLAMESW, MO_QFADES = 126, MO_SETSCREEN = 127, MO_LOGDETAIL = 128,
+       MO_SEENMAP = 130, MO_MAPARROWS = 131, MO_MAPNOTES = 132, MO_FEUD = 133, MO_MENUFAST = 134, MO_SYSPTR = 135,
        MO_ENH = 167 };
 _Static_assert(MO_ENH + ENH_COUNT <= MO_CARDMUSIC, "the enhancements' rows run into the sound cards'");
 /* The game's own sound devices (the Roland, a Sound Blaster, ...): DATA\UW.CFG's two cards in the home folder, as the settings screen's Sound tab
@@ -1707,6 +1731,7 @@ static const struct { const char *key; int dflt, lo, hi, step, kind, need; const
     /* 46 */ {"acoustics_scatter_by_mat", 1, 0, 1, 1, DK_ONOFF, DN_HIGH, ""},
     /* 47 */ {"acoustics_materials", 0, 0, 1, 1, DK_NUM, DN_AC, ""},     /* (the sound started again: the table is read then) */
     /* 48 */ {"acoustics_surround", 1, 0, 1, 1, DK_ONOFF, DN_HIGH, ""},  /* (the sound started again: uwaudio.c hi_channels) */
+    /* 49 */ {"fx_feet_below", 1, 0, 1, 1, DK_ONOFF, DN_AUDIO, ""},       /* (uwaudio.c own_place) */
 };
 #define SOUND_NDIALS ((int)(sizeof SOUND_DIALS / sizeof SOUND_DIALS[0]))
 static int dial_val[sizeof SOUND_DIALS / sizeof SOUND_DIALS[0]], dials_read;
@@ -1842,6 +1867,9 @@ static const struct { int id; const char *label; int opt; const char *hint; } ME
     {MO_NEW, "New game (title screen)", -1, "Back to the title screen to start a new character. Anything not saved is lost."},
     {MO_SETSCREEN, "Start-up settings (F11)", -1, "Opens the settings screen the game has at its start: mouse capture, mouse-look speed, master volume, the window and its scaling, the folders, recording sessions. F11 closes it."},
     {MO_QFADES, "Quick fades", -1, "On: the map and the game's screens fade in at once. Off: the original's half-second fades. Default On."},
+    {MO_SEENMAP, "Map what I saw", -1, "On: the map shows every place you have seen in the 3D view, kept with your saves. Off: the original's map alone, which only marks what its own narrow, short view saw. Default On."},
+    {MO_MAPARROWS, "Map level arrows", -1, "Levels 1 to 8: the map's arrows stop at the last level that has a map. Original: they go on to level 99, every page past 8 blank."},
+    {MO_MAPNOTES, "Map notes kept right", -1, "On: notes you erase stay erased and every note you keep is kept. Off: the original's faults (an erased last note comes back, of two erased notes in a row one stays). Default On."},
     {MO_LOGDETAIL, "Log detail", -1, "How much the game writes to uwr.log. Normal is enough unless you are chasing a problem."},
     {MO_QUIT, "Quit the game", -1, "Closes the game at once, without asking. Anything not saved is lost."},
     {MO_HEAD, "#Display", -1, ""},
@@ -1859,6 +1887,8 @@ static const struct { int id; const char *label; int opt; const char *hint; } ME
     {MO_FONTSIZE, "Font size", 43, "Size of the interface's letters, in steps of 5%. 100% is the size picked for your screen resolution."},
     {MO_MENUFONT, "Menu text", 18, "This menu's letters: Smooth (easy to read, the default) or the original game's small capitals."},
     {MO_MENUBG, "Menu background", 63, "What lies behind this menu's rows and text: Solid colour (dark, easiest to read, the default) or Leather, the game's own."},
+    {MO_MENUFAST, "Quick menu drawing", 64, "On: this menu is drawn again only when something in it changes, and the pointer moves at the game's full speed. Off: the whole menu is drawn again every frame, which can make the pointer jerky. Default On."},
+    {MO_SYSPTR, "Pointer in menus", 65, "System: in this menu and the inventory the pointer is the system's own, which moves as smoothly as your mouse whatever the game's frame rate (it looks the same: the game's cross, or the thing you carry). Drawn: the game draws it into its picture, as before, so it moves only as often as a frame is drawn. Default System."},
     {MO_CONVFONT, "Conversation text", 17, "The letters in conversations: Smooth (easy to read, the default) or the original game's font."},
     {MO_LOGFONT, "Message text", 41, "The message box's letters: Smooth (smaller and easier to read, the default) or the original game's font."},
     {MO_CHARSHEET, "Character sheet", 40, "The sheet in the inventory (Tab). Full: every number the rules use (the default). Or the game's own statistics page."},
@@ -1924,11 +1954,12 @@ static const struct { int id; const char *label; int opt; const char *hint; } ME
     {MO_CARDMUSIC, "Music and effects device", -1, "What plays music and effects. Only the Roland MT-32 (needs its ROM files) gives positional sound. From the next start."},
     {MO_CARDSPEECH, "Speech device", -1, "The device that plays the game's recorded speech, or None. Takes hold at the next start."},
     {MO_FXAUDIO, "Positional sound", 14, "On: each sound comes from the place where it happens. The sound rows below need it. Off: the game's plain sound."},
-    {MO_HRTF, "Headphone 3D sound", 19, "For headphones: tells sounds ahead from sounds behind. Automatic: on when Windows sees headphones. Default On."},
+    {MO_HRTF, "Headphone 3D sound", 19, "For headphones: each sound is made for your two ears, so it comes from where it is, ahead, behind, above or below. Automatic: on when Windows sees headphones. The value says whether it is working now. Default On."},
     {MO_PANFIX, "Effects' sides", 20, "The Roland MT-32 swaps left and right. Corrected (the default) puts each sound on its true side."},
     {MO_HEARRANGE, "Hearing range", 56, "How far away a sound can be heard: Original (6 tiles), or 9, 12, 16 or 24 tiles for a longer fade-out."},
     {MO_FEETSPREAD, "Footstep width", 57, "How far apart your two feet sound: Middle (both centred), Original (barely apart), up to 800% (wide apart)."},
     {MO_STEPVOL, "Footstep volume", 59, "How loud all footsteps are, yours and the creatures', next to other sounds: Off, or 10% to 200%. Default 80%."},
+    {MO_DIAL + 49, "Footsteps at your feet", -1, "On: your own footsteps come from below you, where your feet are, as they would. Off: from just in front of you at ear height, as before. Best heard with Headphone 3D sound. Default On."},
     {MO_DIAL + 40, "Your own footsteps", -1, "How loud your own footsteps are, on top of Footstep volume; the creatures' steps stay as they are: 0% (silent) to 200%. Default 100%."},
     {MO_STEPECHO, "Footstep echo", 60, "How strongly footsteps echo, next to other sounds' echoes: Off, or 10% to 200%. Default 50%. Acoustics High only."},
     {MO_FOOTSTEPS, "Footsteps by floor", 30, "On: steps sound like the floor under them (wood, water, earth, metal). Off: the original's two step sounds."},
@@ -1995,6 +2026,7 @@ static const struct { int id; const char *label; int opt; const char *hint; } ME
     {MO_KEYPAGE, "", -1, ""},
     {MO_HEAD, "#AI", -1, ""},
     {MO_AILEVEL, "Creature AI", -1, "Original: as shipped. Devious: each creature is cunning on its own. Monstrous: they also work together, as packs."},
+    {MO_FEUD, "Rival creatures fight", -1, "Now and then two creatures of rival kinds (the two goblin tribes; trolls and mountain folk against goblins; spiders hunting rats) that have not noticed you fight each other. Rare: about once in a long while. Off: as the original, where they never do."},
     {MO_AIFRIENDS, "Friendly creatures", -1, "Friendly creatures nod to you, follow a while if your weapon is drawn, back away, or point out a foe. Off: as the original."},
     {MO_AIP0, "Hit and run", -1, "Creatures that shoot or cast wait up to 20 s for you to come in range, strike, then back off. At Monstrous they fall back to kin."},
     {MO_AIX0, "Hears you run", -1, "Creatures near you hear you run and come for you. Walking is silent to them: walk when you want to pass unheard."},
@@ -2084,6 +2116,12 @@ static int spr_rows_build(int list, const char **lab, const char **val, const ch
     int any = 0;
     char v[128];
     if (!V.dll || !V.option) return 0;
+    if (list && menu_n < MENU_MAX - 1 && V.option(1999, 0, v, sizeof v)) {   /* first: all of them at once */
+        snprintf(vbuf[menu_n], 128, "%s", v);
+        menu_ids[menu_n] = MO_SPRALL, lab[menu_n] = "All redrawn pictures", val[menu_n] = vbuf[menu_n];
+        hint[menu_n] = "Turns every redrawn item picture on, or all of them off again. Each item also has its own row below.";
+        menu_n++;
+    }
     for (int k = 0; k < 512; k++) {
         if (!V.option(1000 + k, 0, v, sizeof v)) continue;
         any = 1;
@@ -2128,7 +2166,7 @@ static int menu_tab_of(int id)   /* the tab a row is on */
 typedef struct { int id; const char *want; int own; } PresetRow;
 static const PresetRow PR_DISPLAY[] = {
     {MO_FOV, "85"}, {MO_SMOOTH, "On"}, {MO_FADE, "5 s"}, {MO_DOORSTEP, "On"}, {MO_DOORPICK, "On"}, {MO_DOORCUE, "On"},
-    {MO_FONTSIZE, "*(100%)"}, {MO_MENUFONT, "Smooth"}, {MO_MENUBG, "Solid colour"}, {MO_CONVFONT, "Smooth"}, {MO_LOGFONT, "Smooth"},
+    {MO_FONTSIZE, "*(100%)"}, {MO_MENUFONT, "Smooth"}, {MO_MENUBG, "Solid colour"}, {MO_MENUFAST, "On"}, {MO_SYSPTR, "System"}, {MO_CONVFONT, "Smooth"}, {MO_LOGFONT, "Smooth"},
     {MO_CHARSHEET, "Full"},
 };
 static const PresetRow PR_GRAPHICS[] = {   /* (uwview.c's S, render.c's and render_vk.c's statics) */
@@ -2417,7 +2455,7 @@ static void menu_rows_pass(const char **lab, const char **val, const char **hint
            menu's own letters and background) */
         if (display_mode == 1 && id != MO_HEAD && id != MO_RESUME && id != MO_SAVE && id != MO_LOAD && id != MO_NEW && id != MO_QUIT
             && id != MO_DISPLAY && id != MO_FULL && id != MO_MUSIC && id != MO_MUSVOL && id != MO_SOUND && id != MO_FXVOL
-            && id != MO_CARDMUSIC && id != MO_CARDSPEECH && id != MO_MENUFONT && id != MO_MENUBG) continue;
+            && id != MO_CARDMUSIC && id != MO_CARDSPEECH && id != MO_MENUFONT && id != MO_MENUBG && id != MO_MENUFAST) continue;
         vbuf[menu_n][0] = 0;
         if (id == MO_HEAD) {   /* a section's heading: a tab (its name is in the strip, not in the list); the open tab's own two rows first */
             if (++sec < MENU_TABS && sec == menu_tab) tab_head_rows(sec, lab, val, hint, vbuf);
@@ -2425,16 +2463,32 @@ static void menu_rows_pass(const char **lab, const char **val, const char **hint
         } else if (sec < 0 || sec >= MENU_TABS) continue;
         else if (MENU_ROWS[i].opt >= 0) {
             if (!V.option || !V.option(MENU_ROWS[i].opt, 0, vbuf[menu_n], 128)) continue;
+            if (id == MO_HRTF) {   /* what the sound device made of it, so the player can see 3D sound is working */
+                int h = uwaudio_hrtf();
+                size_t l = strlen(vbuf[menu_n]);
+                const char *now = h == 1 || h == 3 || h == 4 ? " (working now)" : h == 0 ? " (not in use now)"
+                                : h == 2 || h == 5 ? " (this output cannot)" : "";
+                snprintf(vbuf[menu_n] + l, 128 - l, "%s", now);
+            }
         } else if (id == MO_DISPLAY) {   /* (no renderer: no display of ours to choose) */
             if (!V.ok) continue;
             snprintf(vbuf[menu_n], 128, "%s", display_mode == 1 ? "The original's" : "Ours");
         }
         else if (id == MO_CARDMUSIC || id == MO_CARDSPEECH) card_text(id == MO_CARDSPEECH, vbuf[menu_n], 128);
         else if (id == MO_ROOMINFO) {   /* what the rays measure at the listener (shown while the acoustics run) */
+            /* (asked of the sound four times a second, not every frame: the asking waits on the acoustics' thread,
+               0.8 ms, and the menu builds its rows every frame; 2026-11-22, the menu's slow frames) */
+            static char room_txt[128];
+            static uint64_t room_at;
             float rt[3], mfp = 0, first = 0;
             if (!uwaudio_acoustics_on()) continue;
-            if (uwaudio_room(rt, &mfp, &first)) snprintf(vbuf[menu_n], 128, "rings %.1f / %.1f / %.1f s, %.1f m between walls", rt[0], rt[1], rt[2], mfp);
-            else snprintf(vbuf[menu_n], 128, "%s", "(no room here)");
+            char qv[16] = "";
+            if (!room_txt[0] || ms_now() - room_at >= 250 || !V.option || !V.option(64, 0, qv, sizeof qv) || strcmp(qv, "On")) {   /* (every frame with Quick menu drawing Off) */
+                room_at = ms_now();
+                if (uwaudio_room(rt, &mfp, &first)) snprintf(room_txt, sizeof room_txt, "rings %.1f / %.1f / %.1f s, %.1f m between walls", rt[0], rt[1], rt[2], mfp);
+                else snprintf(room_txt, sizeof room_txt, "%s", "(no room here)");
+            }
+            snprintf(vbuf[menu_n], 128, "%s", room_txt);
         }
         else if (id >= MO_DIAL && id < MO_DIAL + SOUND_NDIALS) {
             if (!dial_shown(id - MO_DIAL)) continue;
@@ -2473,6 +2527,9 @@ static void menu_rows_pass(const char **lab, const char **val, const char **hint
         else if (id == MO_FADE) { int f = fade_secs(); if (f) snprintf(vbuf[menu_n], 128, "%d s", f); else snprintf(vbuf[menu_n], 128, "Never"); }
         else if (id >= MO_ENH && id < MO_ENH + ENH_COUNT) snprintf(vbuf[menu_n], 128, "%s", ENHANCED(id - MO_ENH) ? "On" : "Off");
         else if (id == MO_QFADES) { extern int port_quick_fades; snprintf(vbuf[menu_n], 128, "%s", port_quick_fades ? "On" : "Off"); }
+        else if (id == MO_SEENMAP) snprintf(vbuf[menu_n], 128, "%s", port_seen_on ? "On" : "Off");
+        else if (id == MO_MAPARROWS) snprintf(vbuf[menu_n], 128, "%s", port_map_arrows8 ? "Levels 1 to 8" : "Original (to 99)");
+        else if (id == MO_MAPNOTES) snprintf(vbuf[menu_n], 128, "%s", port_map_notes_fixed ? "On" : "Off");
         else if (id == MO_LOGDETAIL) snprintf(vbuf[menu_n], 128, "%s", LOG_DETAIL[rlog_level()]);
         else if (id == MO_SETSCREEN) snprintf(vbuf[menu_n], 128, "%s", "Enter");
         else if (id == MO_DOORSTEP) snprintf(vbuf[menu_n], 128, "%s", door_step(-1) ? "On" : "Off");
@@ -2491,6 +2548,11 @@ static void menu_rows_pass(const char **lab, const char **val, const char **hint
         else if (id == MO_AIFRIENDS) {   /* the friendly creatures' part (7): the two smarter levels */
             if (port_ai_level(-1) < 1) continue;
             ai_part_value(vbuf[menu_n], 7);
+        }
+        else if (id == MO_FEUD) {   /* rival creatures fight (feud.c): the two smarter levels */
+            static const char *const FEUD[3] = {"Off", "Rare", "Sometimes"};
+            if (port_ai_level(-1) < 1) continue;
+            snprintf(vbuf[menu_n], 128, "%s", FEUD[port_feud_mode(-1) % 3]);
         }
         else if (id == MO_AILOGFILE) {
             if (port_ai_level(-1) < 1) continue;
@@ -2704,6 +2766,10 @@ static int menu_step_tab_row(int id, int step)
         if (vol_have()) V.vol_value(id - MO_VOL, step, v, sizeof v);
         return 1;
     }
+    if (id == MO_SPRALL) {   /* the Sprites tab's first row: every picture on, or all off */
+        if (V.option) V.option(1999, step ? step : 1, v, sizeof v);
+        return 1;
+    }
     if (id >= MO_SPR && id < MO_SPR + 512) {   /* a row of the Sprites tab: the other picture, at once */
         if (V.option) V.option(1000 + id - MO_SPR, step ? step : 1, v, sizeof v);
         return 1;
@@ -2770,6 +2836,22 @@ static int menu_step_page_row(int id, int step)
             enhance_load(plat_home(), &keep);   /* (the file's own line, the Display switch's flags as they were) */
             enhance_save(plat_home(), (keep & ~bit) | (enhance_on & bit));
         }
+        return 1;
+    }
+    if (id == MO_MAPARROWS) {   /* the map's level arrows stop at 8 (uw1port.cfg map_arrows8, 1 unless 0) */
+        port_map_arrows8 = !port_map_arrows8;
+        if (plat_home()) port_config_set(plat_home(), "map_arrows8", port_map_arrows8 ? "1" : "0");
+        return 1;
+    }
+    if (id == MO_MAPNOTES) {   /* the map's notes kept right (uw1port.cfg map_notes_fixed, 1 unless 0) */
+        port_map_notes_fixed = !port_map_notes_fixed;
+        if (plat_home()) port_config_set(plat_home(), "map_notes_fixed", port_map_notes_fixed ? "1" : "0");
+        return 1;
+    }
+    if (id == MO_SEENMAP) {   /* our map of what the player saw (uw1port.cfg map_seen, 1 unless 0) */
+        port_seen_on = !port_seen_on;
+        if (plat_home()) port_config_set(plat_home(), "map_seen", port_seen_on ? "1" : "0");
+        RLOG_I("front", "map what I saw: %s", port_seen_on ? "on" : "off");
         return 1;
     }
     if (id == MO_QFADES) {   /* the map's and screens' fades instant (uw1port.cfg quick_fades, 1 unless 0) */
@@ -2880,6 +2962,7 @@ static void menu_step_own_row(int id, int step)
         port_ai_part(8 + id - MO_AIX0, !port_ai_part(8 + id - MO_AIX0, -1));
         break;
     case MO_AILOGFILE: port_ai_logfile(!port_ai_logfile(-1)); break;
+    case MO_FEUD: port_feud_mode((port_feud_mode(-1) + (step > 0 ? 1 : 2)) % 3); break;   /* Off -> Rare -> Sometimes */
     case MO_AILOG: our_action(UWI_A_AI_LOG, 1); break;   /* (Ctrl+L's own switch: the note in the message box too) */
     case MO_LLMGPU: port_mind_tune(0, !port_mind_tune(0, -1)); break;
     case MO_LLMMODE: port_mind_tune(1, !port_mind_tune(1, -1)); break;
@@ -3116,6 +3199,9 @@ static void display_init(void)
            conversation and other screens back to the 3D view at once); 0 keeps the original's half-second fades */
         extern int port_quick_fades;
         port_quick_fades = !(plat_home() && port_config_get(plat_home(), "quick_fades", v, sizeof v) == 0 && atoi(v) == 0);
+        port_seen_on = !(plat_home() && port_config_get(plat_home(), "map_seen", v, sizeof v) == 0 && atoi(v) == 0);
+        port_map_arrows8 = !(plat_home() && port_config_get(plat_home(), "map_arrows8", v, sizeof v) == 0 && atoi(v) == 0);
+        port_map_notes_fixed = !(plat_home() && port_config_get(plat_home(), "map_notes_fixed", v, sizeof v) == 0 && atoi(v) == 0);
     }
 #endif
     display_apply();
@@ -3748,6 +3834,7 @@ static int view_world(void)
     if (V.roll) V.roll((float)s->bank * 6.2831853f / 65536.0f);
     if (V.palette) V.palette(L.pal);   /* the DAC now: colour cycling, fades and flashes */
     if (V.light) V.light(s->light);
+    seen_mark_frame();   /* our map of what the player saw (the Esc menu's Map what I saw) */
     /* the lens (INSTANCE.ASM's scale_matrix): x and y are scaled so that the view's edges are the 45-degree planes
        CLIP.ASM clips at; measured on the original's own pictures (a test pattern on the wall textures, the white and
        yellow lines of its tile edges and its wall tops; work\agentE\fit4.py): the half width's tangent is 0.99 =
@@ -3923,6 +4010,7 @@ static void view_note_original(void)
     }
 }
 /* the host's pointer in our display, but for a cutscene (the game's cursor never stands in for it then) */
+static int sys_ptr_on;   /* our panels' pointer is the host's cursor now (view_sys_pointer) */
 static void view_host_pointer(void)
 {
     /* (never the host's pointer over our display, the game's cursor only: the game draws its own, our menu and
@@ -3930,7 +4018,7 @@ static void view_host_pointer(void)
     port_stack_whole = display_mode == 0;   /* our display: a stack whole, never the original's typed
                                                dialog; split in our panel (Shift + a click, ask_begin) */
     host_pointer = 0, port_host_pointer = display_mode == 0 && inv_open ? 2 : 0;   /* our panel draws the pointer and the thing on it (the top is the original's screen: its cursor would show twice) */
-    if (display_mode == 0 && !uwp_cursor_hidden() && focused && !offscreen() && !settings_open()) {
+    if (display_mode == 0 && !sys_ptr_on && !uwp_cursor_hidden() && focused && !offscreen() && !settings_open()) {
         int cpx, cpy, crw, crh;
         if (uwp_pointer_pos(&cpx, &cpy) && uwp_window_size(&crw, &crh) && cpx >= 0 && cpy >= 0 && cpx < crw && cpy < crh)
             uwp_cursor_hide(1);
@@ -3952,6 +4040,31 @@ static void view_fill_layer(const uint32_t *src, int sw, int sh, int ours, int x
             row[x * 4] = (unsigned char)(c >> 16), row[x * 4 + 1] = (unsigned char)(c >> 8), row[x * 4 + 2] = (unsigned char)c;
             row[x * 4 + 3] = ours && inside && clear_px[sy * sw + sx] ? 0 : 255;
         }
+    }
+}
+/* our panels' pointer (the inventory's, the Esc menu's) as the host's cursor, when the panel drawn this frame asked for
+   it (the row Pointer in menus: System): its picture given to the window when it changed; the host's cursor shown
+   while it is ours, and the window's own way again when no panel is open (PLAN-fast-ui.md step A) */
+static void view_sys_pointer(void)
+{
+    static unsigned last, buf[256 * 256];
+    int w = 0, h = 0, hx = 0, hy = 0;
+    unsigned sig = V.pointer ? V.pointer(buf, 256 * 256, &w, &h, &hx, &hy) : 0;
+    /* (our menu frees the pointer even while mouse-look's capture is wanted: capture_sync's clip; the inventory only when
+       the pointer is free) */
+    int panel = display_mode == 0 && !settings_open() && (menu_open || (inv_open && uwf_pointer_free()));
+    if (panel && sig && sig != last) {
+        uwp_cursor_picture(buf, w, h, hx, hy), last = sig;
+        RLOG_I("front", "pointer: the system's cursor %dx%d (point %d,%d) for the %s at %lu ms", w, h, hx, hy,
+               menu_open ? "Esc menu" : "inventory", (unsigned long)(ms_now() - L.start));
+    }
+    static int none;   /* frames in a row a panel was open but did not ask (the row set to Drawn, or not drawn) */
+    none = panel && !sig ? none + 1 : 0;
+    if (panel && last && sig && !sys_ptr_on) sys_ptr_on = 1, uwp_cursor_hide(0);
+    if ((!panel || none >= 3) && sys_ptr_on) {
+        sys_ptr_on = 0, last = 0;
+        uwp_cursor_picture(NULL, 0, 0, 0, 0);
+        RLOG_I("front", "pointer: the game's own again at %lu ms", (unsigned long)(ms_now() - L.start));
     }
 }
 /* our menu drawn over the layer by the renderer: its tabs, its rows, the sliders */
@@ -4065,6 +4178,7 @@ static void view_present(const uint32_t *src, int sw, int sh)
     inv_pump();
     if (inv_open && full_play() && V.inventory && layer) inv_draw();   /* our inventory panel */
     if (menu_open && V.menu_rows && layer) view_menu_draw();
+    view_sys_pointer();
     if (L.shot == 1 && live.window_shot_path && V.want_shot) V.want_shot();
     if (screen_now() == PS_DEATH && fade_state && layer && V.ui) layer = view_death_fade(layer);
     uint64_t t2 = plat_counter();
@@ -4421,7 +4535,8 @@ void uwf_raw_motion(long dx, long dy) { raw_motion(dx, dy); }
 /* a move of the pointer, after its event: the game's cursor stands in for the host's over the picture */
 int uwf_hover(int x, int y)
 {
-    if (!(!locked && !captured && !settings_open() && L.have_dst)) return -1;
+    if (sys_ptr_on && !settings_open()) return 0;   /* our panels' pointer is the host's cursor: it shows (the menu: even with mouse-look's capture wanted) */
+    if (!(!locked && !captured && !settings_open() && L.have_dst)) return -1;   /* our panels' pointer is the host's cursor: it shows */
     float gx, gy;   /* (in a conversation in our display, over its pieces: uwconv.c) */
     int over = uwc_shown() ? uwc_point(x, y, &gx, &gy) : x >= L.dst.left && x < L.dst.right && y >= L.dst.top && y < L.dst.bottom;
     if (display_mode == 0) over = 1;   /* our display: never the host's pointer, the game's only */

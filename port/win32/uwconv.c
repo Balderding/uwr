@@ -201,6 +201,7 @@ void port_map_typing(const char *text, int x, int y)
     __atomic_add_fetch(&typing_seq, 1, __ATOMIC_ACQ_REL);
 }
 
+const unsigned char *port_seen_view(int lev);   /* underworld-exhumed port\sys\seenmap.c: NULL when off */
 /* draws our map over the map screen's layer from the game's map data */
 static void draw_map(const unsigned *src, int sw, int sh, int dx, int dy, int k)
 {
@@ -227,7 +228,9 @@ static void draw_map(const unsigned *src, int sw, int sh, int dx, int dy, int k)
         if (__atomic_load_n(&typing_seq, __ATOMIC_ACQUIRE) == a) break;
     }
     int on = port_mouse_drawn(&cx, &cy, &cw, &ch, &cpic);
-    map_fn(src, sw, sh, dx, dy, k, &PlayersMap[0][0], pal, notes, nx, ny, n, ton ? typed : NULL, tx, ty,
+    const unsigned char *pm = port_seen_view(lev);   /* the Esc menu's Map what I saw: ours and the original's together */
+    if (!pm) pm = &PlayersMap[0][0];
+    map_fn(src, sw, sh, dx, dy, k, pm, pal, notes, nx, ny, n, ton ? typed : NULL, tx, ty,
            mx, my, on, cx, cy, cw, ch, cpic);
 }
 

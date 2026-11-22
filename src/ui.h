@@ -20,6 +20,10 @@ bool ui_start(const char *data_dir, int window_w, int window_h);
 /* the game's folder (game\DATA's fonts are copied into data\ui\fonts when missing there): before ui_start */
 void ui_game_dir(const char *game_dir);
 Overlay *ui_overlay(void);
+/* the text layer (window pixels, a row the window's width) and the rectangle drawn on (x0 > x1: none); NULL none */
+/* the whole overlay one colour, straight after ui_clear (the same as ui_fill over all of it, quicker) */
+void ui_fill_empty(u8 r, u8 g, u8 b, u8 a);
+const unsigned *ui_text_rect(int *x0, int *y0, int *x1, int *y1, int *stride);
 void ui_clear(void);
 /* a picture from data\ui or data\sprites, e.g. ("ui\\flasks", 75); NULL when missing (loaded once, kept) */
 const Pic *ui_pic(const char *dir, int k);
@@ -27,6 +31,13 @@ const Pic *ui_pic_file(const char *rel);
 /* the mouse pointer (CURSORS.GR picture n) with its point on (x, y): the cross pictures' centre pixel, the others'
  * middle */
 void ui_cursor(int n, int x, int y);
+/* the pointer as the system's cursor (the Esc row Pointer in menus): ui_pointer_take, where a panel would draw the
+ * pointer (item -1: the small cross; else the thing carried and its count), returns 1 when the system's cursor shows
+ * it (then draw nothing), 0 to draw it as before; ui_pointer_picture: this frame's picture (0: none asked for) */
+void ui_sys_pointer_set(int on);
+int ui_sys_pointer_on(void);
+int ui_pointer_take(int item, int qty);
+unsigned ui_pointer_picture(unsigned *out, int cap, int *w, int *h, int *hx, int *hy);
 void ui_draw(const Pic *p, int x, int y, int scale);
 /* an object's picture for the interface: ours (data\newsprites\objects, the Esc menu's Sprites tab: ui_new_sprite[item]
  * 1) when its file is there, else the original's. *div: 2 when it is at twice the detail (over 16 a side), else 1 */

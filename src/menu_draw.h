@@ -6,6 +6,8 @@
 int md_rows(unsigned char *ui_buf, int ui_w, int ui_h, bool smooth, const char *title, const char *const *labels,
             const char *const *values, const char *const *hints, int n, int sel, int mx, int my);
 void md_set_solid(int on);                         /* the panel's ground: 1 one dark colour (the default), 0 the leather */
+void md_set_fast(int on);                          /* Quick menu drawing: 1 the finished picture kept while unchanged (default) */
+int md_get_fast(void);
 void md_wheel(int notches);                        /* the list scrolled: up positive */
 int md_click(int ui_ok, int mx, int my, int down); /* a left press / release on the scrollbar: 1 taken */
 /* the rows' sliders (the Fog and smoke page): each row's place along its track (0..1; below 0 none) for the next

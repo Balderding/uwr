@@ -37,6 +37,7 @@ static volatile LONG game_done;         /* 1 once the game's thread has ended: t
 static int game_status;                 /* the game's exit code, plat_run's answer */
 static int focus_test_msg;             /* UWPORT_FOCUSTEST's own WM_KILLFOCUS / WM_SETFOCUS being handled (its log tag) */
 static int cursor_hidden;              /* the host's cursor hidden (uwp_cursor_hide; ShowCursor's count is ours) */
+static HCURSOR our_cursor;              /* our panels' pointer as the host's cursor (uwp_cursor_picture), NULL none */
 static uint64_t ms_now(void) { return GetTickCount64(); }
 static void set_capture(int on);
 static void resize_client(int w, int h);
@@ -320,6 +321,9 @@ static LRESULT CALLBACK wnd_proc(HWND w, UINT m, WPARAM wp, LPARAM lp)
             TrackMouseEvent(&t);
         }
         return 0;
+    case WM_SETCURSOR:    /* our panels' pointer as the host's cursor over the client area (the frame's edges keep theirs) */
+        if (our_cursor && LOWORD(lp) == HTCLIENT) { SetCursor(our_cursor); return TRUE; }
+        break;
     case WM_MOUSEWHEEL:   /* the message box, the menu's list, a conversation's scroll (uwf_wheel) */
         uwf_wheel(GET_WHEEL_DELTA_WPARAM(wp));
         return 0;
@@ -883,6 +887,42 @@ void uwp_cursor_hide(int hide)
 {
     if (hide) { if (!cursor_hidden) { ShowCursor(FALSE); cursor_hidden = 1; } }
     else if (cursor_hidden) { ShowCursor(TRUE); cursor_hidden = 0; }
+}
+/* our panels' pointer as the host's cursor: a 32-bit alpha cursor made from the picture (CreateIconIndirect), shown at
+   once; the one before it destroyed after the new one is in. NULL: the class's arrow again. (A cursor moves at the
+   monitor's refresh, apart from our frames: PLAN-fast-ui.md step A.) */
+void uwp_cursor_picture(const unsigned *argb, int w, int h, int hx, int hy)
+{
+    HCURSOR old = our_cursor, made = NULL;
+    if (argb && w > 0 && h > 0) {
+        BITMAPV5HEADER bi = {0};
+        void *bits = NULL;
+        bi.bV5Size = sizeof bi, bi.bV5Width = w, bi.bV5Height = -h, bi.bV5Planes = 1, bi.bV5BitCount = 32;
+        bi.bV5Compression = BI_BITFIELDS;
+        bi.bV5RedMask = 0x00FF0000, bi.bV5GreenMask = 0x0000FF00, bi.bV5BlueMask = 0x000000FF, bi.bV5AlphaMask = 0xFF000000;
+        HDC dc = GetDC(NULL);
+        HBITMAP col = CreateDIBSection(dc, (BITMAPINFO *)&bi, DIB_RGB_COLORS, &bits, NULL, 0);
+        ReleaseDC(NULL, dc);
+        HBITMAP mask = CreateBitmap(w, h, 1, 1, NULL);
+        if (col && bits && mask) {
+            memcpy(bits, argb, (size_t)w * h * 4);
+            GdiFlush();
+            ICONINFO ii = {FALSE, (DWORD)hx, (DWORD)hy, mask, col};
+            made = (HCURSOR)CreateIconIndirect(&ii);
+        }
+        if (!made) RLOG_E("win32", "cannot make the pointer's cursor (%dx%d): error %lu; the drawn pointer's place stays empty", w, h, GetLastError());
+        if (col) DeleteObject(col);
+        if (mask) DeleteObject(mask);
+        if (!made) return;
+    }
+    our_cursor = made;
+    if (g_win) {
+        POINT pt;
+        RECT rc;
+        if (GetCursorPos(&pt) && ScreenToClient(g_win, &pt) && GetClientRect(g_win, &rc) && PtInRect(&rc, pt))
+            SetCursor(made ? made : LoadCursorW(NULL, (LPCWSTR)IDC_ARROW));
+    }
+    if (old) DestroyCursor(old);
 }
 int uwp_pointer_pos(int *x, int *y)
 {

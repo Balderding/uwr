@@ -177,6 +177,7 @@ static int hear_range = 6;
 static float step_vol = 0.8f, step_echo = 0.5f;
 static float own_step_vol = 1.0f;   /* fx_own_step_volume, percent: the player's own steps on top of step_vol */
 static int step_plain;             /* fx_step_plain: the player's own steps as the plain rendering */
+static int feet_below = 1;         /* fx_feet_below: the player's own steps at the feet, under the ears (0: at ear height) */
 #define AL_DIRECT_CHANNELS_SOFT_ 0x1033
 static unsigned step_buf[2 * STEP_PRESETS];  /* the user's NNN-<preset>.wav, by (effect - 1) * 16 + preset */
 static signed char step_state[2 * STEP_PRESETS];   /* 0 not tried, 1 there, -1 none */
@@ -1451,6 +1452,7 @@ void uwaudio_tune(const char *datadir)
         step_echo = clampf(setting_float(datadir, "fx_step_echo", 50.0f) / 100.0f, 0, 2.0f);
         step_plain = setting_get(datadir, "fx_step_plain", 0) != 0;
         own_step_vol = clampf(setting_float(datadir, "fx_own_step_volume", 100.0f) / 100.0f, 0, 2.0f);
+        feet_below = setting_get(datadir, "fx_feet_below", 1) != 0;
         for (int i = 0; i < NSRC; i++) A.alSourcef(src[i], AL_MAX_DISTANCE, (float)hear_range);
         if (!AC.on) tune_read(datadir);
     }
@@ -1466,7 +1468,7 @@ void uwaudio_tune(const char *datadir)
     }
     if (HI.on) {
         int err;
-        uwst_tile_m(AC.tile_m), A.alSourcei(HI.src, AL_DIRECT_CHANNELS_SOFT, TU.direct), err = A.alGetError();
+        uwst_tile_m(AC.tile_m), A.alSourcei(HI.src, AL_DIRECT_CHANNELS_SOFT, TU.direct && HI.nch > 2 ? 2 : TU.direct), err = A.alGetError();
         if (err) {
             static int said;
             if (!said++) RLOG_W("audio", "the echo stream's setup: OpenAL error 0x%x (it may be placed by OpenAL as well)", (unsigned)err);
@@ -1570,6 +1572,7 @@ static int start(const char *datadir)
         step_echo = clampf(setting_float(datadir, "fx_step_echo", 50.0f) / 100.0f, 0, 2.0f);
         step_plain = setting_get(datadir, "fx_step_plain", 0) != 0;
         own_step_vol = clampf(setting_float(datadir, "fx_own_step_volume", 100.0f) / 100.0f, 0, 2.0f);
+        feet_below = setting_get(datadir, "fx_feet_below", 1) != 0;
     }
     tune_read(datadir);
     A.alListenerf(AL_GAIN, listener_gain());   /* (again by hrtf_read, once the device says whether HRTF is on) */
@@ -2000,6 +2003,25 @@ static int event_source(int fx)
     return k;
 }
 
+/* Where a sound the game plays at the player (play_effect_here) is heard, against the ears, in tiles: right, up,
+   ahead (the listener's own frame). The two feet's steps (fx 1, 2) with fx_feet_below on: at the feet, so the HRTF
+   puts them below the listener. The eye is 0xA4 / 256 = 0.64 tiles above the feet (uwfront.c fx_pump1), so 0.54
+   down leaves the place a tenth of a tile off the floor (Steam Audio's rays for its echoes start in open air); 0.12
+   ahead; the pan's side a quarter tile out at most (the game's own pan, 0x48 / 0x38, gives 3 cm). Otherwise as before
+   2026-11-19: the pan's side a third of a tile out, at ear height (no pan, 0x40: at the listener itself, 0 0 0).
+   Returns 0 for "at the listener". */
+static int own_place(int fx, int pan, float *right, float *up, float *ahead)
+{
+    float s = pan >= 0 ? clampf(((float)pan - 64.0f) / 64.0f * feet_spread, -1, 1) : 0;
+    *right = *up = *ahead = 0;
+    if (feet_below && (fx == 1 || fx == 2)) {
+        *right = s * 0.25f, *up = -0.54f, *ahead = 0.12f;
+        return 1;
+    }
+    if (s == 0) return 0;
+    *right = s * 0.33f, *ahead = sqrtf(1.0f - s * s) * 0.33f;
+    return 1;
+}
 /* source k given effect fx's buffer, its level (the footsteps' own, the player's own steps' on top) and its place:
    at the listener for play_effect_here (x < 0, turned a little to the side its pan says), else where the game
    put it. Returns the gain given. */
@@ -2021,11 +2043,14 @@ static float event_source_set(int k, int fx, float x, float y, float z, int pan,
         /* its pan: the player's two feet are play_effect_here(1, 0x48) and (2, 0x38), a little right and a little
            left of the middle (0x40). The side is the pan's share of the way to a side, a little ahead (a direction
            is all OpenAL needs; a relative source ignores the listener's turn). 0x40 and no pan: at the listener. */
-        float s = pan >= 0 ? ((float)pan - 64.0f) / 64.0f * feet_spread : 0;
-        s = s < -1 ? -1 : s > 1 ? 1 : s;
+        /* (own_place: at the feet for the steps. Only the direction is given, a tile out as before, so the level
+           by distance stays what it was) */
+        float r, u, a;
         A.alSourcei(src[k], AL_SOURCE_RELATIVE, 1);
-        if (s != 0) A.alSource3f(src[k], AL_POSITION, s, 0, -sqrtf(1.0f - s * s));
-        else A.alSource3f(src[k], AL_POSITION, 0, 0, 0);
+        if (own_place(fx, pan, &r, &u, &a)) {
+            float l = sqrtf(r * r + u * u + a * a);
+            A.alSource3f(src[k], AL_POSITION, r / l, u / l, -a / l);
+        } else A.alSource3f(src[k], AL_POSITION, 0, 0, 0);
     } else {
         A.alSourcei(src[k], AL_SOURCE_RELATIVE, 0);
         A.alSource3f(src[k], AL_POSITION, x, y, -z);
@@ -2060,14 +2085,14 @@ static void event_plain_or_echoes(int k, int fx, float x, float y, float z, int 
         if (AC.on) A.alSourcei(src[k], AL_DIRECT_FILTER, AL_FILTER_NULL), A.alSource3i(src[k], AL_AUXILIARY_SEND_FILTER, AL_EFFECTSLOT_NULL, 0, AL_FILTER_NULL);
         if (HI.on && HI.voice[k] >= 0) uwst_end(HI.voice[k]), HI.voice[k] = -1;
     } else {   /* Acoustics High: its echoes, and on headphones the sound itself (then our OpenAL copy plays silent) */
-        float at[3] = {x, y, z}, sd = 0, fw = 0;
-        if (x < 0) {   /* at the listener: its pan's side (the two feet) a third of a tile out, fixed to the head */
-            sd = pan >= 0 ? clampf(((float)pan - 64.0f) / 64.0f * feet_spread, -1, 1) : 0, fw = sd != 0 ? sqrtf(1.0f - sd * sd) : 0;
-            at[0] = lis[0] + (cosf(lis_yaw) * sd + sinf(lis_yaw) * fw) * 0.33f, at[1] = lis[1];
-            at[2] = lis[2] + (-sinf(lis_yaw) * sd + cosf(lis_yaw) * fw) * 0.33f;
+        float at[3] = {x, y, z}, sd = 0, up = 0, fw = 0;
+        if (x < 0) {   /* at the listener: fixed to the head (own_place: the steps at the feet) */
+            own_place(fx, pan, &sd, &up, &fw);
+            at[0] = lis[0] + cosf(lis_yaw) * sd + sinf(lis_yaw) * fw, at[1] = lis[1] + up;
+            at[2] = lis[2] - sinf(lis_yaw) * sd + cosf(lis_yaw) * fw;
         } else uwac_lift(at);
         int took = hi_voice(k, use, at[0], at[1], at[2], g, fx == 1 || fx == 2 ? step_echo : 1.0f);
-        if (x < 0 && HI.on && HI.voice[k] >= 0) uwst_relative(HI.voice[k], sd * 0.33f, fw * 0.33f);
+        if (x < 0 && HI.on && HI.voice[k] >= 0) uwst_relative(HI.voice[k], sd, fw, -up);
         if (took) A.alSourcef(src[k], AL_GAIN, 0);
     }
 }

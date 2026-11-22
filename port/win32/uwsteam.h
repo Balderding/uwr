@@ -69,7 +69,7 @@ int  uwst_pathing_busy(void);
 int  uwst_pathing_heard(int voice, float eq[3], float sh[4]);
 /* a voice heard from a place fixed to the listener's head, `right` and `ahead` of it in tiles (the player's own
    sounds: the two feet). Until 2026-11-16 the place stood in the world, and the walking player went through it. */
-void uwst_relative(int voice, float right, float ahead);
+void uwst_relative(int voice, float right, float ahead, float below);   /* (below: tiles under the ears: the feet) */
 void uwst_echo(int voice, float share);            /* a voice's echoes as a share of its own level (a footstep's) */
 void uwst_listener(float x, float y, float z, float yaw);   /* yaw 0 looks north, east positive (radians) */
 /* a sound starts at a place: its samples (mono, copied and brought to the module's rate) feed its reflections from

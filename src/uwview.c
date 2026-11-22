@@ -138,6 +138,8 @@ static void read_settings(const char *path)
         else if (!strcmp(key, "ui_font_size")) st_set_size_pct((int)v); /* its size, % of the resolution's (st_game_em) */
         else if (!strcmp(key, "menu_font")) menu_font_original = !_stricmp(val, "original");
         else if (!strcmp(key, "menu_background")) menu_leather = !_stricmp(val, "leather"), md_set_solid(!menu_leather);
+        else if (!strcmp(key, "menu_quick")) md_set_fast(atoi(val) != 0);
+        else if (!strcmp(key, "sys_pointer")) ui_sys_pointer_set(atoi(val) != 0);
         else if (!strcmp(key, "fx_hrtf")) fx_hrtf_set = (int)v < 0 ? 0 : (int)v > 2 ? 2 : (int)v;
         else if (!strcmp(key, "fx_pan_fix")) fx_panfix_set = (int)v != 0;
         else if (!strcmp(key, "dlss")) S.dlss = (int)v;
@@ -1049,6 +1051,104 @@ UWV_API int uwv_acoustic_doors(UwvAcDoor *out, int cap)
 
 /* changes whenever level_build made a level (a new level, or this one's shape changed): the grid is to be read again */
 UWV_API unsigned uwv_acoustic_epoch(void) { return ac_epoch; }
+
+/* --- the map of what the player saw (the Esc menu's "Map what I saw", 2026-11-21): the original marks its automap
+ * from its own vision grid (GRIDDB.C grdb_elem: 16 rows deep, about 90 degrees, a tile only when its shade is under 8),
+ * so much of what our wider, brighter picture shows stayed blank. Here, each frame the game's side asks, every tile
+ * our picture lets the player see: in the lens's width, a clear line from the eye across the floor (solid rock, the
+ * solid half of a diagonal and a shut door stop it; a portcullis is bars), and lit by the player's light (the
+ * original's reach for the light level, SHADES.DAT's: common.hlsli original_light) or by a light of the level, or
+ * glowing lava. Presentation only: read, never written; the game's own PlayersMap is not touched. --- */
+enum { SEEN_LIT = 1, SEEN_DARK = 2, SEEN_DOOR = 4 };
+static u8 seen_door[64 * 64];               /* the door on each tile, its index in doors[] + 1 (uwv_seen fills it) */
+/* 1 when (x, z) (tiles) is in a solid part of the level, as a line of sight meets it */
+static int seen_blocks(float x, float z)
+{
+    int tx = (int)floorf(x), tz = (int)floorf(z);
+    if (tx < 0 || tz < 0 || tx > 63 || tz > 63) return 1;
+    float fx = x - (float)tx, fz = z - (float)tz;
+    switch (lv.tile[tz * 64 + tx].type) {   /* level.h's: 0 solid, 1 open, 2..5 the diagonals (the open corner), 6..9 slopes */
+    case 0: return 1;
+    case 2: return fx < fz;                 /* open south-east */
+    case 3: return fx + fz > 1.0f;          /* open south-west */
+    case 4: return fx + fz < 1.0f;          /* open north-east */
+    case 5: return fx > fz;                 /* open north-west */
+    }
+    int k = seen_door[tz * 64 + tx] - 1;   /* a shut door: its leaf across the tile's middle */
+    if (k >= 0) {
+        const Door *d = &doors[k];
+        if (d->open >= 0.5f || ((d->item - 0x140) & 7) == 6) return 0;
+        float across = (d->heading & 2) ? fx : fz;   /* (heading 0/4: the leaf runs east-west) */
+        if (fabsf(across - 0.5f) < 0.12f) return 1;
+    }
+    return 0;
+}
+/* 1 when the line from (ax, az) to (bx, bz) crosses nothing solid (its last tenth of a tile not looked at: the target
+   itself may be a wall's face) */
+static int seen_clear(float ax, float az, float bx, float bz)
+{
+    float dx = bx - ax, dz = bz - az, len = sqrtf(dx * dx + dz * dz);
+    int n = (int)(len / 0.08f);
+    for (int i = 1; i < n; i++) {
+        float t = (float)i / (float)n;
+        if (len * (1.0f - t) < 0.1f) break;
+        if (seen_blocks(ax + dx * t, az + dz * t)) return 0;
+    }
+    return 1;
+}
+/* out[z * 64 + x]: SEEN_LIT, SEEN_DARK (in sight, unlit), SEEN_DOOR (a door stands there), 0 not in sight this frame.
+   The level's number (0: no level built, out untouched) */
+UWV_API int uwv_seen(unsigned char out[64 * 64])
+{
+    static const float reach[8] = {2.4f, 3, 4, 4, 5, 6, 7, 7};   /* tiles, as original_light's (level 0: 3 x 0.8) */
+    if (!lv_number || !out) return 0;
+    memset(out, 0, 64 * 64);
+    memset(seen_door, 0, sizeof seen_door);
+    for (int k = 0; k < ndoors && k < 255; k++)
+        if (doors[k].tx >= 0 && doors[k].tx < 64 && doors[k].tz >= 0 && doors[k].tz < 64) seen_door[doors[k].tz * 64 + doors[k].tx] = (u8)(k + 1);
+    float ex = cam.pos[0], ez = cam.pos[2];
+    float fx = sinf(cam.yaw), fz = cosf(cam.yaw);
+    float tx = lens_tx > 0 ? lens_tx : 1.0f;
+    float half = atanf(tx) + 0.05f;         /* the lens's half width, and a little: a tile at the edge counts */
+    float cos_half = cosf(half > 3.1f ? 3.1f : half);
+    float r = reach[light_level & 7] + 0.5f;
+    bool bright = render_fullbright();
+    int cx = (int)floorf(ex), cz = (int)floorf(ez);
+    for (int z = cz - 24; z <= cz + 24; z++)
+        for (int x = cx - 24; x <= cx + 24; x++) {
+            if (x < 0 || z < 0 || x > 63 || z > 63) continue;
+            int i = z * 64 + x, close_by = abs(x - cx) <= 1 && abs(z - cz) <= 1;
+            /* the tile's middle and four points near its corners: seen when one of them is in the lens and in sight */
+            static const float pts[5][2] = {{0.5f, 0.5f}, {0.15f, 0.15f}, {0.85f, 0.15f}, {0.15f, 0.85f}, {0.85f, 0.85f}};
+            float nx = fmaxf((float)x, fminf(ex, (float)x + 1)), nz = fmaxf((float)z, fminf(ez, (float)z + 1));
+            float dh = sqrtf((nx - ex) * (nx - ex) + (nz - ez) * (nz - ez));
+            bool lit = bright || close_by || dh <= r || tiles[(size_t)i * TILE_LIGHTS] != NO_LIGHT || m.grid[i * 4 + 2] == 2;
+            if (!lit && dh > r + 1.5f) continue;   /* (dark and away from the light: nothing for the map, no lines cast) */
+            int vis = close_by;
+            for (int p = 0; p < 5 && !vis; p++) {
+                float px = (float)x + pts[p][0], pz = (float)z + pts[p][1], vx = px - ex, vz = pz - ez;
+                float d = sqrtf(vx * vx + vz * vz);
+                if (d > 24.0f || (d > 0.01f && (vx * fx + vz * fz) / d < cos_half)) continue;
+                if (lv.tile[i].type != 0 && seen_blocks(px, pz)) continue;   /* (in the solid half of a diagonal) */
+                vis = seen_clear(ex, ez, px, pz);
+            }
+            if (!vis) continue;
+            out[i] = lit ? SEEN_LIT : SEEN_DARK;
+        }
+    for (int k = 0; k < ndoors; k++) {
+        int i = doors[k].tz * 64 + doors[k].tx;
+        if (i >= 0 && i < 64 * 64 && out[i] == SEEN_LIT) out[i] |= SEEN_DOOR;
+    }
+    static int slog = -1;   /* UWVIEW_SEEN_LOG=1 (the checks): what each call found, and the eye it looked from */
+    if (slog < 0) { const char *e = getenv("UWVIEW_SEEN_LOG"); slog = e && *e == '1'; }
+    if (slog) {
+        int nl = 0, nd = 0;
+        for (int i = 0; i < 64 * 64; i++) nl += (out[i] & SEEN_LIT) != 0, nd += (out[i] & SEEN_DARK) != 0;
+        RLOG_I("view", "seen: %d lit, %d dark; eye %.2f %.2f yaw %.2f, lens %.2f, light level %d (reach %.1f)%s", nl, nd, ex, ez,
+               cam.yaw, tx, light_level, r, bright ? ", full bright" : "");
+    }
+    return lv_number;
+}
 /* the level's 3D model objects (benches, tables, barrels, chests, pillars, boulders, the shrine...) as boxes, for the
  * sound: what stands in a room changes how it rings. As they stand when asked. */
 typedef struct { int item; float lo[3], hi[3]; } UwvAcBox;
@@ -2858,6 +2958,32 @@ static int spr_option(int k, int step, char *value, int n)
     snprintf(value, (size_t)n, "%s", level_new_sprite[k] ? "New" : "Original");
     return 1;
 }
+/* the Sprites tab's first row: every redrawn picture at once. Its value says how many are on; step != 0 turns them
+   all on when any is off, else all off, and builds the scene again. 0 when there is no picture of ours at all */
+static int spr_all_option(int step, char *value, int n)
+{
+    int there = 0, on = 0;
+    for (int k = 0; k < 512; k++)
+        if (spr_there(k)) there++, on += level_new_sprite[k] != 0;
+    if (!there) return 0;
+    if (step) {
+        int to = on < there;
+        for (int k = 0; k < 512; k++) {
+            char key[24];
+            if (!spr_there(k) || (level_new_sprite[k] != 0) == to) continue;
+            level_new_sprite[k] = ui_new_sprite[k] = (u8)to;
+            snprintf(key, sizeof key, "sprite_new_%03d", k);
+            settings_save(key, to ? "1" : "0");
+        }
+        on = to ? there : 0;
+        lv_number = 0;   /* the scene is built again (as spr_option) */
+        RLOG_I("view", "sprites: all %d redrawn pictures turned %s", there, to ? "on" : "off");
+    }
+    if (on == there) snprintf(value, (size_t)n, "All new (%d)", there);
+    else if (!on) snprintf(value, (size_t)n, "All original");
+    else snprintf(value, (size_t)n, "%d of %d new", on, there);
+    return 1;
+}
 /* the field of view (radians, vertical), the one our full-screen view uses */
 UWV_API float uwv_fov(void) { return S.fov * 3.14159265f / 180.0f; }
 /* a number's row: one step up or down, kept to lo..hi on the step's grid, written to
@@ -3038,6 +3164,7 @@ static int opt_effects_glow(int id, int step, char *value, int n)
     return -1;
 }
 /* uwv_option's rows for the light's colour and adaptation, HDR output, peak brightness and paper white (ids 31-35): 1 or 0 as uwv_option returns, -1 when id is not one of them */
+static int hdr_available_kept(int step);   /* (below, by opt_motion_fire) */
 static int opt_colour_hdr(int id, int step, char *value, int n)
 {
     char t[72];   /* a row's new value as text, for settings_save */
@@ -3061,7 +3188,7 @@ static int opt_colour_hdr(int id, int step, char *value, int n)
     case 33:  /* HDR output: on an HDR monitor (Windows' HDR on), the highlights past white */
         if (step) render_set_hdr(!render_hdr_wanted()), settings_save("hdr", render_hdr_wanted() ? "1" : "0");
         if (!render_hdr_wanted()) snprintf(value, (size_t)n, "Off");
-        else if (render_hdr_available()) snprintf(value, (size_t)n, "On");
+        else if (hdr_available_kept(step)) snprintf(value, (size_t)n, "On");
         else snprintf(value, (size_t)n, "On (this monitor: SDR)");
         return 1;
     case 34: {  /* HDR peak brightness: the monitor's own (0, the default), then 400 to 4000 nits in hundreds */
@@ -3238,6 +3365,18 @@ static int opt_text(int id, int step, char *value, int n)
     return -1;
 }
 /* uwv_option's rows for smooth motion, object shadows, the menu background, light fade, fire breathing (ids 9, 16, 61-63): 1 or 0 as uwv_option returns, -1 when id is not one of them */
+/* the monitor's HDR as the HDR output row shows it, asked again at most once a second (or when the row is changed;
+   every time with Quick menu drawing Off):
+   the asking makes a DXGI factory and walks every output, 0.3 ms, and the Esc menu builds its rows every frame
+   (2026-11-22, the menu's slow frames) */
+static int hdr_available_kept(int step)
+{
+    static int kept = -1;
+    static unsigned long long at;
+    unsigned long long now = GetTickCount64();
+    if (kept < 0 || step || !md_get_fast() || now - at >= 1000) kept = render_hdr_available(), at = now;
+    return kept;
+}
 static int opt_motion_fire(int id, int step, char *value, int n)
 {
     char t[72];   /* a row's new value as text, for settings_save */
@@ -3253,6 +3392,14 @@ static int opt_motion_fire(int id, int step, char *value, int n)
     case 63:  /* Menu background: one dark colour, the default, or the leather */
         if (step) menu_leather = !menu_leather, md_set_solid(!menu_leather), settings_save("menu_background", menu_leather ? "leather" : "solid");
         snprintf(value, (size_t)n, "%s", menu_leather ? "Leather" : "Solid colour");
+        return 1;
+    case 64:  /* Quick menu drawing: the menu's finished picture kept while nothing in it changes (menu_draw.c) */
+        if (step) md_set_fast(!md_get_fast()), settings_save("menu_quick", md_get_fast() ? "1" : "0");
+        snprintf(value, (size_t)n, "%s", md_get_fast() ? "On" : "Off");
+        return 1;
+    case 65:  /* Pointer in menus: the system's cursor shows our panels' pointer (ui.c ui_pointer_take) */
+        if (step) ui_sys_pointer_set(!ui_sys_pointer_on()), settings_save("sys_pointer", ui_sys_pointer_on() ? "1" : "0");
+        snprintf(value, (size_t)n, "%s", ui_sys_pointer_on() ? "System" : "Drawn");
         return 1;
     case 62:  /* Light fade: 50% at 2 tiles, 30% at 3, gone at 4, every light; or as before */
         if (step) render_set_light_fade(!render_light_fade()), settings_save("light_fade", render_light_fade() ? "1" : "0");
@@ -3411,6 +3558,7 @@ UWV_API int uwv_option(int id, int step, char *value, int n)
 {
     int r;
     if (!started) return 0;
+    if (id == 1999) return spr_all_option(step, value, n);                       /* the Sprites tab: every picture at once */
     if (id >= 1000 && id < 1512) return spr_option(id - 1000, step, value, n);   /* the Sprites tab: a picture's row */
     if (id >= 3000 && id < 3512) return spr_label(id - 3000, value, n);          /* and the row's name */
     if ((r = opt_rendering(id, step, value, n)) >= 0) return r;
@@ -3494,6 +3642,13 @@ int uwi_panel(const UwiSnap *s, int mx, int my, int sheet, int draw, float *fx, 
 /* the size of the snapshot this DLL was built with: the backend uses the panel only when its own is the same (an
    exe and a DLL of different builds can read the panel's words from the wrong places and crash) */
 UWV_API int uwv_snap_size(void) { return (int)sizeof(UwiSnap); }
+/* this frame's pointer for the system's cursor (ui.c ui_pointer_picture): 0 when no panel asked for it */
+UWV_API unsigned uwv_pointer(unsigned *out, int cap, int *w, int *h, int *hx, int *hy)
+{
+    /* (only once a panel started the overlay: asked every frame from the first, ui_ready would start it before the
+       level's arena is there; a panel asking for the pointer has started it) */
+    return started && ui_buf && ui_ok ? ui_pointer_picture(out, cap, w, h, hx, hy) : 0;
+}
 UWV_API int uwv_inventory(const UwiSnap *s, int mx, int my, int sheet)
 {
     if (!ui_ready() || !s) return -1;
@@ -3687,6 +3842,13 @@ UWV_API int uwv_frame(const unsigned char *ui_rgba)
         if (!cmp_phase) cmp_phase = 1, cmp_frames = 0;
     }
     if (crit_now) render_want_screenshot();
+    /* UWVIEW_SHOTS=PREFIX (the checks: a hidden run's pictures): the picture every 2 s, PREFIX-N.png */
+    static const char *shots = (const char *)1;
+    static double shots_t;
+    static int shots_n;
+    if (shots == (const char *)1) shots = getenv("UWVIEW_SHOTS");
+    bool shot_now = shots && *shots && lv_number && qpc_ms() - shots_t >= 2000.0;
+    if (shot_now) render_want_screenshot();
     bool reset = cam_reset;
     cam_reset = false;
     bool shot_clip = clip_wanted;
@@ -3700,6 +3862,15 @@ UWV_API int uwv_frame(const unsigned char *ui_rgba)
     bool ok = render_frame(&cam, &look, reset);
     if (ok && shot_clip) clip_wanted = false, uwrec_clipboard(g_hwnd, out_w, out_h, render_readback);
     if (ok) uwrec_frame(render_readback);
+    if (ok && shot_now) {
+        unsigned char *px = malloc((size_t)out_w * out_h * 4);
+        char p[MAX_PATH];
+        snprintf(p, sizeof p, "%s-%02d.png", shots, shots_n++);
+        if (px && render_readback(px) && png_write(p, px, out_w, out_h, 4)) RLOG_I("view", "wrote %s", p);
+        else RLOG_E("view", "cannot write %s", p);
+        free(px);
+        shots_t = qpc_ms();
+    }
     if (ok && crit_now) {
         unsigned char *px = malloc((size_t)out_w * out_h * 4);
         if (px && render_readback(px) && png_write(crit_shot, px, out_w, out_h, 4)) RLOG_I("view", "wrote %s", crit_shot);

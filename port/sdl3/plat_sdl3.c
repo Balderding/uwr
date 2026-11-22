@@ -889,6 +889,21 @@ void uwp_cursor_hide(int hide)
     if (hide) { if (!cursor_hidden) { sdl_ok(SDL_HideCursor(), "SDL_HideCursor"); cursor_hidden = 1; } }
     else if (cursor_hidden) { sdl_ok(SDL_ShowCursor(), "SDL_ShowCursor"); cursor_hidden = 0; }
 }
+/* our panels' pointer as the host's cursor (plat_win32.c's): an SDL colour cursor made from the picture (0xAARRGGBB,
+   straight alpha: SDL's ARGB8888), set at once, the one before it destroyed; NULL: the system's default again */
+void uwp_cursor_picture(const unsigned *argb, int w, int h, int hx, int hy)
+{
+    static SDL_Cursor *ours;
+    SDL_Cursor *made = NULL;
+    if (argb && w > 0 && h > 0) {
+        SDL_Surface *sf = SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_ARGB8888, (void *)argb, w * 4);
+        if (sf) made = SDL_CreateColorCursor(sf, hx, hy), SDL_DestroySurface(sf);
+        if (!made) { RLOG_E("sdl3", "cannot make the pointer's cursor (%dx%d): %s", w, h, SDL_GetError()); return; }
+        sdl_ok(SDL_SetCursor(made), "SDL_SetCursor");
+    } else sdl_ok(SDL_SetCursor(SDL_GetDefaultCursor()), "SDL_SetCursor");
+    if (ours) SDL_DestroyCursor(ours);
+    ours = made;
+}
 /* the host's pointer in the window's pixels; 0 if it cannot be told */
 int uwp_pointer_pos(int *x, int *y)
 {

@@ -41,6 +41,12 @@ static int sm_em(int f) {
     int e = st_game_em(g_wh);
     return f == FONT_SMALL ? e * 85 / 100 : f == FONT_BIG ? e * 13 / 10 : e;
 }
+/* the text layer and its drawn rectangle (x0 > x1: nothing drawn), a row g_ww pixels; NULL when there is none (the Esc
+ * menu's kept picture compares it, menu_draw.c) */
+const unsigned *ui_text_rect(int *x0, int *y0, int *x1, int *y1, int *stride) {
+    *x0 = tx0, *y0 = ty0, *x1 = tx1, *y1 = ty1, *stride = g_ww;
+    return T;
+}
 /* lays the text layer over the pixels d (w x h), fully opaque */
 void ui_text_apply(unsigned *d, int w, int h) { ui_text_apply_a(d, w, h, 256); }
 /* the same at opacity A, 0..256 (a fading box) */
@@ -254,6 +260,14 @@ void ui_draw_fine(const Pic *p, int x, int y, int div) {
 }
 
 /* fills a rectangle with a colour at alpha a */
+/* the whole overlay one colour, as ui_fill(0, 0, O.w, O.h, ...) gives on an overlay ui_clear has just emptied (each
+ * pixel's blend over nothing is the colour itself at alpha a), without the blend a pixel (the Esc menu's dimming:
+ * 3 ms a frame at 1920x1080 by ui_fill) */
+void ui_fill_empty(u8 r, u8 g, u8 b, u8 a) {
+    if (a == 0) return;
+    unsigned c = (unsigned)r | (unsigned)g << 8 | (unsigned)b << 16 | (unsigned)a << 24, *d = (unsigned *)O.px;
+    for (size_t i = 0, n = (size_t)O.w * O.h; i < n; i++) d[i] = c;
+}
 void ui_fill(int x, int y, int w, int h, u8 r, u8 g, u8 b, u8 a) {
     u8 c[3] = {r, g, b};
     for (int py = y; py < y + h; py++)
@@ -411,6 +425,115 @@ void ui_cursor(int n, int x, int y) {
     if (n == 0) hx = 7, hy = 7;       /* the cross (16 x 15): its centre pixel */
     else if (n == 10) hx = 5, hy = 5; /* the small cross (12 x 11) */
     ui_draw(c, x - hx, y - hy, 1);
+}
+
+/* --- the pointer as the system's cursor (the Esc row Pointer in menus, 2026-11-22: the plan PLAN-fast-ui.md step A).
+   Our panels used to draw the pointer into the interface layer, so it moved only as often as a whole slow frame; the
+   system's cursor moves at the monitor's refresh. The panel asks for it where it drew the pointer (ui_pointer_take),
+   the front fetches the picture once a frame (uwv_pointer) and gives it to the window's cursor. ------------------ */
+static int g_sys_ptr = 1;
+static struct { int want, item, qty, scale; } P;
+void ui_sys_pointer_set(int on) { g_sys_ptr = on != 0; }
+int ui_sys_pointer_on(void) { return g_sys_ptr; }
+int ui_pointer_take(int item, int qty) {
+    if (!g_sys_ptr) return 0;
+    P.want = 1, P.item = item, P.qty = item >= 0 ? qty : 0, P.scale = O.scale;
+    return 1;
+}
+/* one straight-alpha pixel (r, g, b, a) over *d (0xAARRGGBB, straight alpha) */
+static void ptr_over(unsigned *d, unsigned r, unsigned g, unsigned b, unsigned a) {
+    if (!a) return;
+    unsigned c = *d, da = c >> 24, k = da * (255 - a) / 255, oa = a + k;
+    if (!oa) return;
+    unsigned R = (r * a + (c >> 16 & 255) * k) / oa, G = (g * a + (c >> 8 & 255) * k) / oa, B = (b * a + (c & 255) * k) / oa;
+    *d = oa << 24 | (R > 255 ? 255 : R) << 16 | (G > 255 ? 255 : G) << 8 | (B > 255 ? 255 : B);
+}
+/* a picture at sc / div window pixels a picture pixel, top left at window (X, Y) of the W x H picture out */
+static void ptr_pic(unsigned *out, int W, int H, const Pic *p, int X, int Y, int sc, int div) {
+    int pw = p->w * sc / div, ph = p->h * sc / div;
+    for (int y = 0; y < ph; y++)
+        for (int x = 0; x < pw; x++) {
+            int ox = X + x, oy = Y + y, sx = x * div / sc, sy = y * div / sc;
+            if (ox < 0 || oy < 0 || ox >= W || oy >= H || sx >= p->w || sy >= p->h) continue;
+            const u8 *c = p->rgba + ((size_t)sy * p->w + sx) * 4;
+            ptr_over(&out[(size_t)oy * W + ox], c[0], c[1], c[2], c[3]);
+        }
+}
+/* text s in font f into the picture, top left at its overlay (x, y), as ui_text would put it: the smooth face at the
+   window's pixels or the game's letters at sc a pixel, a shadow under bright text */
+static void ptr_text(unsigned *out, int W, int H, int f, const char *s, int x, int y, int sc, u8 r, u8 g, u8 b) {
+    int bright = (r * 3 + g * 6 + b) / 10 >= 160;
+    if (g_font) {
+        static unsigned tl[256 * 256];
+        memset(tl, 0, (size_t)W * H * 4);
+        int em = sm_em(f), sh = sc / 3 > 1 ? sc / 3 : 1, X = x * sc, Y = y * sc + (ui_font_height(f) * sc - st_height(ST_REGULAR, em)) / 2;
+        if (bright) st_draw(tl, W, H, X + sh, Y + sh, ST_REGULAR, em, s, 0x000000);
+        st_draw(tl, W, H, X, Y, ST_REGULAR, em, s, (unsigned)r << 16 | (unsigned)g << 8 | b);
+        for (int i = 0; i < W * H; i++) {   /* (st_draw's: premultiplied 0xAABBGGRR) */
+            unsigned t = tl[i], a = t >> 24;
+            if (!a) continue;
+            ptr_over(&out[i], (t & 255) * 255 / a, (t >> 8 & 255) * 255 / a, (t >> 16 & 255) * 255 / a, a);
+        }
+        return;
+    }
+    const Font *t = &F[f];
+    for (int pass = bright ? 0 : 1; pass < 2; pass++) {   /* (pass 0: the shadow, one pixel down and right) */
+        int cx = x, d = pass ? 0 : 1;
+        for (const char *q = s; *q; q++) {
+            int ch = (u8)*q, w = glyph_width(t, ch);
+            if (t->d.size && ch < t->count && ch != ' ') {
+                const u8 *gl = t->d.data + 12 + (size_t)ch * (t->size + 1);
+                for (int py = 0; py < t->height; py++)
+                    for (int px = 0; px < w && px < t->row * 8; px++)
+                        if (gl[py * t->row + px / 8] & (0x80 >> (px % 8)))
+                            for (int yy = 0; yy < sc; yy++)
+                                for (int xx = 0; xx < sc; xx++) {
+                                    int ox = (cx + px + d) * sc + xx, oy = (y + py + d) * sc + yy;
+                                    if (ox >= 0 && oy >= 0 && ox < W && oy < H)
+                                        ptr_over(&out[(size_t)oy * W + ox], pass ? r : 0, pass ? g : 0, pass ? b : 0, pass ? 255 : 200);
+                                }
+            }
+            cx += w + 1;
+        }
+    }
+}
+/* this frame's pointer, when a panel asked for it (else 0): a number that changes when its picture does, and the
+   picture into out (cap pixels, 0xAARRGGBB straight alpha), *w x *h, its point at (*hx, *hy). The picture is made
+   again only when the number changed since it was last made. */
+unsigned ui_pointer_picture(unsigned *out, int cap, int *w, int *h, int *hx, int *hy) {
+    static unsigned made;
+    static int mw, mh, mhx, mhy;
+    if (!P.want) return 0;
+    P.want = 0;
+    int sc = P.scale > 0 ? P.scale : 1, div = 1;
+    const Pic *p = P.item >= 0 ? ui_item_pic(P.item, &div) : ui_pic("ui\\cursors", 10);
+    if (!p) return 0;
+    unsigned sig = 2166136261u;
+    unsigned k[6] = {(unsigned)P.item, (unsigned)P.qty, (unsigned)sc, (unsigned)g_font, (unsigned)st_size_pct(), (unsigned)(size_t)p};
+    for (int i = 0; i < 6; i++) sig = (sig ^ k[i]) * 16777619u;
+    if (!sig) sig = 1;
+    if (sig != made && out) {
+        if (P.item >= 0) {   /* thing_in's: the picture centred in a 16 x 16 hole, the count at its bottom right; the point in the middle */
+            mw = mh = 16 * sc, mhx = mhy = 8 * sc;
+            if (mw * mh > cap || mw > 256 || mh > 256) return 0;
+            memset(out, 0, (size_t)mw * mh * 4);
+            ptr_pic(out, mw, mh, p, (mw - p->w * sc / div) / 2, (mh - p->h * sc / div) / 2, sc, div);
+            if (P.qty > 1) {
+                char q[12];
+                snprintf(q, sizeof q, "%d", P.qty);
+                ptr_text(out, mw, mh, FONT_NORMAL, q, 16 - 1 - ui_text_width(FONT_NORMAL, q), 16 - 7, sc, 255, 230, 120);
+            }
+        } else {   /* ui_cursor's small cross (12 x 11): the point on its centre pixel */
+            mw = p->w * sc, mh = p->h * sc, mhx = 5 * sc + sc / 2, mhy = 5 * sc + sc / 2;
+            if (mw * mh > cap || mw > 256 || mh > 256) return 0;
+            memset(out, 0, (size_t)mw * mh * 4);
+            ptr_pic(out, mw, mh, p, 0, 0, sc, 1);
+        }
+        made = sig;
+    }
+    if (sig != made) return 0;
+    *w = mw, *h = mh, *hx = mhx, *hy = mhy;
+    return sig;
 }
 
 /* --- parchment ------------------------------------------------------------------------------------------- */
