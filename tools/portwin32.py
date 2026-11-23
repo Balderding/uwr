@@ -6,16 +6,17 @@ three things set from here:
     uw1/src/port/platform/win32/, where portbuild looks for a backend;
   - pkg-config (not on this machine) is answered here: "win32" is the Windows libraries the backend
     links; any other package (mt32emu) is not found, so that part of the port is built silent;
-  - clang is O:\\appsnotonc\\llvm's, given the MinGW target as CLANG_FLAGS gives it (env.cmd).
+  - clang is X:\\tools\\llvm's, given the MinGW target as CLANG_FLAGS gives it (env.cmd).
 Nothing goes to C:: the temporary files go to the LLVM folder's tmp, as env.cmd sets.
 
     work\\venv\\Scripts\\python.exe -I tools\\portwin32.py [portbuild options: --debug, --release ...]
 The program: underworld-exhumed\\uw1\\build\\port\\uw1port.exe
 """
 import os, sys, shutil, subprocess, runpy
+TOOLS = os.environ.get('UWR_TOOLS', r'X:\tools')   # the compilers and SDKs (one variable: the move to X:, 2026-11-22)
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-EXHUME_TOOLS = r'O:\appsnotonc\exhume\tools'
+EXHUME_TOOLS = os.path.join(TOOLS, 'Exhume', 'tools')
 # --original: uw-original.exe, the byte-matched source untouched (exhumed-original, a worktree of underworld-exhumed
 # at its upstream commit) with our backend in plain mode (UWPORT_PLAIN: no renderer, the original's display);
 # else uw-new: underworld-exhumed (branch uw-new, our changes) with everything
@@ -23,7 +24,7 @@ PLAIN = '--original' in sys.argv
 if PLAIN:
     sys.argv.remove('--original')
 # --backend sdl3 (the Linux / SDL plan, step 3): our SDL3 backend (port\sdl3\plat_sdl3.c) in place of the Win32 one, with
-# the same front end and game wrappers (port\win32's files but plat_win32.c), SDL3 from O:\appsnotonc\sdl3; the program
+# the same front end and game wrappers (port\win32's files but plat_win32.c), SDL3 from X:\tools\sdl3; the program
 # goes to build\port-sdl3 with SDL3.dll beside it. The default stays win32 (build\port, the shipped one).
 BACKEND = 'win32'
 if '--backend' in sys.argv:
@@ -32,7 +33,7 @@ if '--backend' in sys.argv:
     del sys.argv[i:i + 2]
     if BACKEND not in ('win32', 'sdl3'):
         sys.exit('portwin32.py: --backend win32 or sdl3')
-SDL3 = r'O:\appsnotonc\sdl3\SDL3-3.4.18\x86_64-w64-mingw32'
+SDL3 = TOOLS + r'\sdl3\SDL3-3.4.18\x86_64-w64-mingw32'
 OUT_NAME = 'port' if BACKEND == 'win32' else 'port-sdl3'
 # UWR_AREA=NAME (the user, 2026-11-17: every session builds in its own private area): the program and its objects go
 # to underworld-exhumed/uw1/build/port-NAME and the renderer to build/areas/NAME (tools/buildview.cmd reads the same
@@ -41,9 +42,9 @@ AREA = os.environ.get('UWR_AREA', '').strip()
 if AREA:
     OUT_NAME += '-' + AREA
 UW1 = os.path.join(HERE, 'exhumed-original' if PLAIN else 'underworld-exhumed', 'uw1')
-LLVM_BIN = r'O:\appsnotonc\llvm\23.1.4\bin'
-LLVM_TMP = r'O:\appsnotonc\llvm\tmp'
-TARGET = ['--target=x86_64-w64-windows-gnu', '--sysroot=O:/appsnotonc/gcc/mingw64', '-fuse-ld=lld']
+LLVM_BIN = TOOLS + r'\llvm\23.1.4\bin'
+LLVM_TMP = TOOLS + r'\llvm\tmp'
+TARGET = ['--target=x86_64-w64-windows-gnu', '--sysroot=' + TOOLS.replace('\\', '/') + '/gcc/mingw64', '-fuse-ld=lld']
 WIN32_LIBS = ['-luser32', '-lgdi32', '-lwinmm', '-ldwmapi', '-lshell32', '-lole32']
 
 # the backend into place: every file of port\win32 (plat_win32.c, uwgame.c/.h)

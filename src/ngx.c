@@ -58,6 +58,10 @@ static struct {
     bool started, dlss_ok;
     unsigned char internal[16];
     NVSDK_NGX_FeatureCommonInfo info;
+    /* the folders DLSS is looked for in, kept here: NGX holds info.PathListInfo.Path from Init, and the callers gave
+       it their stack array (a pointer left dangling; found 2026-11-22 looking at the quit crash, which it did not
+       cause: that one is NGX's own Shutdown, avoided by the Esc row Quick quit) */
+    const wchar_t *search[8];
 } N;
 
 bool ngx_start(ID3D12Device *dev, const wchar_t *data_dir, const wchar_t *const *search, int nsearch) {
@@ -89,7 +93,10 @@ bool ngx_start(ID3D12Device *dev, const wchar_t *data_dir, const wchar_t *const 
         return false;
     }
     memset(&N.info, 0, sizeof N.info);
-    N.info.PathListInfo.Path = search;
+    if (nsearch < 0) nsearch = 0;
+    if (nsearch > 8) nsearch = 8;
+    for (int k = 0; k < nsearch; k++) N.search[k] = search[k];   /* (the strings are the caller's static ones: uwview.c dlss_dir) */
+    N.info.PathListInfo.Path = N.search;
     N.info.PathListInfo.Length = (unsigned)nsearch;
     N.info.InternalData = (NVSDK_NGX_FeatureCommonInfo_Internal *)N.internal;
     /* NGX's own log (to its file in data_dir, and the console) only when SHOCK_NGX_LOG is set */

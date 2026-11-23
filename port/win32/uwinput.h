@@ -27,7 +27,14 @@ enum { UWI_PTR_MOVE = 0, UWI_PTR_DOWN = 1, UWI_PTR_UP = 2 };
 
 /* the key table's actions: a code held while the key is, a tap of a code, one of our functions (our_action), the
    walk (W / Up: 0x2D, or 0x11 with Shift) and Shift itself (ours in the world: the run) */
-enum { UWI_HOLD = 1, UWI_TAP, UWI_OURS, UWI_WALK, UWI_RUN };
+enum { UWI_HOLD = 1, UWI_TAP, UWI_OURS, UWI_WALK, UWI_RUN,
+       UWI_COMBO,   /* the game's key with the Ctrl / Alt it needs (CMD's mods) that the player does not hold himself */
+       UWI_BTN,     /* a mouse button at the crosshair (code 1 left, 2 right), as the world's handler takes a click */
+       UWI_FIXED }; /* a key shown in the Keys tab that cannot be changed (Esc) */
+/* where a command's key works: our 3D play, the map, a conversation (our display's), or anywhere (the settings screen,
+   Tab, the original's option keys: checked before the panel and the world, as they always were) */
+enum { UWI_CTX_WORLD = 0, UWI_CTX_MAP, UWI_CTX_CONV, UWI_CTX_ANY };
+enum { UWI_MOD_CTRL = 1, UWI_MOD_ALT = 2 };
 
 /* our_action's ids: these are all of them. our_action is called with down=1 on the press and down=0 on its release
    (or its early release); the backend acts on down=1 only */
@@ -57,6 +64,7 @@ typedef struct {
     int full_live;         /* the backend's full_live folded with !iface, V.hud and !menu_open */
     int mouse_look_enh, replaying;
     int ctrl_down;         /* Ctrl held on the live keyboard (the backend: GetKeyState(VK_CONTROL) < 0), for Ctrl+L */
+    int alt_down;          /* Alt held on the live keyboard (the rune keys: Ctrl+Alt+letter) */
     int esc_menu;          /* Esc opens our menu (the backend: the renderer's menu, the 3D view live, no settings screen) */
     int tab_ours;          /* Tab is ours (the backend: the renderer's HUD, no settings screen): UWI_A_TAB */
     int look_ours;         /* our display (the backend's display_mode 0, the Tab or R interface too): mouse-look is the
@@ -85,13 +93,18 @@ void uwi_release_all(void);              /* the focus lost */
 int uwi_look_wanted(const UwiState *s);  /* mouse-look wanted (the spec's "Mouse-look") */
 int uwi_owner_of_key(int code);          /* (tests, logs) the owner of a held key, UWI_NONE when none */
 
-/* our display's commands and their keys (the Esc menu's Keys tab). A label that starts with # is a heading. A key is a
-   set-1 code (0x100 for E0), 0 for none; shift 0 the key alone, 1 with Shift, 2 with Ctrl */
+/* our display's commands and their keys (the Esc menu's Keys tab). A label that starts with # is a heading ("#+": a
+   group shown folded). A key is a set-1 code (0x100 for E0), 0 for none; shift 0 the key alone, 1 with Shift, 2 with
+   Ctrl, 3 with Ctrl and Alt */
 int uwi_cmd_count(void);
 const char *uwi_cmd_label(int i);
 const char *uwi_cmd_id(int i);           /* the command's name in the settings (key_<id>) */
 void uwi_cmd_get(int i, int which, int *key, int *shift);   /* which 0: now, 1: as shipped */
 int uwi_cmd_set(int i, int key, int shift, int how);        /* how 0: taken from the command that had it (returned, -1 none); 1: as loaded */
 void uwi_cmd_defaults(void);
+/* the command that already has key + shift where command i's key would work too (the same place, or anywhere), -1
+   none; -2: the key cannot be given (Esc, always the menus') */
+int uwi_cmd_conflict(int i, int key, int shift);
+int uwi_cmd_fixed(int i);                /* 1: shown, never changed (Esc) */
 
 #endif

@@ -9,6 +9,7 @@ It wraps coreproof.Pair and adds:
     sides), and every global both sides have (raw bytes, up to 0x100 each, minus the pointer variables).
 """
 import os
+TOOLS = os.environ.get('UWR_TOOLS', r'X:\tools')   # the compilers and SDKs (one variable: the move to X:, 2026-11-22)
 import random
 import struct
 import subprocess
@@ -33,10 +34,10 @@ def build_exe():
     if os.path.exists(exe) and all(os.path.getmtime(exe) >= os.path.getmtime(d) for d in deps):
         return exe
     env = dict(os.environ)
-    env['PATH'] = r'O:\appsnotonc\llvm\23.1.4\bin;' + env['PATH']
-    env['TMP'] = env['TEMP'] = env['TMPDIR'] = r'O:\appsnotonc\llvm\tmp'
+    env['PATH'] = TOOLS + r'\llvm\23.1.4\bin;' + env['PATH']
+    env['TMP'] = env['TEMP'] = env['TMPDIR'] = TOOLS + r'\llvm\tmp'
     new = exe + '.new'
-    cmd = [r'O:\appsnotonc\llvm\23.1.4\bin\clang.exe','--target=x86_64-w64-windows-gnu', '--sysroot=O:/appsnotonc/gcc/mingw64', '-fuse-ld=lld', '-O1', '-w',
+    cmd = [TOOLS + r'\llvm\23.1.4\bin\clang.exe','--target=x86_64-w64-windows-gnu', '--sysroot=' + TOOLS.replace('\\', '/') + '/gcc/mingw64', '-fuse-ld=lld', '-O1', '-w',
            '-o', new, src, deps[2], deps[3], deps[1]]
     r = subprocess.run(cmd, env=env, capture_output=True, text=True)
     if r.returncode:

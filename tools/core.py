@@ -11,6 +11,7 @@ function or data is read from clang's AST of the sources that use it.
     uv run --no-project python -I tools/core.py
 """
 import os
+TOOLS = os.environ.get('UWR_TOOLS', r'X:\tools')   # the compilers and SDKs (one variable: the move to X:, 2026-11-22)
 import re
 import subprocess
 import sys
@@ -23,7 +24,7 @@ E = os.path.join(ROOT, 'external', 'exhume')
 INSTR = os.environ.get('CORE_INSTR') == '1'
 OUT = os.path.join(ROOT, 'build', 'core_instr' if INSTR else 'core')
 GEN = os.path.join(ROOT, 'build', 'gen')
-LLVM = r'O:\appsnotonc\llvm\23.1.4\bin'
+LLVM = TOOLS + r'\llvm\23.1.4\bin'
 DIRS = ['motion', 'combat', 'critter', 'obj', 'event', 'inv', 'conv', 'map', 'game']
 EXTRA = ['sys/UTIL.C', 'sys/ARC.C', 'sys/MISCUTIL.C', 'sys/DEBUG.C', 'sys/ERROR.C',  # the rules' helpers and loaders
          'ui/GAMESTRN.C',  # the strings (STRINGS.PAK), object names and the game's messages
@@ -35,7 +36,7 @@ SINKS = {'scroll_print': 'F', 'play_effect': 'bwwb', 'play_effect_here': 'bbb', 
          'play_instrument': 'w', 'runcutscene': 'w', 'look_nothing': 'bw', 'newscr': 'w'}
 SKIP = set()  # (UWEDIT.C's main is renamed uw1_main by compat.h: the front end's start-up calls the parts it needs)
 GLUE = ['core_glue.c', 'imath.c', 'core_world.c', 'core_dos.c']
-FLAGS = ['--target=x86_64-w64-windows-gnu', '--sysroot=O:/appsnotonc/gcc/mingw64', '-x', 'c', '-std=gnu17', '-O2',
+FLAGS = ['--target=x86_64-w64-windows-gnu', '--sysroot=' + TOOLS.replace('\\', '/') + '/gcc/mingw64', '-x', 'c', '-std=gnu17', '-O2',
          '-w', '-fwrapv', '-fno-strict-aliasing', '-mno-ms-bitfields',  # Turbo C's bitfield layout (as exhumed's port)
          '-Dstr_copy=core_str_copy',  # MODEX.ASM's str_copy, renamed: the game's base.c has its own
          '-include', os.path.join(E, 'port', 'compat.h'), '-I', os.path.join(E, 'port'),
@@ -200,7 +201,7 @@ def compile_one(rel):
             and os.path.getmtime(obj) > os.path.getmtime(os.path.abspath(__file__)):
         return obj, ''
     r = subprocess.run([clang()] + FLAGS + ['-c', src, '-o', obj], capture_output=True, text=True,
-                       env=dict(os.environ, TMP=r'O:\appsnotonc\llvm\tmp', TEMP=r'O:\appsnotonc\llvm\tmp'))
+                       env=dict(os.environ, TMP=TOOLS + r'\llvm\tmp', TEMP=TOOLS + r'\llvm\tmp'))
     return obj, r.stderr if r.returncode else ''
 
 
@@ -208,7 +209,7 @@ def decls(rel):
     """The names the source declares at file scope: name -> 'f' (function) or 'v' (variable)."""
     r = subprocess.run([clang()] + FLAGS + ['-fsyntax-only', '-Xclang', '-ast-dump', os.path.join(X, rel)],
                        capture_output=True, text=True, errors='replace',
-                       env=dict(os.environ, TMP=r'O:\appsnotonc\llvm\tmp', TEMP=r'O:\appsnotonc\llvm\tmp'))
+                       env=dict(os.environ, TMP=TOOLS + r'\llvm\tmp', TEMP=TOOLS + r'\llvm\tmp'))
     out = {}
     for line in r.stdout.split('\n'):
         m = re.match(r"^[|`]-(FunctionDecl|VarDecl) .*? (?:used |referenced )?(\w+) '", line)
@@ -240,7 +241,7 @@ def main():
     for g in GLUE:
         gobj = os.path.join(OUT, 'glue_' + os.path.basename(g)[:-2] + '.o')
         r = subprocess.run([clang()] + FLAGS + ['-c', os.path.join(ROOT, 'src', g), '-o', gobj], capture_output=True,
-                           text=True, env=dict(os.environ, TMP=r'O:\appsnotonc\llvm\tmp', TEMP=r'O:\appsnotonc\llvm\tmp'))
+                           text=True, env=dict(os.environ, TMP=TOOLS + r'\llvm\tmp', TEMP=TOOLS + r'\llvm\tmp'))
         if r.returncode:
             print(r.stderr[:3000])
             sys.exit(1)

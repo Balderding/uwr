@@ -51,6 +51,7 @@ typedef struct {
     float ripple[16][4];/* the splashes' rings: x, z, age (s), strength */
     float texres[4];    /* the walls' and floors' high-res copy: x its scale (0: off) */
     float hdr[4];       /* HDR output: x on, y paper white / 80 (scRGB's 1.0 is 80 nits), z peak / paper white */
+    float panel[4];     /* our panel on the GPU (Vulkan's present.hlsl): x on, y its scale, z, w its size (D3D12: 0) */
 } Constants;
 
 /* a light as the shaders take it (common.hlsli GLight) */

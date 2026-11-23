@@ -933,6 +933,7 @@ int uwp_clip_hold(int x0, int y0, int x1, int y1, int first, int *mx, int *my)
 /* lets the pointer leave the window again */
 void uwp_clip_free(void) { if (g_win) sdl_ok(SDL_SetWindowMouseRect(g_win, NULL), "SDL_SetWindowMouseRect (free)"); }
 int uwp_ctrl_down(void) { return (SDL_GetModState() & SDL_KMOD_CTRL) != 0; }
+int uwp_alt_down(void) { return (SDL_GetModState() & SDL_KMOD_ALT) != 0; }
 /* closes the program, as the window's close button does */
 void uwp_close(void)
 {

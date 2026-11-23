@@ -103,12 +103,15 @@ void uwp_cursor_hide(int hide);              /* the host's cursor hidden (1) or 
 /* the host's cursor made this picture over the client area (argb 0xAARRGGBB straight alpha, w x h, its point at hx, hy)
    at once; NULL: the window's own arrow again (our panels' pointer as the system's cursor, the Esc row Pointer in menus) */
 void uwp_cursor_picture(const unsigned *argb, int w, int h, int hx, int hy);
+/* the process to end at once at the C runtime's first exit step (Windows, the row Quick quit): after main's own end */
+void uwp_quick_end(void);
 int uwp_pointer_pos(int *x, int *y);         /* the pointer's place in client pixels: 1, or 0 not known */
 /* the pointer held in the client rectangle x0,y0-x1,y1 (held again only if it moved on the screen, or first); first:
    put in its middle too, *mx, *my that point in client pixels, and 1 */
 int uwp_clip_hold(int x0, int y0, int x1, int y1, int first, int *mx, int *my);
 void uwp_clip_free(void);                    /* the pointer's hold let go (the cursor's own state left alone) */
 int uwp_ctrl_down(void);                     /* the live keyboard's Ctrl held */
+int uwp_alt_down(void);                      /* the live keyboard's Alt held (the rune keys: Ctrl+Alt+letter) */
 void uwp_close(void);                        /* the window's close asked for (as its close button: a quit request) */
 void uwp_new_game(void);                     /* the program started again with --menu, and this one closed */
 void uwp_repaint(void);                      /* the window drawn again (the renderer given up) */

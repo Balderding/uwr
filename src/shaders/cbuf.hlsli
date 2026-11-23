@@ -26,5 +26,6 @@ cbuffer C : register(b0) {
                         // y > 0: relief maps beside it (common.hlsli hmaps_at), z > 0: its colours are there (0: only maps)
     float4 hdrout;      // HDR output (render.c render_set_hdr): x on, y paper white / 80 nits, z peak / paper white;
                         // w > 0.5: the lights' fade by distance (common.hlsli light_fade)
+    float4 panel;       // our panel on the GPU (present.hlsl, Vulkan): x on, y its scale (window pixels a pixel), z, w its size
 };
 static const float NEAR_Z = 0.02, FAR_Z = 200.0;

@@ -1,7 +1,7 @@
 @echo off
 rem laigter-cli: Laigter 1.14.0's map maker without Qt (GPL v3, see LICENSE-GPL3.txt). Builds build\laigter-cli.exe.
 rem Its own program: the engine (uw.exe) never links it, it only reads the PNGs it writes.
-call O:\appsnotonc\llvm\env.cmd
+call "%~dp0..\uwr_env.cmd"
 cd /d "%~dp0"
 if not exist ..\..\build mkdir ..\..\build
 if not exist ..\..\build\laigter-obj mkdir ..\..\build\laigter-obj

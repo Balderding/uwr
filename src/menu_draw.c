@@ -183,6 +183,13 @@ void md_set_solid(int on) { md_solid = on != 0; }
  * picture under it all the same as last frame), and the pointer laid over its own small box, not the whole window;
  * 0 everything drawn again every frame (as before) */
 static int md_fast = 1;
+/* the GPU's panel (render_set_panel, set by uwview.c: the fast-UI plan B): the menu's overlay and text laid over the
+   picture there, while Quick menu drawing is on and the pointer is the system's (a drawn one would be under it) */
+static bool (*md_gpu)(const u8 *rgba, int w, int h, int scale, const unsigned *text, int stride, int x0, int y0, int x1, int y1);
+void md_set_gpu(bool (*fn)(const u8 *, int, int, int, const unsigned *, int, int, int, int, int)) { md_gpu = fn; }
+static bool (*md_gpu_keep)(void);
+static unsigned (*md_gpu_gen)(void);
+void md_set_gpu_keep(bool (*keep)(void), unsigned (*gen)(void)) { md_gpu_keep = keep, md_gpu_gen = gen; }
 void md_set_fast(int on) { md_fast = on != 0; }
 int md_get_fast(void) { return md_fast; }
 
@@ -646,6 +653,51 @@ int md_rows(unsigned char *ui_buf, int ui_w, int ui_h, bool smooth, const char *
     md_draw_rows(&m);
     md_foot(&m);
     if (timed) tt[2] = md_ms();
+    if (md_fast && md_gpu && ui_sys_pointer_on()) {   /* on the GPU: the overlay and the text go up, nothing into the layer */
+        int x0, y0, x1, y1, stride;
+        unsigned *T = (unsigned *)ui_text_rect(&x0, &y0, &x1, &y1, &stride);
+        /* what the GPU has is this menu still (the same text, overlay and text rectangle, no other panel since): kept */
+        static unsigned last_sig, last_gen;
+        static u8 *last_ov;
+        static size_t last_cap;
+        static int last_w, last_h, last_s;
+        const Overlay *o = m.o;
+        const size_t ob = (size_t)o->w * o->h * 4;
+        unsigned sig = md_text_sig(&m) * 16777619u ^ (unsigned)smooth;
+        int rr[4] = {x0, y0, x1, y1};
+        for (int k = 0; k < 4; k++) sig = (sig ^ (unsigned)rr[k]) * 16777619u;
+        if (T && stride == ui_w && md_gpu_keep && md_gpu_gen && last_ov && sig == last_sig && o->w == last_w && o->h == last_h &&
+            o->scale == last_s && md_gpu_gen() == last_gen && !memcmp(last_ov, o->px, ob) && md_gpu_keep()) {
+            K.valid = 0;
+            if (mx >= 0 && my >= 0) ui_pointer_take(-1, 0);
+            md_dump(&m);
+            if (timed) tt[3] = tt[4] = tt[5] = tt[6] = tt[7] = md_ms(), md_timing(tt, ui_w, ui_h);
+            ui_set_scale(0);
+            return m.hit;
+        }
+        if (T && stride == ui_w) {
+            if (smooth) {   /* the menu's own text into the text layer (premultiplied, as ui.c's), over the panel's rectangle */
+                MenuFrame t = m;
+                t.ui_buf = (unsigned char *)T;
+                md_smooth_text(&t);
+                ui_text_mark(m.x * m.s, m.y * m.s, (m.x + m.w) * m.s + m.s, (m.y + m.h) * m.s + m.s);
+                ui_text_rect(&x0, &y0, &x1, &y1, &stride);
+            }
+            if (timed) tt[3] = md_ms();
+            if (md_gpu(m.o->px, m.o->w, m.o->h, m.o->scale, T, stride, x0, y0, x1, y1)) {
+                if (grow((void **)&last_ov, &last_cap, ob)) {   /* (what the GPU has now: the next frame's test) */
+                    memcpy(last_ov, o->px, ob);
+                    last_sig = sig, last_w = o->w, last_h = o->h, last_s = o->scale, last_gen = md_gpu_gen ? md_gpu_gen() : 0;
+                }
+                K.valid = 0;   /* (the layer holds no menu: the kept picture is not this one) */
+                if (mx >= 0 && my >= 0) ui_pointer_take(-1, 0);   /* (the system's cursor shows it) */
+                md_dump(&m);
+                if (timed) tt[4] = tt[5] = tt[6] = tt[7] = md_ms(), md_timing(tt, ui_w, ui_h);
+                ui_set_scale(0);
+                return m.hit;
+            }
+        }
+    }
     {   /* Quick menu drawing: last frame's picture again when nothing in it changed */
         unsigned sig = md_fast ? md_text_sig(&m) : 0;
         int kept = md_fast && md_kept(&m, sig);

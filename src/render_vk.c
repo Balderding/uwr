@@ -95,6 +95,18 @@ static struct {
     Img final_, scene, motion, depth, ui;
     Buf ui_up, cbuf, readback;
     bool ui_dirty, final_ready;
+    /* our panel on the GPU (render_set_panel, the fast-UI plan B): its overlay and smooth text, their uploads; on this
+       frame; the text's rectangle sent last (x0 > x1: none), so that the next upload clears what it left */
+    Img pan, ptx;
+    Buf pan_up, ptx_up;
+    int pan_w, pan_h, pan_s, ptx_last[4];
+    bool pan_on, pan_dirty;
+    int ptx_up_rect[4];
+    unsigned pan_gen;   /* panels uploaded (render_panel_gen: a caller's own one still there, render_keep_panel) */
+    /* one frame in flight (the fast-UI plan B2): the last frame's commands submitted and not yet waited for; the
+       interface uploads' second buffers (the GPU reads the one the last frame was given, the CPU writes the other) */
+    bool inflight;
+    Buf ui_up2, pan_up2, ptx_up2;
     int ui_w, ui_h, ui_s;
     VkDescriptorSetLayout dsl;
     VkPipelineLayout pl;
@@ -252,15 +264,30 @@ static void barrier_a(VkImage img, VkImageAspectFlags aspect, VkImageLayout from
 }
 static void barrier(VkImage img, VkImageLayout from, VkImageLayout to) { barrier_a(img, VK_IMAGE_ASPECT_COLOR_BIT, from, to); }
 
+/* the frame in flight waited for (render_frame's submit did not): before anything writes memory the GPU reads or
+   records commands; every renderer call that does calls it first */
+static bool g_overlap = true;   /* (the row Frame overlap; false: every frame waited for at its submit, as before) */
+static void gpu_idle(void)
+{
+    if (!V.inflight) return;
+    vkWaitForFences(V.dev, 1, &V.fence, VK_TRUE, UINT64_MAX);
+    V.inflight = false;
+}
+void render_set_overlap(bool on) { if (!on) gpu_idle(); g_overlap = on; }
+bool render_overlap(void) { return g_overlap; }
 static void begin_cmd(void)
 {
+    gpu_idle();
     vkResetCommandPool(V.dev, V.pool, 0);
     VkCommandBufferBeginInfo bi = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
     vkBeginCommandBuffer(V.cmd, &bi);
 }
 
 /* the commands to the GPU, and waited for (render.c's wait_gpu); wait / signal: the swap chain's semaphores or none */
-static bool submit_wait(VkSemaphore wait, VkSemaphore signal)
+static bool submit_frame(VkSemaphore wait, VkSemaphore signal, bool no_wait);
+static bool submit_wait(VkSemaphore wait, VkSemaphore signal) { return submit_frame(wait, signal, false); }
+/* the commands submitted; waited for unless no_wait (the frame's, with the row Frame overlap on: gpu_idle waits) */
+static bool submit_frame(VkSemaphore wait, VkSemaphore signal, bool no_wait)
 {
     vkEndCommandBuffer(V.cmd);
     VkPipelineStageFlags ws = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
@@ -270,6 +297,7 @@ static bool submit_wait(VkSemaphore wait, VkSemaphore signal)
     vkResetFences(V.dev, 1, &V.fence);
     VkResult r = vkQueueSubmit(V.queue, 1, &si, V.fence);
     if (r != VK_SUCCESS) return logf_("render: Vulkan submit failed (%d)\n", (int)r), false;
+    if (no_wait) { V.inflight = true; return true; }
     vkWaitForFences(V.dev, 1, &V.fence, VK_TRUE, UINT64_MAX);
     return true;
 }
@@ -603,34 +631,38 @@ static bool start_device(void)
 
 static bool start_present(void)
 {
-    VkDescriptorSetLayoutBinding b[4] = {
+    VkDescriptorSetLayoutBinding b[6] = {
         {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL},
         {16, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL},
         {17, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL},
         {18, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL},
+        {19, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL},   /* our panel's overlay (pan) */
+        {20, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL},   /* and its smooth text (ptx) */
     };
-    VkDescriptorSetLayoutCreateInfo li = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, .bindingCount = 4, .pBindings = b};
+    VkDescriptorSetLayoutCreateInfo li = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, .bindingCount = 6, .pBindings = b};
     if (vkCreateDescriptorSetLayout(V.dev, &li, NULL, &V.dsl) != VK_SUCCESS) return false;
     VkPipelineLayoutCreateInfo pli = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, .setLayoutCount = 1, .pSetLayouts = &V.dsl};
     if (vkCreatePipelineLayout(V.dev, &pli, NULL, &V.pl) != VK_SUCCESS) return false;
     /* (the pool: this set and the scene's, start_scene) */
     /* (the pool: this set, the scene's and the probes', start_scene and rt_start) */
-    VkDescriptorPoolSize ps[4] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 4}, {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 20}, {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 16},
+    VkDescriptorPoolSize ps[4] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 4}, {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 24}, {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 16},
                                   {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 2}};
     VkDescriptorPoolCreateInfo dpi = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, .maxSets = 4, .poolSizeCount = g_rt_dev ? 4u : 3u, .pPoolSizes = ps};
     if (vkCreateDescriptorPool(V.dev, &dpi, NULL, &V.dpool) != VK_SUCCESS) return false;
     VkDescriptorSetAllocateInfo dai = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, .descriptorPool = V.dpool, .descriptorSetCount = 1, .pSetLayouts = &V.dsl};
     if (vkAllocateDescriptorSets(V.dev, &dai, &V.set) != VK_SUCCESS) return false;
     VkDescriptorBufferInfo cb = {V.cbuf.buf, 0, sizeof(Constants)};
-    VkDescriptorImageInfo im[3] = {{VK_NULL_HANDLE, V.scene.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+    VkDescriptorImageInfo im[5] = {{VK_NULL_HANDLE, V.scene.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
                                    {VK_NULL_HANDLE, V.depth.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-                                   {VK_NULL_HANDLE, V.ui.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
-    VkWriteDescriptorSet w[4] = {{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = V.set, .dstBinding = 0, .descriptorCount = 1,
+                                   {VK_NULL_HANDLE, V.ui.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                                   {VK_NULL_HANDLE, V.pan.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                                   {VK_NULL_HANDLE, V.ptx.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+    VkWriteDescriptorSet w[6] = {{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = V.set, .dstBinding = 0, .descriptorCount = 1,
                                   .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .pBufferInfo = &cb}};
-    for (int i = 0; i < 3; i++)
+    for (int i = 0; i < 5; i++)
         w[1 + i] = (VkWriteDescriptorSet){VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = V.set, .dstBinding = 16u + (uint32_t)i,
                                           .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, .pImageInfo = &im[i]};
-    vkUpdateDescriptorSets(V.dev, 4, w, 0, NULL);
+    vkUpdateDescriptorSets(V.dev, 6, w, 0, NULL);
 
     VkShaderModule vs = shader(PRESENT_VS_SPV, sizeof PRESENT_VS_SPV), fs = shader(PRESENT_PS_SPV, sizeof PRESENT_PS_SPV);
     if (!vs || !fs) return false;
@@ -658,9 +690,9 @@ static bool start_present(void)
     vkDestroyShaderModule(V.dev, fs, NULL);
     if (r == VK_SUCCESS && H.pipe && vkAllocateDescriptorSets(V.dev, &dai, &H.shot_set) == VK_SUCCESS) {
         VkDescriptorBufferInfo cb2 = {V.cbuf.buf, CB_SHOT_OFF, sizeof(Constants)};
-        for (int i = 0; i < 4; i++) w[i].dstSet = H.shot_set;
+        for (int i = 0; i < 6; i++) w[i].dstSet = H.shot_set;
         w[0].pBufferInfo = &cb2;
-        vkUpdateDescriptorSets(V.dev, 4, w, 0, NULL);
+        vkUpdateDescriptorSets(V.dev, 6, w, 0, NULL);
     } else if (H.pipe) vkDestroyPipeline(V.dev, H.pipe, NULL), H.pipe = VK_NULL_HANDLE;
     return r == VK_SUCCESS;
 }
@@ -867,6 +899,7 @@ static void level_free(void)
 
 bool render_upload(const Mesh *m)
 {
+    gpu_idle();
     if (!V.up) return false;
     vkDeviceWaitIdle(V.dev);
     level_free();
@@ -900,6 +933,7 @@ bool render_upload(const Mesh *m)
 
 bool render_set_hires(const u8 *rgba, int size, int factor, bool maps, bool colours)
 {
+    gpu_idle();
     static const u8 white[4] = {255, 255, 255, 255};
     if (!V.up) return false;
     if (!rgba || factor <= 0 || size <= 0) rgba = white, size = 1, factor = 0, maps = false;
@@ -921,6 +955,7 @@ bool render_set_hires(const u8 *rgba, int size, int factor, bool maps, bool colo
 
 void render_set_lights(const Light *l, int n, const u32 *tiles)
 {
+    gpu_idle();
     if (!V.up) return;
     GpuLight *lp = V.lights.ptr;
     V.nplaced = MAX(0, MIN(n, MAX_LIGHTS));
@@ -940,6 +975,7 @@ void render_set_lights(const Light *l, int n, const u32 *tiles)
 /* the atlas's first rows (the walls' and floors' textures) rewritten from rgba (ATLAS_SIZE wide), at the next frame */
 void render_update_atlas(const u8 *rgba, int rows)
 {
+    gpu_idle();
     if (!V.level || !V.atlas_up.ptr || rows <= 0 || rows > 1024) return;
     memcpy(V.atlas_up.ptr, rgba, (size_t)ATLAS_SIZE * 4 * (size_t)rows);
     V.atlas_rows = rows;
@@ -947,6 +983,7 @@ void render_update_atlas(const u8 *rgba, int rows)
 
 void render_set_light_pos(int k, const float pos[3])
 {
+    gpu_idle();
     if (!V.up || k < 0 || k >= V.nplaced) return;
     memcpy(V.placed[k].pos, pos, 12);
     memcpy(((GpuLight *)V.lights.ptr)[1 + k].pr, pos, 12);
@@ -954,6 +991,7 @@ void render_set_light_pos(int k, const float pos[3])
 
 void render_set_sprites(const Vertex *v, int n)
 {
+    gpu_idle();
     if (!V.up) return;
     V.nsprites = MAX(0, MIN(n, RENDER_MAX_SPRITE_VERTS));
     memcpy(V.sprite_vb.ptr, v, sizeof(Vertex) * (size_t)V.nsprites);
@@ -967,6 +1005,7 @@ void render_set_light_fade(bool on) { g_light_fade = on; }
 bool render_light_fade(void) { return g_light_fade; }
 void render_set_torch(bool on, const float pos[3], const float color[3], float intensity, float range)
 {
+    gpu_idle();
     if (!V.up) return;
     GpuLight *g = V.lights.ptr;
     memcpy(g->pr, pos, 12), g->pr[3] = range;
@@ -976,6 +1015,7 @@ void render_set_torch(bool on, const float pos[3], const float color[3], float i
 /* the player's light as the original's (render.c's render_set_torch_original) */
 void render_set_torch_original(bool on, const float pos[3], const float eye[3], int level, float range, float exponent)
 {
+    gpu_idle();
     if (!V.up) return;
     GpuLight *g = V.lights.ptr;
     memcpy(g->pr, pos, 12), g->pr[3] = range;
@@ -996,6 +1036,13 @@ static bool first_contents(void)
     barrier(V.ui.img, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     vkCmdClearColorImage(V.cmd, V.ui.img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &none, 1, &all);
     barrier(V.ui.img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    for (int k = 0; k < 2; k++) {   /* our panel's two (render_set_panel): empty */
+        VkImage im = k ? V.ptx.img : V.pan.img;
+        barrier(im, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        vkCmdClearColorImage(V.cmd, im, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &none, 1, &all);
+        barrier(im, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    }
+    V.ptx_last[0] = 1, V.ptx_last[2] = 0;
     barrier(V.scene.img, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     barrier(V.motion.img, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     barrier_a(V.depth.img, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -1079,6 +1126,13 @@ bool render_init(const RenderConfig *cfg)
                          VK_IMAGE_ASPECT_DEPTH_BIT) &&
               make_img(&V.ui, V.ui_w, V.ui_h, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT) &&
               make_buf(&V.ui_up, (VkDeviceSize)V.ui_w * V.ui_h * 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, host, 0) &&
+              make_img(&V.pan, V.ui_w, V.ui_h, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT) &&
+              make_img(&V.ptx, V.ui_w, V.ui_h, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT) &&
+              make_buf(&V.pan_up, (VkDeviceSize)V.ui_w * V.ui_h * 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, host, 0) &&
+              make_buf(&V.ptx_up, (VkDeviceSize)V.ui_w * V.ui_h * 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, host, 0) &&
+              make_buf(&V.ui_up2, (VkDeviceSize)V.ui_w * V.ui_h * 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, host, 0) &&
+              make_buf(&V.pan_up2, (VkDeviceSize)V.ui_w * V.ui_h * 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, host, 0) &&
+              make_buf(&V.ptx_up2, (VkDeviceSize)V.ui_w * V.ui_h * 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, host, 0) &&
               make_buf(&V.cbuf, 4096, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, host, 0) &&
               make_buf(&V.readback, (VkDeviceSize)w * h * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT, host, VK_MEMORY_PROPERTY_HOST_CACHED_BIT) &&
               /* the scene's (render.c's lights_buf, tiles_buf, sprite_vb; the atlas's rows on their way) */
@@ -1116,10 +1170,20 @@ bool render_init(const RenderConfig *cfg)
     return true;
 }
 
+void render_quit_fast(void)
+{
+    gpu_idle();
+    if (V.dev) vkDeviceWaitIdle(V.dev);
+    logf_("render: quick quit: the renderer left to Windows (NVIDIA's NGX shutdown not called)\n");
+}
 void render_shutdown(void)
 {
+    gpu_idle();
     if (V.dev) {
         vkDeviceWaitIdle(V.dev);
+        /* NVIDIA's NGX first, while the swap chain and every image its features were given are still there (the order
+           NGX asks for; the 2026-11-22 exit crash itself was its shutdown and our unflushed output: ngx_vk.c) */
+        dlss_stop();
         drop_swapchain(VK_NULL_HANDLE);
         if (V.present) vkDestroyPipeline(V.dev, V.present, NULL);
         if (H.pipe) vkDestroyPipeline(V.dev, H.pipe, NULL);
@@ -1141,6 +1205,8 @@ void render_shutdown(void)
         free_buf(&V.lights), free_buf(&V.tiles), free_buf(&V.sprite_vb), free_buf(&V.atlas_up);
         free_img(&V.final_), free_img(&V.scene), free_img(&V.depth), free_img(&V.ui);
         free_buf(&V.ui_up), free_buf(&V.cbuf), free_buf(&V.readback);
+        free_img(&V.pan), free_img(&V.ptx), free_buf(&V.pan_up), free_buf(&V.ptx_up);
+        free_buf(&V.ui_up2), free_buf(&V.pan_up2), free_buf(&V.ptx_up2);
         if (V.sem_acq) vkDestroySemaphore(V.dev, V.sem_acq, NULL);
         if (V.fence) vkDestroyFence(V.dev, V.fence, NULL);
         if (V.pool) vkDestroyCommandPool(V.dev, V.pool, NULL);
@@ -1219,6 +1285,7 @@ static void pf_mark(int k)
 static void pf_end(double t_acq, double t_rec, double t_wait, double t_pres)
 {
     if (!PF.on) return;
+    gpu_idle();   /* (UWVIEW_PERF: the frame's timestamps ready; the overlap is lost while it is on) */
     uint64_t q[PF_N] = {0};
     double total = 0;
     {
@@ -1261,6 +1328,7 @@ static void pf_end(double t_acq, double t_rec, double t_wait, double t_pres)
 
 bool render_frame(const Camera *cam, const Look *look, bool reset)
 {
+    gpu_idle();   /* (the last frame done before this one's constants and buffers are written) */
     if (!V.up || !cam || !look) return false;
     const double pf_t0 = pf_ms();
     /* ---- the frame's constants and the lights: render.c's render_frame, its lines in its order (R. is V. here) ---- */
@@ -1311,6 +1379,8 @@ bool render_frame(const Camera *cam, const Look *look, bool reset)
     c->hdr[0] = H.on ? 1.0f : 0.0f, c->hdr[1] = g_hdr_paper / 80.0f;
     c->hdr[2] = render_hdr_peak() / g_hdr_paper, c->hdr[3] = g_light_fade ? 1.0f : 0.0f;   /* (w: the lights' fade, light_fade) */
     if (c->hdr[2] < 1.0f) c->hdr[2] = 1.0f;
+    c->panel[0] = V.pan_on ? 1.0f : 0.0f, c->panel[1] = (float)V.pan_s, c->panel[2] = (float)V.pan_w, c->panel[3] = (float)V.pan_h;
+    V.pan_on = false;   /* (render_set_panel again next frame, or none) */
     /* the burning torches flicker, each in its own way */
     float secs = g_hold ? g_hold_secs : (float)(rv_ticks() % 100000000ull) / 1000.0f;
     for (int k = 0; k < V.nplaced; k++) {
@@ -1412,6 +1482,23 @@ bool render_frame(const Camera *cam, const Look *look, bool reset)
     const double pf_t1 = pf_ms();
     pf_begin();
     pf_mark(PF_START);
+    if (V.pan_dirty) {   /* our panel's overlay (its own size) and the text's changed rectangle (render_set_panel) */
+        VkBufferImageCopy bp = {.bufferRowLength = (uint32_t)V.pan_w, .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                                .imageExtent = {(uint32_t)V.pan_w, (uint32_t)V.pan_h, 1}};
+        barrier(V.pan.img, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        vkCmdCopyBufferToImage(V.cmd, V.pan_up.buf, V.pan.img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &bp);
+        barrier(V.pan.img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        const int *r = V.ptx_up_rect;
+        if (r[2] >= r[0] && r[3] >= r[1]) {
+            VkBufferImageCopy bt = {.bufferOffset = ((VkDeviceSize)r[1] * V.ui_w + (VkDeviceSize)r[0]) * 4, .bufferRowLength = (uint32_t)V.ui_w,
+                                    .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, .imageOffset = {r[0], r[1], 0},
+                                    .imageExtent = {(uint32_t)(r[2] - r[0] + 1), (uint32_t)(r[3] - r[1] + 1), 1}};
+            barrier(V.ptx.img, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+            vkCmdCopyBufferToImage(V.cmd, V.ptx_up.buf, V.ptx.img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &bt);
+            barrier(V.ptx.img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        }
+        V.pan_dirty = false;
+    }
     if (V.ui_dirty) {   /* this frame's interface */
         barrier(V.ui.img, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
         VkBufferImageCopy bc = {.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, .imageExtent = {(uint32_t)V.ui_w, (uint32_t)V.ui_h, 1}};
@@ -1567,7 +1654,12 @@ bool render_frame(const Camera *cam, const Look *look, bool reset)
     }
     pf_mark(PF_END);
     const double pf_t2 = pf_ms();
-    bool ok = submit_wait(si != UINT32_MAX ? V.sem_acq : VK_NULL_HANDLE, si != UINT32_MAX ? V.sem_done[si] : VK_NULL_HANDLE);
+    bool ok = submit_frame(si != UINT32_MAX ? V.sem_acq : VK_NULL_HANDLE, si != UINT32_MAX ? V.sem_done[si] : VK_NULL_HANDLE, g_overlap);
+    if (ok && g_overlap) {   /* the interface's next uploads into the other buffers (the GPU reads these now) */
+        Buf t = V.ui_up; V.ui_up = V.ui_up2, V.ui_up2 = t;
+        t = V.pan_up, V.pan_up = V.pan_up2, V.pan_up2 = t;
+        t = V.ptx_up, V.ptx_up = V.ptx_up2, V.ptx_up2 = t;
+    }
     const double pf_t3 = pf_ms();
     if (ok && si != UINT32_MAX) {
         VkPresentInfoKHR pi = {VK_STRUCTURE_TYPE_PRESENT_INFO_KHR, .waitSemaphoreCount = 1, .pWaitSemaphores = &V.sem_done[si],
@@ -1575,7 +1667,7 @@ bool render_frame(const Camera *cam, const Look *look, bool reset)
         VkResult r = vkQueuePresentKHR(V.queue, &pi);
         if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR) V.sc_stale = true;
         else if (r < 0) logf_("render: Vulkan present failed (%d)\n", (int)r);
-        vkQueueWaitIdle(V.queue);   /* (one frame at a time, as render.c: the present's semaphore free again) */
+        if (!g_overlap) vkQueueWaitIdle(V.queue);   /* (one frame at a time, as render.c: the present's semaphore free again) */
     }
     pf_end(pf_t1 - pf_t0, pf_t2 - pf_t1, pf_t3 - pf_t2, pf_ms() - pf_t3);
     memcpy(V.prev_vp, c->vp_nojit, 64);
@@ -1588,16 +1680,85 @@ void render_want_screenshot(void) { g_want_shot = true; }
 
 bool render_readback(u8 *rgba)
 {
+    gpu_idle();   /* (the frame that copied the picture into readback, done) */
     if (!V.up || !V.readback.ptr) return false;
     memcpy(rgba, V.readback.ptr, (size_t)V.cfg.w * (size_t)V.cfg.h * 4);
     return true;
 }
 
 void render_ui_size(int *w, int *h, int *scale) { *w = V.ui_w, *h = V.ui_h, *scale = V.ui_s; }
+/* our panel for this frame on the GPU (the fast-UI plan B): its overlay (w x h RGBA, scale window pixels a pixel,
+   from the window's top left) and its smooth text (the window's pixels, a row stride pixels; drawn in x0..x1,
+   y0..y1, x0 > x1 none), laid over the interface layer by the present pass. false: not here (the caller blends them
+   into the layer itself). Only the text's rectangle, and the one sent before (to clear what it left), goes up. */
+bool render_has_panel(void) { return V.pan_up.ptr && V.ptx_up.ptr && V.ui_s == 1; }
+bool render_set_panel(const u8 *rgba, int w, int h, int scale, const unsigned *text, int stride, int x0, int y0, int x1, int y1)
+{
+    if (!V.pan_up.ptr || !V.ptx_up.ptr || !rgba || w <= 0 || h <= 0 || scale < 1 || w > V.ui_w || h > V.ui_h || V.ui_s != 1) return false;
+    if (text && stride != V.ui_w) return false;
+    memcpy(V.pan_up.ptr, rgba, (size_t)w * (size_t)h * 4);
+    V.pan_w = w, V.pan_h = h, V.pan_s = scale;
+    if (!text) x0 = 1, x1 = 0;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 >= V.ui_w) x1 = V.ui_w - 1;
+    if (y1 >= V.ui_h) y1 = V.ui_h - 1;
+    int u[4] = {x0, y0, x1, y1}, *L = V.ptx_last;   /* the union of this rectangle and the last one */
+    if (L[2] >= L[0] && L[3] >= L[1]) {
+        if (u[2] < u[0] || u[3] < u[1]) memcpy(u, L, sizeof u);
+        else {
+            if (L[0] < u[0]) u[0] = L[0];
+            if (L[1] < u[1]) u[1] = L[1];
+            if (L[2] > u[2]) u[2] = L[2];
+            if (L[3] > u[3]) u[3] = L[3];
+        }
+    }
+    {   /* a second panel this frame (not yet gone up): what the first was to send goes too (the review's P3-1) */
+        const int *P = V.ptx_up_rect;
+        if (V.pan_dirty && P[2] >= P[0] && P[3] >= P[1]) {
+            if (u[2] < u[0] || u[3] < u[1]) memcpy(u, P, sizeof u);
+            else {
+                if (P[0] < u[0]) u[0] = P[0];
+                if (P[1] < u[1]) u[1] = P[1];
+                if (P[2] > u[2]) u[2] = P[2];
+                if (P[3] > u[3]) u[3] = P[3];
+            }
+        }
+    }
+    if (u[2] >= u[0] && u[3] >= u[1]) {
+        u8 *dst = V.ptx_up.ptr;
+        for (int y = u[1]; y <= u[3]; y++) {
+            size_t at = ((size_t)y * (size_t)V.ui_w + (size_t)u[0]) * 4, n = (size_t)(u[2] - u[0] + 1) * 4;
+            if (text && y >= y0 && y <= y1 && x1 >= x0) memcpy(dst + at, (const u8 *)(text + (size_t)y * (size_t)stride + (size_t)u[0]), n);
+            else memset(dst + at, 0, n);
+        }
+    }
+    memcpy(V.ptx_up_rect, u, sizeof u);
+    L[0] = x0, L[1] = y0, L[2] = x1, L[3] = y1;
+    V.pan_on = V.pan_dirty = true;
+    V.pan_gen++;
+    return true;
+}
+unsigned render_panel_gen(void) { return V.pan_gen; }
+/* the panel uploaded last laid over this frame again, unchanged (nothing sent): false when there is none */
+bool render_keep_panel(void)
+{
+    if (!V.pan_up.ptr || !V.pan_gen) return false;
+    V.pan_on = true;
+    return true;
+}
 void render_set_ui(const u8 *rgba)
 {
     if (!V.ui_up.ptr) return;
+    static int timed = -1, n;
+    static double sum;
+    if (timed < 0) { const char *e = getenv("UWVIEW_MENU_TIMING"); timed = e && *e && *e != '0'; }
+    double t0 = timed ? pf_ms() : 0;
     memcpy(V.ui_up.ptr, rgba, (size_t)V.ui_w * (size_t)V.ui_h * 4);
+    if (timed) {   /* (the whole layer's copy, timed: the review's item 2, uploading only the rows that changed) */
+        sum += pf_ms() - t0;
+        if (++n == 240) logf_("render: the interface layer's copy (%dx%d): %.2f ms a frame\n", V.ui_w, V.ui_h, sum / n), n = 0, sum = 0;
+    }
     V.ui_dirty = true;
 }
 
@@ -1622,6 +1783,7 @@ bool render_raytracing(void) { return T.ok && !T.off; }
 bool render_raytracing_available(void) { return T.ok; }
 void render_set_raytracing(bool on)
 {
+    gpu_idle();
     T.off = !on;
     V.have_prev = false; /* the probes start again */
 }

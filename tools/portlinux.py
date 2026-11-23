@@ -21,16 +21,17 @@ Runs Exhume's own tools/portbuild.py unchanged, on uw1's exhume.toml unchanged, 
 The two Windows builds (portwin32.py, and its --backend sdl3) are not touched.
 """
 import os, sys, shutil, subprocess, runpy
+TOOLS = os.environ.get('UWR_TOOLS', r'X:\tools')   # the compilers and SDKs (one variable: the move to X:, 2026-11-22)
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-EXHUME_TOOLS = r'O:\appsnotonc\exhume\tools'
+EXHUME_TOOLS = os.path.join(TOOLS, 'Exhume', 'tools')
 PLAIN = '--original' in sys.argv
 if PLAIN:
     sys.argv.remove('--original')
 UW1 = os.path.join(HERE, 'exhumed-original' if PLAIN else 'underworld-exhumed', 'uw1')
-LLVM_BIN = r'O:\appsnotonc\llvm\23.1.4\bin'
-LLVM_TMP = r'O:\appsnotonc\llvm\tmp'
-SYSROOT = os.environ.get('LINUX_SYSROOT', r'O:\appsnotonc\linux-sysroot')
+LLVM_BIN = TOOLS + r'\llvm\23.1.4\bin'
+LLVM_TMP = TOOLS + r'\llvm\tmp'
+SYSROOT = os.environ.get('LINUX_SYSROOT', TOOLS + r'\linux-sysroot')
 TARGET = ['--target=x86_64-linux-gnu', '--sysroot=' + SYSROOT.replace('\\', '/'), '-fuse-ld=lld']
 OUT_NAME = 'port-linux'
 MUNT = os.path.join(HERE, 'build', 'munt-linux', 'libmt32emu.so.2')   # (tools/buildmunt_linux.py)

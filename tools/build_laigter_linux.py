@@ -5,11 +5,12 @@ switches as tools\laigter-cli\build.cmd; libstdc++ and libgcc are linked in, so 
     <python> -I tools\build_laigter_linux.py
 """
 import os, sys, subprocess
+TOOLS = os.environ.get('UWR_TOOLS', r'X:\tools')   # the compilers and SDKs (one variable: the move to X:, 2026-11-22)
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-LLVM_BIN = r'O:\appsnotonc\llvm\23.1.4\bin'
-LLVM_TMP = r'O:\appsnotonc\llvm\tmp'
-SYSROOT = os.environ.get('LINUX_SYSROOT', r'O:\appsnotonc\linux-sysroot')
+LLVM_BIN = TOOLS + r'\llvm\23.1.4\bin'
+LLVM_TMP = TOOLS + r'\llvm\tmp'
+SYSROOT = os.environ.get('LINUX_SYSROOT', TOOLS + r'\linux-sysroot')
 OBJ = os.path.join(HERE, 'build', 'linux', 'laigter-obj')
 OUT = os.path.join(HERE, 'build', 'linux', 'laigter-cli')
 SRC = os.path.join(HERE, 'src')

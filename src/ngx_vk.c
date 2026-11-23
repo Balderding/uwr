@@ -99,6 +99,10 @@ static struct {
     NVSDK_NGX_Handle *dlss;
     unsigned char internal[16];
     NVSDK_NGX_FeatureCommonInfo info;
+    /* the folders DLSS is looked for in, kept here: NGX holds info.PathListInfo.Path from Init, and the callers gave
+       it their stack array (a pointer left dangling; found 2026-11-22 looking at the quit crash, which it did not
+       cause: that one is NGX's own Shutdown, avoided by the Esc row Quick quit) */
+    const wchar_t *search[8];
 } N;
 
 /* the calls, one name for both systems */
@@ -179,7 +183,10 @@ bool ngxvk_start(VkInstance inst, VkPhysicalDevice phys, VkDevice dev, PFN_vkGet
 {
     if (!N.loaded || N.started) return N.started;
     memset(&N.info, 0, sizeof N.info);
-    N.info.PathListInfo.Path = search;
+    if (nsearch < 0) nsearch = 0;
+    if (nsearch > 8) nsearch = 8;
+    for (int k = 0; k < nsearch; k++) N.search[k] = search[k];   /* (the strings are the caller's static ones: uwview.c dlss_dir) */
+    N.info.PathListInfo.Path = N.search;
     N.info.PathListInfo.Length = (unsigned)nsearch;
     N.info.InternalData = (NVSDK_NGX_FeatureCommonInfo_Internal *)N.internal;
     /* NGX's own log (to its file in data_dir, and the console) only when SHOCK_NGX_LOG is set, as ngx.c */
@@ -375,13 +382,19 @@ void ngxvk_rr_release(void)
 
 void ngxvk_stop(VkDevice dev)
 {
+    int tr = getenv("UWVIEW_NGX_STOP_LOG") != NULL;   /* (the exit crash, 2026-11-22: each step in the log) */
     if (!N.started) return;
+    if (tr) fprintf(stderr, "ngx stop: rr release\n"), fflush(stderr);
     ngxvk_rr_release();
+    if (tr) fprintf(stderr, "ngx stop: dlss release\n"), fflush(stderr);
     ngxvk_dlss_release();
+    if (tr) fprintf(stderr, "ngx stop: destroy params\n"), fflush(stderr);
     if (N.params) NGX_DESTROY(N.params);
     N.params = NULL;
+    if (tr) fprintf(stderr, "ngx stop: shutdown\n"), fflush(stderr);
 #ifdef _WIN32
     N.shutdown(dev);
+    if (tr) fprintf(stderr, "ngx stop: shutdown done\n"), fflush(stderr);
 #else
     NVSDK_NGX_VULKAN_Shutdown1(dev);
 #endif

@@ -1,6 +1,6 @@
 # editor_update.py: bring Karl Clinckspoor's newest Underworld Editor into our copy on O:.
 #
-# Our copy is O:\UltimaUnderworldEditorAvalonia. His work is `origin/main` (github.com/KarlClinckspoor/
+# Our copy is X:\uw-editor. His work is `origin/main` (github.com/KarlClinckspoor/
 # UltimaUnderworldEditorAvalonia); ours is the local branch `uwr-fog` on top of it (the fog window, later the
 # MCP server). This script fetches his newest, merges it into ours, builds, and runs our tests. It never
 # pushes anything anywhere.
@@ -11,10 +11,11 @@
 # On a merge conflict it stops, leaves the merge open and lists the files; fix them, `git add`, `git commit`,
 # then run it again (it then builds and tests).
 import os, subprocess, sys
+TOOLS = os.environ.get('UWR_TOOLS', r'X:\tools')   # the compilers and SDKs (one variable: the move to X:, 2026-11-22)
 
-ED = r'O:\UltimaUnderworldEditorAvalonia'
+ED = r'X:\uw-editor'
 BRANCH = 'uwr-fog'
-DOTNET = r'O:\appsnotonc\dotnet10\dotnet.exe'
+DOTNET = TOOLS + r'\dotnet10\dotnet.exe'
 WORK = r'O:\uw\uo-new\work\editorfog'
 TESTS = 'FullyQualifiedName~UwrFog|FullyQualifiedName~Mcp'   # ours; his own suite is his to run
 WHO = ['-c', 'user.name=balderding', '-c', 'user.email=51464052+Balderding@users.noreply.github.com']

@@ -100,6 +100,7 @@ void render_sizes(int *rw, int *rh, int *ow, int *oh)
 }
 bool render_set_dlss(bool on)
 {
+    gpu_idle();
     DL.on = on && DL.ok;
     V.have_prev = false; /* the history starts again */
     set_dlss_text();
@@ -110,6 +111,7 @@ bool render_set_dlss(bool on)
 static int g_dlss_made;
 bool render_set_dlss_quality(int q)
 {
+    gpu_idle();
     int old = V.cfg.dlss_quality;
     q = MAX(0, MIN(q, 4));
     if (!DL.ok) return false;

@@ -2,12 +2,12 @@
 rem Build uo-new with clang (plain C17, MinGW target, lld). Output in build\.
 rem   build.cmd          shaders (DXC), check.exe, uw.exe and uw_nvngx.dll (the DLSS 5 bridge)
 rem   build.cmd debug    the same with undefined-behaviour traps and no optimisation
-call O:\appsnotonc\llvm\env.cmd
+call "%~dp0tools\uwr_env.cmd"
 cd /d "%~dp0"
 if not exist build mkdir build
 if not exist build\gen mkdir build\gen
 rem the shaders: compiled here into headers (build\gen) that uw.exe carries; DXC is only needed to build
-set DXC=O:\appsnotonc\dxc\v1.9.2609\bin\x64\dxc.exe
+set DXC=%UWR_TOOLS%\dxc\v1.9.2609\bin\x64\dxc.exe
 set SH=src\shaders
 %DXC% -T vs_6_0 -E vs -Fh build\gen\scene_vs.h -Vn SCENE_VS %SH%\scene.hlsl || exit /b 1
 %DXC% -T ps_6_0 -E ps -Fh build\gen\scene_ps.h -Vn SCENE_PS %SH%\scene.hlsl || exit /b 1
@@ -35,7 +35,7 @@ build\models_test.exe game || exit /b 1
 clang %CLANG_FLAGS% -std=c17 -O2 -Wall -o build\hunterfile_test.exe underworld-exhumed\uw1\tests\hunterfile_test.c underworld-exhumed\uw1\src\port\sys\hunterfile.c || exit /b 1
 rem the keyboard's ring (underworld-exhumed's port\sys\keyqueue.c) with seg063 stubbed, run by tools\verify.cmd;
 rem port.h is Exhume's runtime's (port_setw), portgame.h underworld-exhumed's
-clang %CLANG_FLAGS% -std=c17 -O2 -Wall -IO:\appsnotonc\exhume\runtime\port -Iunderworld-exhumed\uw1\src\port -o build\keyqueue_test.exe underworld-exhumed\uw1\tests\keyqueue_test.c underworld-exhumed\uw1\src\port\sys\keyqueue.c || exit /b 1
+clang %CLANG_FLAGS% -std=c17 -O2 -Wall -I%UWR_TOOLS%\Exhume\runtime\port -Iunderworld-exhumed\uw1\src\port -o build\keyqueue_test.exe underworld-exhumed\uw1\tests\keyqueue_test.c underworld-exhumed\uw1\src\port\sys\keyqueue.c || exit /b 1
 rem the window's input module (port\win32\uwinput.c, pure C) and its test, run by tools\verify.cmd
 clang %CLANG_FLAGS% -std=c17 -O2 -Wall -Iport\win32 -o build\uwinput_test.exe tests\uwinput_test.c port\win32\uwinput.c || exit /b 1
 rem the rules core: underworld-exhumed's byte-matched C as it is (tools\core.py: build\core\core.a and the stubs), and

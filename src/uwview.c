@@ -52,6 +52,10 @@
 static const RenderFxPasses fx_passes = {rfx_particles_init, rfx_particles_frame, rfx_particles_draw, rfx_decals_init, rfx_decals_draw};
 
 static bool started;
+int uwv_conv_fast_flag = 1;   /* Quick conversation drawing (uwconv_draw.c reads it; settings.txt conv_fast) */
+static void uwv_conv_fast(int on) { uwv_conv_fast_flag = on != 0; }
+static int uwv_conv_fast_on(void) { return uwv_conv_fast_flag; }
+static int inv_gpu = 1;   /* settings.txt inv_gpu (the row Quick inventory drawing): the inventory panel laid on by the GPU */
 static wchar_t dlss_dir[MAX_PATH], log_dir[MAX_PATH];
 static char root[MAX_PATH];             /* the folder with dlss\: uo-new, or the game's own folder (dist\UW1) */
 static int lv_number;                   /* the level the scene holds (below) */
@@ -140,6 +144,9 @@ static void read_settings(const char *path)
         else if (!strcmp(key, "menu_background")) menu_leather = !_stricmp(val, "leather"), md_set_solid(!menu_leather);
         else if (!strcmp(key, "menu_quick")) md_set_fast(atoi(val) != 0);
         else if (!strcmp(key, "sys_pointer")) ui_sys_pointer_set(atoi(val) != 0);
+        else if (!strcmp(key, "inv_gpu")) inv_gpu = atoi(val) != 0;
+        else if (!strcmp(key, "conv_fast")) uwv_conv_fast(atoi(val) != 0);
+        else if (!strcmp(key, "frame_overlap")) render_set_overlap(atoi(val) != 0);
         else if (!strcmp(key, "fx_hrtf")) fx_hrtf_set = (int)v < 0 ? 0 : (int)v > 2 ? 2 : (int)v;
         else if (!strcmp(key, "fx_pan_fix")) fx_panfix_set = (int)v != 0;
         else if (!strcmp(key, "dlss")) S.dlss = (int)v;
@@ -394,6 +401,7 @@ UWV_API int uwv_init(void *hwnd, int w, int h)
     rc.ui_scale = 1; /* the game's screen at the window's own pixels */
     render_fx_attach(&fx_passes);   /* the effects' passes (render_particles.c, render_decals.c), each used only while it is on */
     started = render_init(&rc);
+    md_set_gpu(started && render_has_panel() ? render_set_panel : NULL), md_set_gpu_keep(render_keep_panel, render_panel_gen);   /* (the Esc menu laid over the picture by the GPU where the renderer can: the fast-UI plan B) */
     render_set_fx(FX.particles, FX.decals, FX.water, FX.fog);
     out_w = w, out_h = h;
     if (started) render_set_dlss(false); /* no scene until a level comes */
@@ -3397,6 +3405,22 @@ static int opt_motion_fire(int id, int step, char *value, int n)
         if (step) md_set_fast(!md_get_fast()), settings_save("menu_quick", md_get_fast() ? "1" : "0");
         snprintf(value, (size_t)n, "%s", md_get_fast() ? "On" : "Off");
         return 1;
+    case 69:  /* Quick conversation drawing: the conversation screen's pieces laid down without the slow loops (uwconv_draw.c) */
+        if (step) uwv_conv_fast(!uwv_conv_fast_on()), settings_save("conv_fast", uwv_conv_fast_on() ? "1" : "0");
+        snprintf(value, (size_t)n, "%s", uwv_conv_fast_on() ? "On" : "Off");
+        return 1;
+    case 68:  /* Frame overlap: one frame in flight (render_vk.c gpu_idle), Off every frame waited for */
+        if (!render_has_panel()) {   /* (D3D12: no overlap there; nothing saved, so Vulkan's setting stays: the review's P2-1) */
+            snprintf(value, (size_t)n, "%s", "Needs Vulkan");
+            return 1;
+        }
+        if (step) render_set_overlap(!render_overlap()), settings_save("frame_overlap", render_overlap() ? "1" : "0");
+        snprintf(value, (size_t)n, "%s", render_overlap() ? "On" : "Off");
+        return 1;
+    case 67:  /* Quick inventory drawing: the inventory's panel laid over the picture by the graphics card */
+        if (step) inv_gpu = !inv_gpu, settings_save("inv_gpu", inv_gpu ? "1" : "0");
+        snprintf(value, (size_t)n, "%s", inv_gpu ? "On" : "Off");
+        return 1;
     case 65:  /* Pointer in menus: the system's cursor shows our panels' pointer (ui.c ui_pointer_take) */
         if (step) ui_sys_pointer_set(!ui_sys_pointer_on()), settings_save("sys_pointer", ui_sys_pointer_on() ? "1" : "0");
         snprintf(value, (size_t)n, "%s", ui_sys_pointer_on() ? "System" : "Drawn");
@@ -3613,6 +3637,20 @@ static bool ui_ready(void)
     }
     return ui_ok;
 }
+/* UWVIEW_MENU_TIMING=1 (the fast-UI plan's step A2): the inventory panel's parts timed, a line every 120 calls */
+static int inv_timing_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *e = getenv("UWVIEW_MENU_TIMING"); on = e && *e && *e != '0'; }
+    return on;
+}
+static double inv_ms(void) { struct timespec t; timespec_get(&t, TIME_UTC); return (double)t.tv_sec * 1000.0 + t.tv_nsec / 1e6; }
+static double inv_blend_mid;   /* (timed: when ui_blend_overlay's own loop ended and the smooth text began) */
+/* the inventory's panel laid over the picture by the GPU (render_set_panel; the row Quick inventory drawing,
+   settings.txt inv_gpu, on unless 0), and whether the backend allows it this frame (not under our Esc menu, which
+   is drawn into the layer after the panel: the panel must be in the layer then) */
+static int inv_gpu_allowed = 1;
+UWV_API void uwv_panel_allow(int on) { inv_gpu_allowed = on != 0; }
 /* the overlay onto the layer, its pixels o->scale window pixels each */
 static void ui_blend_overlay(void)
 {
@@ -3632,6 +3670,7 @@ static void ui_blend_overlay(void)
             d[(size_t)yy * ui_w + xx] = 0xFF000000u | r | g << 8 | b << 16;
         }
     }
+    if (inv_timing_on()) inv_blend_mid = inv_ms();
     ui_text_apply(d, ui_w, ui_h);   /* (the interface font's smooth text over the overlay: ui.c) */
 }
 
@@ -3642,6 +3681,8 @@ int uwi_panel(const UwiSnap *s, int mx, int my, int sheet, int draw, float *fx, 
 /* the size of the snapshot this DLL was built with: the backend uses the panel only when its own is the same (an
    exe and a DLL of different builds can read the panel's words from the wrong places and crash) */
 UWV_API int uwv_snap_size(void) { return (int)sizeof(UwiSnap); }
+/* whether the backend shows the system's cursor over our panels this frame (else the panel draws the pointer) */
+UWV_API void uwv_pointer_front(int on) { ui_sys_pointer_front(on); }
 /* this frame's pointer for the system's cursor (ui.c ui_pointer_picture): 0 when no panel asked for it */
 UWV_API unsigned uwv_pointer(unsigned *out, int cap, int *w, int *h, int *hx, int *hy)
 {
@@ -3652,9 +3693,32 @@ UWV_API unsigned uwv_pointer(unsigned *out, int cap, int *w, int *h, int *hx, in
 UWV_API int uwv_inventory(const UwiSnap *s, int mx, int my, int sheet)
 {
     if (!ui_ready() || !s) return -1;
+    int timed = inv_timing_on();
+    double t0 = timed ? inv_ms() : 0;
     ui_clear();
+    double t1 = timed ? inv_ms() : 0;
     int hit = uwi_panel(s, mx, my, sheet, 1, NULL, NULL);
-    ui_blend_overlay();
+    double t2 = timed ? inv_ms() : 0;
+    int gpu = 0;
+    if (inv_gpu && inv_gpu_allowed) {   /* the overlay and its text to the GPU, laid over the layer there */
+        const Overlay *o = ui_overlay();
+        int x0, y0, x1, y1, stride;
+        const unsigned *t = ui_text_rect(&x0, &y0, &x1, &y1, &stride);
+        gpu = render_set_panel(o->px, o->w, o->h, o->scale, t, stride, x0, y0, x1, y1);
+    }
+    if (!gpu) ui_blend_overlay();
+    else inv_blend_mid = timed ? inv_ms() : 0;
+    if (timed) {
+        static double a[4];
+        static int n;
+        double t3 = inv_ms();
+        a[0] += t1 - t0, a[1] += t2 - t1, a[2] += inv_blend_mid - t2, a[3] += t3 - inv_blend_mid;
+        if (++n == 120) {
+            RLOG_I("view", "inventory at %dx%d, ms a call: clear %.2f, panel drawn %.2f, overlay onto the layer %.2f, smooth text %.2f",
+                   ui_w, ui_h, a[0] / n, a[1] / n, a[2] / n, a[3] / n);
+            n = 0, a[0] = a[1] = a[2] = a[3] = 0;
+        }
+    }
     inv_frame = hud_frames;
     return hit;
 }
@@ -4060,6 +4124,13 @@ UWV_API int uwv_recording(void) { return uwrec_seconds_left(); }
 UWV_API void uwv_clipboard_shot(void) { if (started) clip_wanted = true; }
 
 /* the renderer stopped (a video being made stopped first) */
+/* the game quits and its process ends at once (the backend's Quick quit): the recording finished, the renderer left */
+UWV_API void uwv_quit_fast(void)
+{
+    uwrec_shutdown();
+    if (started) render_quit_fast();
+    started = false;
+}
 UWV_API void uwv_shutdown(void)
 {
     uwrec_shutdown();

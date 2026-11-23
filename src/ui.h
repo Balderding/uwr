@@ -24,6 +24,8 @@ Overlay *ui_overlay(void);
 /* the whole overlay one colour, straight after ui_clear (the same as ui_fill over all of it, quicker) */
 void ui_fill_empty(u8 r, u8 g, u8 b, u8 a);
 const unsigned *ui_text_rect(int *x0, int *y0, int *x1, int *y1, int *stride);
+/* the text layer's drawn rectangle grown by this one (window pixels): text written into the layer directly */
+void ui_text_mark(int x0, int y0, int x1, int y1);
 void ui_clear(void);
 /* a picture from data\ui or data\sprites, e.g. ("ui\\flasks", 75); NULL when missing (loaded once, kept) */
 const Pic *ui_pic(const char *dir, int k);
@@ -37,6 +39,7 @@ void ui_cursor(int n, int x, int y);
 void ui_sys_pointer_set(int on);
 int ui_sys_pointer_on(void);
 int ui_pointer_take(int item, int qty);
+void ui_sys_pointer_front(int on);   /* whether the backend shows the system's cursor over the panels this frame */
 unsigned ui_pointer_picture(unsigned *out, int cap, int *w, int *h, int *hx, int *hy);
 void ui_draw(const Pic *p, int x, int y, int scale);
 /* an object's picture for the interface: ours (data\newsprites\objects, the Esc menu's Sprites tab: ui_new_sprite[item]

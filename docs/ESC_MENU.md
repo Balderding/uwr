@@ -41,8 +41,8 @@ passed over.
 
 | Tab | Presets | What each one sets |
 | --- | --- | --- |
-| Display | Default | Field of view 85, Smooth motion On, Message fade 5 s, the three door rows On, Font size 100%, Menu text, Conversation text and Message text Smooth, Menu background Solid colour, Quick menu drawing On, Pointer in menus System, Character sheet Full. |
-| Graphics | Default | DLSS Super Resolution On in DLAA mode, Ray tracing On, Ray Reconstruction Off, DLSS 5 Off (style B - Natural, intensity and structure 100%), Bounced light On, Object shadows On, Textures Original, the three map detail rows As the textures, Normal maps On at strength 1.00, Joint shadows 100%, Relief shadows Depth 3, Light colour CAT16, Light fade 2 / 3 / 4 tiles, Fire breathing 20%, Light adaptation Automatic, HDR output On. |
+| Display | Default | Field of view 85, Smooth motion On, Message fade 5 s, the three door rows On, Font size 100%, Menu text, Conversation text and Message text Smooth, Menu background Solid colour, Quick menu drawing On, Quick inventory drawing On, Quick conversation drawing On, Pointer in menus System, Character sheet Full. |
+| Graphics | Default | DLSS Super Resolution On in DLAA mode, Ray tracing On, Ray Reconstruction Off, DLSS 5 Off (style B - Natural, intensity and structure 100%), Bounced light On, Object shadows On, Textures Original, the three map detail rows As the textures, Normal maps On at strength 1.00, Joint shadows 100%, Relief shadows Depth 3, Light colour CAT16, Light fade 2 / 3 / 4 tiles, Fire breathing 20%, Light adaptation Automatic, HDR output On, Frame overlap On. |
 | | Fastest | As Default, but DLSS mode Performance, Bounced light Off, Object shadows Off, Relief shadows Off. |
 | | Balanced | As Default, but DLSS mode Quality and Textures Upscaled 256. |
 | | Best picture | As Default (DLAA), but DLSS Ray Reconstruction On, Textures Upscaled 512 and Relief shadows Depth 8. |
@@ -101,6 +101,7 @@ A "tile" or "map square" is one square of the game's map: 8 feet, about 2.4 metr
 | **Map level arrows** | Levels 1 to 8 (default): the map's up and down arrows (and the modern keys' S and W) stop at level 8, the last level with a map. Original (to 99): they go on to level 99, as the original's do, every page past 8 blank. Kept in uw1port.cfg (map_arrows8). (Added 2026-11-21.) |
 | **Map notes kept right** | On (default): the notes you write on the map are saved as you leave them. Off: the original's faults: when you erase the last note left, it comes back the next time you open the map; of two erased notes next to each other in the list, the second stays. Kept in uw1port.cfg (map_notes_fixed). (Added 2026-11-21.) |
 | **Log detail** | How much the game writes to uwr.log. Normal is enough unless you are chasing a problem. Errors only: just what went wrong. Warnings: also what the game worked round. Normal (default): also what it is doing. Everything: also the fine detail. Takes hold at once, for the game and for the renderer. Kept in uw1port.cfg (log_detail). If UWR_LOGLEVEL is set when the game starts, it wins at the start. |
+| **Quick quit** | On (default) / Off | On: when you quit, the game closes at once after saving what it keeps (its settings, the log, the recording) and leaves the graphics card's clean-up to Windows. Since the November 2026 Windows and NVIDIA driver update the full clean-up crashes inside NVIDIA's DLSS when the game quits. Off: the full clean-up, as before. Windows only. (Added 2026-11-22.) |
 | **Quit the game** | Closes the game at once, without asking. Anything you have not saved is lost. |
 
 ### The Save and Load pages
@@ -130,7 +131,9 @@ Both pages show the same five rows.
 | **Font size** | Steps of 5% (shown in pixels and percent). Default 100% | The size of the interface's letters. 100% is the size the game picks for your screen resolution. The smallest is 6 pixels, the largest 60. |
 | **Menu text** | Smooth (default) / The original's | This menu's letters: a smooth font at your screen's full sharpness, or the original game's small capitals. |
 | **Menu background** | Solid colour (default) / Leather | What lies behind this menu's rows and text: one dark colour, the easiest to read, or the game's own leather. |
-| **Quick menu drawing** | On (default) / Off | On: this menu's picture is kept and drawn again only when something in it changes (a row, a value, the row under the pointer, the picture behind it), and the pointer is laid over its own small box, so the pointer moves at the game's full frame rate. Off: the whole menu is drawn again every frame, as before (at 1920x1080 that took about 19 ms a frame, and more on a bigger screen). (Added 2026-11-22.) |
+| **Quick menu drawing** | On (default) / Off | On: with Vulkan and Pointer in menus set to System, the graphics card lays this menu over the picture and is sent it again only when something in it changes, so the game keeps nearly its full frame rate with the menu open (at 2560x1440 about 9 ms a frame, against 7.4 with it shut). Otherwise (Direct3D 12, or the drawn pointer): the menu's picture is kept and drawn again only when something in it changes, and the pointer is laid over its own small box. Off: the whole menu is drawn again every frame, as before (at 1920x1080 that took about 19 ms a frame, and more on a bigger screen). (Added 2026-11-22.) |
+| **Quick conversation drawing** | On (default) / Off | On: the conversation screen's pieces of the original's picture and their dark edges are laid down without the slow pixel-by-pixel loops, and the text's lines and letters are kept while they stay the same (at 2560x1440 the screen went from about 19.5 to 2.2 ms a frame); the picture is the same, pixel for pixel (checked against the old drawing). Off: drawn as before. (Added 2026-11-22.) |
+| **Quick inventory drawing** | On (default) / Off | On: the graphics card lays the inventory panel and its text over the picture, so the frame rate stays as with the panel shut (with our Esc menu open over it the panel is drawn the old way, under the menu). Off: the processor lays the panel over the whole picture every frame, as before (about 11 ms a frame at 2560x1440). Vulkan only; with Direct3D 12 the panel is always drawn the old way. (Added 2026-11-22.) |
 | **Pointer in menus** | System (default) / Drawn | System: in this menu and the inventory the pointer is the system's own cursor (made from the game's own cross, or from the thing you carry and its count), so it moves at the monitor's refresh whatever the game's frame rate. Drawn: the game draws the pointer into its picture as before, so it moves only as often as a frame is drawn. The world's pointer and conversations keep the original's own. (Added 2026-11-22.) |
 | **Conversation text** | Smooth (default) / Original | The letters in conversations. |
 | **Message text** | Smooth (default) / The original's | The letters in the message box. Smooth is smaller and easier to read. |
@@ -145,6 +148,7 @@ Rows marked "card" are shown only when the graphics card and its driver can do w
 | **Resolution** | Information only | Two sizes: the size the 3D view is drawn at, then the size it is shown at. The DLSS rows decide the first. | |
 | **DLSS Super Resolution** | On (default) / Off | NVIDIA DLSS makes the picture sharp and steady. It can also draw the view smaller and enlarge it, which is faster (see DLSS mode). Off draws plainly at full size. | Card; otherwise the row reads "Not on this card". |
 | **DLSS mode** | DLAA (default), Quality, Balanced, Performance, Ultra Performance | The size the view is drawn at before DLSS enlarges it; the row shows that size in pixels. DLAA draws at full size and only cleans the picture: the best picture. Each mode after it draws smaller and runs faster. | DLSS on. |
+| **Frame overlap** | On (default) / Off | On: while the graphics card draws one picture, the game already prepares the next (its interface, the inventory, this menu), so every screen gets the time back. Off: the game waits for each picture to be finished before it starts on the next, as before. Vulkan only: with Direct3D 12 the row reads Needs Vulkan and changes nothing. (Added 2026-11-22.) |
 | **Ray tracing** | On (default) / Off | Light and shadows are worked out by tracing rays of light through the dungeon on the graphics card. | Card; otherwise "Not on this card". |
 | **DLSS Ray Reconstruction** | On / Off (default) | Ray-traced light is grainy before it is cleaned. This is NVIDIA's cleaner (a "denoiser") for it; it cleans and enlarges the picture in one go, in place of Super Resolution. | Ray tracing and DLSS both on; the row tells you which one is missing. |
 | **DLSS 5** | On / Off (default) | NVIDIA's neural rendering: a trained network reworks the finished DLSS picture. | Card. |
@@ -518,20 +522,40 @@ The keys themselves are listed in [KEYBINDS.md](KEYBINDS.md), and can be changed
 
 ## Keys
 
-Every keyboard command of our display, with the key it has now. Change any of them to the key you want.
+Every function of the game that a key can do, with the key it has now. Change any of them to the key you want.
+Every key starts as the one it always had, so nothing changes until you change it. (Since 2026-11-22 every
+function is here: the menus' keys, the map's, the conversation answers, the rune keys, the original's icons and the
+mouse buttons.)
 
 | Row | Values | What it does |
 | --- | --- | --- |
 | **Default keys** | Enter | Every command goes back to the key it came with. |
-| **A command's row** (Walk forward, Use, Map ...) | A key, a key with Shift or Ctrl, or none | Enter (or a click) asks for the new key: the next key you press becomes that command's key. Hold Shift or Ctrl while pressing it for a combination. Shift on its own is taken when you let it go. Esc gives up, Delete leaves the command with no key. Left (or a right click) puts the row's own default key back. |
+| **A command's row** (Walk forward, Use, Map ...) | A key, a key with Shift, Ctrl or Ctrl + Alt, or none | Enter (or a click) asks for the new key: the next key you press becomes that command's key. Hold Shift, Ctrl or Ctrl + Alt while pressing it for a combination. Shift on its own is taken when you let it go. Esc gives up, Delete leaves the command with no key. Left (or a right click) puts the row's own default key back. |
+| **Esc menu, and closing any menu** | Esc (always) | Esc always opens this menu and closes any menu. It cannot be changed, so you can always get out of a menu. The row under it gives the menu a second key (F1). |
+| **Conversation answers**, **Runes on the shelf** | Enter: show / hide | These groups are folded: Enter shows their rows (Answer 1 to 4; the 24 runes, taking the last rune off, casting). |
 
-- A key can belong to one command only. Giving a command a key that another one had takes it from that one, which
-  then shows **none** until you give it a key.
-- A key that has lost its command does nothing in play. It never falls back to an older meaning.
+- A key belongs to one command where both would work. Giving a command a key that another one has asks first: the
+  row shows "F12 is Jump's: Enter swaps, Esc keeps". Enter swaps the two keys; Esc (or any other key, or a click)
+  keeps both as they were. The map's and the conversations' keys only work in those screens, so they can share
+  keys with play (W walks in play and goes up a level in the map).
+- A key that has lost its command does nothing there. It never falls back to an older meaning.
 - Some commands come with two keys (Walk forward: W and Up arrow). Each has its own row, marked "second key".
-- Esc, Tab, F1, F11 and the key under Esc belong to the menus and cannot be given to a command.
-- The mouse buttons, the map's and the conversations' keys, and the rune keys (Ctrl + Alt + letter) are not on this
-  tab and stay as they are.
+- The rows by group:
+  - Moving: walking, stepping, turning, running, jumping, the standing long jump (Ctrl + Space), looking.
+  - Acting: use, look, fight mode, cast, track, sleep, map, the original's talk, get and look icons (F2, F3, F4), and
+    the mouse buttons: "Left button" and "Right button" give a key that clicks at the crosshair (no key at first).
+  - Panels: inventory (I, and Tab as its second key), rune bag, character and statistics pages, scrolling the
+    inventory, compass, flasks, pulling the chain (F7).
+  - Menus: Esc (fixed), the Esc menu's second key (F1), the settings screen (F11), and the original's Ctrl + M, F,
+    D and Q, which open this menu.
+  - Saving and loading: the save and load pages (F5, F9, and the original's Ctrl + S and Ctrl + R).
+  - The map: the level above (W), below (S), back to your level (C).
+  - Conversation answers 1 to 4; runes on the shelf (Ctrl + Alt + the rune's letter, Ctrl + Alt + Backspace takes
+    the last off, Ctrl + Alt + Space casts). A rune given a plain key is still sent to the game as Ctrl + Alt + its
+    letter, so it works the same.
+  - Picture and extras: screenshot, video, ray tracing, DLSS 5, normal maps, shadows, full bright, the AI log.
+- The key under Esc (mouse-look on / off) does nothing in our display, where mouse-look follows what you do, so it
+  has no row.
 - Your keys are kept in the settings file as `key_<name>` lines.
 - The original's display uses the 1992 keys, so the tab is not shown there.
 

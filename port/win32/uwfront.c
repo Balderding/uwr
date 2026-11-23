@@ -128,6 +128,7 @@ static int fade_secs(void);           /* the message box's fade, seconds (the Es
 static int door_step(int v);          /* a door shut from close up shuts all the same (the Esc menu's option) */
 static int door_pick(int v);          /* a door picked by its drawn frame and leaf (the Esc menu's option) */
 static int door_cue(int v);           /* the door's "in the way" message line (the Esc menu's option) */
+static int quick_quit(int v);         /* the quit with the process ended at once (the Esc menu's Quick quit) */
 static int log_back;                 /* the message box scrolled back this many lines (the wheel) */
 static unsigned long long log_touch;  /* the wheel last used: the box shown again */
 static struct { int on, obj, have, n; char buf[4]; } ask;   /* a stack's count asked in our message box (ask_begin) */
@@ -552,6 +553,9 @@ static struct view {
     int (*option)(int id, int step, char *value, int n);
     int (*inventory)(const UwiSnap *s, int mx, int my, int sheet);
     unsigned (*pointer)(unsigned *out, int cap, int *w, int *h, int *hx, int *hy);   /* our panels' pointer picture (uwv_pointer) */
+    void (*panel_allow)(int on);   /* the inventory's panel on the GPU allowed this frame (uwv_panel_allow) */
+    void (*quit_fast)(void);       /* the quit with the process ended at once (uwv_quit_fast) */
+    void (*pointer_front)(int on); /* the system's cursor shown over the panels this frame (uwv_pointer_front) */
     int (*inv_hit)(const UwiSnap *s, int mx, int my, int sheet, float *fx, float *fy);
     void (*inv_wheel)(int notches);           /* the open bags' rows scrolled (the wheel over our panel: up positive) */
     int (*inv_click)(int mx, int my, int down); /* a left press / release on their slider: 1 taken */
@@ -689,6 +693,9 @@ static void view_open(const char *dll)
     V.menu_tab_at = (int (*)(int, int))uwp_lib_sym(V.dll, "uwv_menu_tab_at");
     V.inventory = (int (*)(const UwiSnap *, int, int, int))uwp_lib_sym(V.dll, "uwv_inventory");
     V.pointer = (unsigned (*)(unsigned *, int, int *, int *, int *, int *))uwp_lib_sym(V.dll, "uwv_pointer");
+    V.panel_allow = (void (*)(int))uwp_lib_sym(V.dll, "uwv_panel_allow");
+    V.quit_fast = (void (*)(void))uwp_lib_sym(V.dll, "uwv_quit_fast");
+    V.pointer_front = (void (*)(int))uwp_lib_sym(V.dll, "uwv_pointer_front");
     V.inv_hit = (int (*)(const UwiSnap *, int, int, int, float *, float *))uwp_lib_sym(V.dll, "uwv_inv_hit");
     V.inv_wheel = (void (*)(int))uwp_lib_sym(V.dll, "uwv_inv_wheel");
     V.inv_click = (int (*)(int, int, int))uwp_lib_sym(V.dll, "uwv_inv_click");
@@ -1570,7 +1577,7 @@ enum { MO_BACK = 99, MO_SLOT = 100 };
 enum { MO_VOLPAGE = 105, MO_PRESET = 106, MO_DEFAULTS = 107, MO_VOL = 400 };
 /* the Keys tab (key_rows_build): MO_KEYPAGE stands in MENU_ROWS where uwinput.c's commands go (MO_KEY + its number
    there); MO_KEYDEFAULT its Default keys row */
-enum { MO_KEYPAGE = 108, MO_KEYDEFAULT = 109, MO_KEY = 2000 };
+enum { MO_KEYPAGE = 108, MO_KEYDEFAULT = 109, MO_KEY = 2000, MO_KEYFOLD = 2400 };   /* MO_KEYFOLD + a "#+" heading's command: its group shown / folded */
 /* the Sprites tab (spr_rows_build): MO_SPRPAGE stands in MENU_ROWS where the rows of our own object pictures go
    (MO_SPR + the object: one for each picture that is in uwr\newsprites\objects, none when there is none) */
 enum { MO_SPRPAGE = 110, MO_SPR = 3000, MO_SPRALL = 3999 };   /* MO_SPRALL: the tab's first row, every picture at once (uwv_option 1999) */
@@ -1639,7 +1646,7 @@ enum { MO_CARDMUSIC = 196, MO_CARDSPEECH = 197, MO_ROOMINFO = 199, MO_DIAL = 200
    does not set), Quick fades, and the port's own settings screen (F11) */
 enum { MO_RVSYNC = 111, MO_REXPOSE, MO_RGAMMA, MO_RINVERT, MO_RHAND, MO_RSHEEN, MO_RBOUNCES, MO_RRAYLEN, MO_RSPRN, MO_RSPRAO,
        MO_RSPRH, MO_RD5TONE, MO_RD5SAT, MO_RCAMPSW, MO_RFLAMESW, MO_QFADES = 126, MO_SETSCREEN = 127, MO_LOGDETAIL = 128,
-       MO_SEENMAP = 130, MO_MAPARROWS = 131, MO_MAPNOTES = 132, MO_FEUD = 133, MO_MENUFAST = 134, MO_SYSPTR = 135,
+       MO_SEENMAP = 130, MO_MAPARROWS = 131, MO_MAPNOTES = 132, MO_FEUD = 133, MO_MENUFAST = 134, MO_SYSPTR = 135, MO_INVFAST = 136, MO_OVERLAP = 137, MO_QUICKQUIT = 138, MO_CONVFAST = 139,
        MO_ENH = 167 };
 _Static_assert(MO_ENH + ENH_COUNT <= MO_CARDMUSIC, "the enhancements' rows run into the sound cards'");
 /* The game's own sound devices (the Roland, a Sound Blaster, ...): DATA\UW.CFG's two cards in the home folder, as the settings screen's Sound tab
@@ -1871,6 +1878,7 @@ static const struct { int id; const char *label; int opt; const char *hint; } ME
     {MO_MAPARROWS, "Map level arrows", -1, "Levels 1 to 8: the map's arrows stop at the last level that has a map. Original: they go on to level 99, every page past 8 blank."},
     {MO_MAPNOTES, "Map notes kept right", -1, "On: notes you erase stay erased and every note you keep is kept. Off: the original's faults (an erased last note comes back, of two erased notes in a row one stays). Default On."},
     {MO_LOGDETAIL, "Log detail", -1, "How much the game writes to uwr.log. Normal is enough unless you are chasing a problem."},
+    {MO_QUICKQUIT, "Quick quit", -1, "On: when you quit, the game closes at once and leaves the graphics card's clean-up to Windows; since the November 2026 Windows and NVIDIA update the full clean-up crashes inside NVIDIA's DLSS. Off: the full clean-up, as before. Default On."},
     {MO_QUIT, "Quit the game", -1, "Closes the game at once, without asking. Anything not saved is lost."},
     {MO_HEAD, "#Display", -1, ""},
     {MO_DISPLAY, "Display", -1, "Ours: the new 3D view with everything we added. The original's: the 1992 game as it was, all our changes off, its own keys."},
@@ -1888,6 +1896,8 @@ static const struct { int id; const char *label; int opt; const char *hint; } ME
     {MO_MENUFONT, "Menu text", 18, "This menu's letters: Smooth (easy to read, the default) or the original game's small capitals."},
     {MO_MENUBG, "Menu background", 63, "What lies behind this menu's rows and text: Solid colour (dark, easiest to read, the default) or Leather, the game's own."},
     {MO_MENUFAST, "Quick menu drawing", 64, "On: this menu is drawn again only when something in it changes, and the pointer moves at the game's full speed. Off: the whole menu is drawn again every frame, which can make the pointer jerky. Default On."},
+    {MO_CONVFAST, "Quick conversation drawing", 69, "On: the conversation screen's pieces of the original's picture are laid down without the slow pixel-by-pixel loops (the picture is the same, pixel for pixel). Off: drawn as before. Default On."},
+    {MO_INVFAST, "Quick inventory drawing", 67, "On: the graphics card lays the inventory panel over the picture, so the game keeps its full frame rate with the inventory open. Off: the panel is laid over the whole picture by the processor every frame, as before (about 11 ms a frame at 2560x1440). Default On."},
     {MO_SYSPTR, "Pointer in menus", 65, "System: in this menu and the inventory the pointer is the system's own, which moves as smoothly as your mouse whatever the game's frame rate (it looks the same: the game's cross, or the thing you carry). Drawn: the game draws it into its picture, as before, so it moves only as often as a frame is drawn. Default System."},
     {MO_CONVFONT, "Conversation text", 17, "The letters in conversations: Smooth (easy to read, the default) or the original game's font."},
     {MO_LOGFONT, "Message text", 41, "The message box's letters: Smooth (smaller and easier to read, the default) or the original game's font."},
@@ -1896,6 +1906,7 @@ static const struct { int id; const char *label; int opt; const char *hint; } ME
     {MO_RES, "Resolution", 23, "Information only: the size the 3D view is drawn at -> the size shown on screen. The DLSS rows below set it."},
     {MO_DLSS, "DLSS Super Resolution", 0, "NVIDIA DLSS makes the picture sharp and steady, and can enlarge a smaller one for speed. Off: plain full size."},
     {MO_DLSSMODE, "DLSS mode", 21, "The size drawn before DLSS enlarges it. DLAA: full size, the best picture. The others: smaller and faster."},
+    {MO_OVERLAP, "Frame overlap", 68, "On: while the graphics card draws one picture the game already prepares the next, so every screen runs faster. Off: the game waits for each picture to be finished before it starts the next, as before. Vulkan only. Default On."},
     {MO_RT, "Ray tracing", 3, "On: light and shadows are worked out by tracing rays of light, on graphics cards that can do it."},
     {MO_RR, "DLSS Ray Reconstruction", 22, "NVIDIA's cleaner for the grain in ray-traced light; it also enlarges the picture. Needs DLSS and Ray tracing."},
     {MO_DLSS5, "DLSS 5", 1, "NVIDIA's neural rendering: it reworks the DLSS picture. Only shown on graphics cards that have it."},
@@ -2166,7 +2177,7 @@ static int menu_tab_of(int id)   /* the tab a row is on */
 typedef struct { int id; const char *want; int own; } PresetRow;
 static const PresetRow PR_DISPLAY[] = {
     {MO_FOV, "85"}, {MO_SMOOTH, "On"}, {MO_FADE, "5 s"}, {MO_DOORSTEP, "On"}, {MO_DOORPICK, "On"}, {MO_DOORCUE, "On"},
-    {MO_FONTSIZE, "*(100%)"}, {MO_MENUFONT, "Smooth"}, {MO_MENUBG, "Solid colour"}, {MO_MENUFAST, "On"}, {MO_SYSPTR, "System"}, {MO_CONVFONT, "Smooth"}, {MO_LOGFONT, "Smooth"},
+    {MO_FONTSIZE, "*(100%)"}, {MO_MENUFONT, "Smooth"}, {MO_MENUBG, "Solid colour"}, {MO_MENUFAST, "On"}, {MO_INVFAST, "On"}, {MO_CONVFAST, "On"}, {MO_SYSPTR, "System"}, {MO_CONVFONT, "Smooth"}, {MO_LOGFONT, "Smooth"},
     {MO_CHARSHEET, "Full"},
 };
 static const PresetRow PR_GRAPHICS[] = {   /* (uwview.c's S, render.c's and render_vk.c's statics) */
@@ -2174,7 +2185,7 @@ static const PresetRow PR_GRAPHICS[] = {   /* (uwview.c's S, render.c's and rend
     {MO_D5INT, "100%"}, {MO_D5STR, "100%"}, {MO_BOUNCE, "On"}, {MO_SHADOWS, "On"}, {MO_TEXRES, "Original"},
     {MO_MAPNORMAL, "As the textures"}, {MO_MAPAO, "As the textures"}, {MO_MAPHEIGHT, "As the textures"}, {MO_RELIEF, "On"},
     {MO_NSTR, "1.00"}, {MO_TEXAO, "100%"}, {MO_TEXSHADOW, "Depth 3"}, {MO_LIGHTCOL, "CAT16"}, {MO_LIGHTFADE, "2 / 3 / 4 tiles"},
-    {MO_BREATH, "20%"}, {MO_ADAPT, "Automatic*"}, {MO_HDR, "On*"},
+    {MO_BREATH, "20%"}, {MO_ADAPT, "Automatic*"}, {MO_HDR, "On*"}, {MO_OVERLAP, "On"},
 };
 static const PresetRow PR_G_FAST[] = { {MO_DLSSMODE, "Performance*"}, {MO_BOUNCE, "Off"}, {MO_SHADOWS, "Off"}, {MO_TEXSHADOW, "Off"} };
 static const PresetRow PR_G_BALANCED[] = { {MO_DLSSMODE, "Quality*"}, {MO_TEXRES, "Upscaled 256"} };
@@ -2344,7 +2355,7 @@ static const char *key_name(int c)
 static void key_text(int key, int shift, char *out, size_t n)
 {
     if (!key) snprintf(out, n, "%s", "none");
-    else snprintf(out, n, "%s%s", shift == 1 ? "Shift + " : shift == 2 ? "Ctrl + " : "", key_name(key));
+    else snprintf(out, n, "%s%s", shift == 1 ? "Shift + " : shift == 2 ? "Ctrl + " : shift == 3 ? "Ctrl + Alt + " : "", key_name(key));
 }
 static void keys_load(void)   /* once, when the settings can be read */
 {
@@ -2352,12 +2363,35 @@ static void keys_load(void)   /* once, when the settings can be read */
     char name[48], v[32];
     if (done || !plat_home()) return;
     done = 1;
+    int own = 0;
+    static unsigned char loaded[256];   /* (a command whose key came from the settings: the player's choice) */
     for (int i = 0; i < uwi_cmd_count(); i++) {
         int k = 0, sh = 0;
-        if (uwi_cmd_label(i)[0] == '#') continue;
+        if (uwi_cmd_label(i)[0] == '#' || uwi_cmd_fixed(i)) continue;
         snprintf(name, sizeof name, "key_%s", uwi_cmd_id(i));
         if (port_config_get(plat_home(), name, v, sizeof v) != 0 || sscanf(v, "%d,%d", &k, &sh) != 2) continue;
-        if (k >= 0 && k < 0x200 && sh >= 0 && sh <= 2) uwi_cmd_set(i, k, sh, 1);
+        if (k >= 0 && k < 0x200 && k != 0x01 && sh >= 0 && sh <= 3) {
+            int dk, dsh;
+            char t[48];
+            if (i < 256) loaded[i] = 1;
+            uwi_cmd_set(i, k, sh, 1);
+            uwi_cmd_get(i, 1, &dk, &dsh);
+            if (k != dk || sh != dsh) key_text(k, sh, t, sizeof t), RLOG_I("front", "keys: yours: %s = %s", uwi_cmd_label(i), t), own++;
+        }
+    }
+    RLOG_I("front", "keys: %d of the commands have keys of your own (the Keys tab)", own);
+    /* a command that came with a key the player had already given another command (the commands added 2026-11-22: F2,
+       F3, F4, F7 ...) gives it up, so that the player's own command keeps it (never two commands on one key; the
+       review's P2-3); not saved: the Keys tab shows it as none until the player gives it a key */
+    for (int i = 0; i < uwi_cmd_count() && i < 256; i++) {
+        int k, sh, c;
+        char t[48];
+        if (loaded[i] || uwi_cmd_label(i)[0] == '#' || uwi_cmd_fixed(i)) continue;
+        uwi_cmd_get(i, 0, &k, &sh);
+        if (!k || (c = uwi_cmd_conflict(i, k, sh)) < 0 || c >= 256 || !loaded[c]) continue;
+        uwi_cmd_set(i, 0, 0, 1);
+        key_text(k, sh, t, sizeof t);
+        RLOG_I("front", "keys: %s's default %s left out: it is your %s's", uwi_cmd_label(i), t, uwi_cmd_label(c));
     }
 }
 static void keys_save(int i)   /* command i's key to the settings (-1: every command's) */
@@ -2382,26 +2416,66 @@ static void key_bind(int i, int key, int shift)
     key_text(key, shift, t, sizeof t);
     RLOG_I("front", "keys: %s = %s%s%s", uwi_cmd_label(i), t, lost >= 0 ? ", taken from " : "", lost >= 0 ? uwi_cmd_label(lost) : "");
 }
+/* a key another command has (where both would work): the row asks; Enter swaps the two, any other key keeps both */
+static struct { int on, i, key, shift, other; } key_conf;
+/* command i given key + shift, or the question when another command has it there (never two on one key) */
+static void key_try(int i, int key, int shift)
+{
+    char t[48];
+    int other = uwi_cmd_conflict(i, key, shift);
+    key_text(key, shift, t, sizeof t);
+    if (other == -2) { RLOG_I("front", "keys: %s not given to %s: Esc always opens and closes the menus", t, uwi_cmd_label(i)); return; }
+    if (other >= 0) {
+        key_conf.on = 1, key_conf.i = i, key_conf.key = key, key_conf.shift = shift, key_conf.other = other;
+        RLOG_I("front", "keys: conflict: %s is %s's key: Enter swaps, Esc keeps both", t, uwi_cmd_label(other));
+        return;
+    }
+    key_bind(i, key, shift);
+}
+/* the answer to the question: Enter swaps (the other command gets this one's key), anything else keeps both */
+static int key_conf_event(int c, int down)
+{
+    char a[48], b[48];
+    if (down != 1 || c == 0x2A || c == 0x36 || c == 0x1D || c == 0x11D || c == 0x38 || c == 0x138) return 1;
+    if (c == 0x1C || c == 0x11C) {
+        int ok, osh, i = key_conf.i, o = key_conf.other;
+        uwi_cmd_get(i, 0, &ok, &osh);
+        uwi_cmd_set(o, 0, 0, 1);                                         /* (the key freed first) */
+        uwi_cmd_set(i, key_conf.key, key_conf.shift, 1);
+        if (ok && uwi_cmd_conflict(o, ok, osh) < 0) uwi_cmd_set(o, ok, osh, 1);   /* this one's old key to the other */
+        keys_save(i), keys_save(o);
+        uwi_cmd_get(i, 0, &ok, &osh), key_text(ok, osh, a, sizeof a);
+        uwi_cmd_get(o, 0, &ok, &osh), key_text(ok, osh, b, sizeof b);
+        RLOG_I("front", "keys: swapped: %s = %s, %s = %s", uwi_cmd_label(i), a, uwi_cmd_label(o), b);
+    } else RLOG_I("front", "keys: conflict: kept as they were");
+    key_conf.on = 0;
+    return 1;
+}
 /* a key while the Keys tab asks for one: 1 always (every key is the question's) */
 static int key_ask_event(int c, int down)
 {
     int shiftkey = c == 0x2A || c == 0x36, mod = shiftkey || c == 0x1D || c == 0x11D || c == 0x38 || c == 0x138;
     if (down == 1) {
-        if (c == 0x01) key_ask = -1;
+        if (c == 0x01) key_ask = -1;                                                   /* Esc: given up (never a key) */
         else if (c == 0x153) key_bind(key_ask, 0, 0), key_ask = -1;                    /* Delete: no key */
         else if (mod) key_ask_mod = c;
-        else if (c != 0x57 && c != 0x0F && c != 0x29 && c != 0x3B)                     /* (F11, Tab, `, F1: not to be given away) */
-            key_bind(key_ask, c, menu_shift ? 1 : uwp_ctrl_down() ? 2 : 0), key_ask = -1, key_ask_mod = 0;
+        else {   /* the key with Shift, Ctrl or Ctrl+Alt held; another command's: the question (key_try) */
+            int i = key_ask, sh = menu_shift ? 1 : uwp_ctrl_down() ? (uwp_alt_down() ? 3 : 2) : 0;
+            key_ask = -1, key_ask_mod = 0;
+            key_try(i, c, sh);
+        }
     } else if (!down && key_ask_mod == c) {
-        if (shiftkey) key_bind(key_ask, c, 0), key_ask = -1;                           /* Shift alone, let go */
+        if (shiftkey) { int i = key_ask; key_ask = -1; key_try(i, c, 0); }              /* Shift alone, let go */
         key_ask_mod = 0;
     }
     return 1;
 }
 /* the Keys tab's rows: Default keys, then each command with its key */
+static unsigned char key_fold_open[200];   /* a "#+" heading's group shown (Enter on its row); folded at the start */
 static void key_rows_build(const char **lab, const char **val, const char **hint, char vbuf[][128])
 {
-    static char hints[96][224];
+    static char hints[200][224];
+    int folded = 0;   /* under a folded "#+" heading: rows not shown */
     keys_load();
     if (menu_n < MENU_MAX - 2) {
         snprintf(vbuf[menu_n], 128, "%s", "Enter");
@@ -2409,21 +2483,41 @@ static void key_rows_build(const char **lab, const char **val, const char **hint
         menu_ids[menu_n] = MO_KEYDEFAULT, lab[menu_n] = "Default keys", val[menu_n] = vbuf[menu_n];
         hint[menu_n] = "Enter: every command goes back to the key it came with.", menu_n++;
     }
-    for (int i = 0; i < uwi_cmd_count() && i < 96 && menu_n < MENU_MAX - 1; i++) {
+    for (int i = 0; i < uwi_cmd_count() && i < 200 && menu_n < MENU_MAX - 1; i++) {
         const char *l = uwi_cmd_label(i);
         int k, sh, dk, dsh;
         char d[48];
         vbuf[menu_n][0] = 0;
+        if (l[0] == '#' && l[1] == '+') {   /* a group shown folded: one row that opens and closes it */
+            folded = !key_fold_open[i];
+            if (menu_n && menu_ids[menu_n - 1] == MO_HEAD) menu_n--;
+            snprintf(vbuf[menu_n], 128, "%s", folded ? "Enter: show" : "Enter: hide");
+            snprintf(hints[i], sizeof hints[i], "Enter: %s the keys of this group.", folded ? "show" : "hide");
+            menu_ids[menu_n] = MO_KEYFOLD + i, lab[menu_n] = l + 2, val[menu_n] = vbuf[menu_n], hint[menu_n] = hints[i], menu_n++;
+            continue;
+        }
         if (l[0] == '#') {   /* (a heading with no row under it is taken back, as the options') */
+            folded = 0;
             if (menu_n && menu_ids[menu_n - 1] == MO_HEAD) menu_n--;
             menu_ids[menu_n] = MO_HEAD, lab[menu_n] = l, val[menu_n] = vbuf[menu_n], hint[menu_n] = "", menu_n++;
             continue;
         }
+        if (folded) continue;
+        if (uwi_cmd_fixed(i)) {   /* Esc: shown, never changed (it must always get the player out of a menu) */
+            snprintf(vbuf[menu_n], 128, "%s", "Esc (always)");
+            menu_ids[menu_n] = MO_KEY + i, lab[menu_n] = l, val[menu_n] = vbuf[menu_n], menu_n++;
+            hint[menu_n - 1] = "Esc always opens this menu and closes any menu; it cannot be changed. The row below gives the menu a second key.";
+            continue;
+        }
         uwi_cmd_get(i, 0, &k, &sh), uwi_cmd_get(i, 1, &dk, &dsh);
         if (key_ask == i) snprintf(vbuf[menu_n], 128, "%s", "press a key ...");
-        else key_text(k, sh, vbuf[menu_n], 128);
+        else if (key_conf.on && key_conf.i == i) {
+            char t[48];
+            key_text(key_conf.key, key_conf.shift, t, sizeof t);
+            snprintf(vbuf[menu_n], 128, "%s is %s's: Enter swaps, Esc keeps", t, uwi_cmd_label(key_conf.other));
+        } else key_text(k, sh, vbuf[menu_n], 128);
         key_text(dk, dsh, d, sizeof d);
-        snprintf(hints[i], sizeof hints[i], "Enter, then the new key (hold Shift or Ctrl for a combination). Esc: give up. Delete: no key. Left: back to %s.", d);
+        snprintf(hints[i], sizeof hints[i], "Enter, then the new key (hold Shift, Ctrl or Ctrl+Alt for a combination). Esc: give up. Delete: no key. Left: back to %s.", d);
         menu_ids[menu_n] = MO_KEY + i, lab[menu_n] = l, val[menu_n] = vbuf[menu_n], hint[menu_n] = hints[i], menu_n++;
     }
     if (menu_n && menu_ids[menu_n - 1] == MO_HEAD) menu_n--;
@@ -2530,6 +2624,7 @@ static void menu_rows_pass(const char **lab, const char **val, const char **hint
         else if (id == MO_SEENMAP) snprintf(vbuf[menu_n], 128, "%s", port_seen_on ? "On" : "Off");
         else if (id == MO_MAPARROWS) snprintf(vbuf[menu_n], 128, "%s", port_map_arrows8 ? "Levels 1 to 8" : "Original (to 99)");
         else if (id == MO_MAPNOTES) snprintf(vbuf[menu_n], 128, "%s", port_map_notes_fixed ? "On" : "Off");
+        else if (id == MO_QUICKQUIT) snprintf(vbuf[menu_n], 128, "%s", quick_quit(-1) ? "On" : "Off");
         else if (id == MO_LOGDETAIL) snprintf(vbuf[menu_n], 128, "%s", LOG_DETAIL[rlog_level()]);
         else if (id == MO_SETSCREEN) snprintf(vbuf[menu_n], 128, "%s", "Enter");
         else if (id == MO_DOORSTEP) snprintf(vbuf[menu_n], 128, "%s", door_step(-1) ? "On" : "Off");
@@ -2732,7 +2827,8 @@ static void panel_shortcut(int c)
 /* our menu closed: the first start's model kept, the game going on */
 static void menu_close(void)
 {
-    menu_open = 0, menu_page = 0;
+    if (menu_open) RLOG_I("front", "menu: closed at %lu ms", (unsigned long)(ms_now() - L.start));
+    menu_open = 0, menu_page = 0, key_conf.on = 0;
     if (pick_prompt) {   /* the first start's picker: the model shown kept, so it never asks again */
         pick_prompt = 0;
         port_mind_keep();
@@ -2779,12 +2875,15 @@ static int menu_step_tab_row(int id, int step)
         RLOG_I("front", "keys: every command back to its default key");
         return 1;
     }
+    if (id >= MO_KEYFOLD && id < MO_KEYFOLD + 200) { key_fold_open[id - MO_KEYFOLD] ^= 1; return 1; }   /* a group shown / folded */
     if (id >= MO_KEY && id < MO_KEY + 200) {   /* a command's row: Enter or Right asks for the key, Left its shipped one */
+        if (uwi_cmd_fixed(id - MO_KEY)) return 1;   /* (Esc: never changed) */
+        key_conf.on = 0;
         if (step > 0) key_ask = id - MO_KEY, key_ask_mod = 0;
         else {
             int k, sh;
             uwi_cmd_get(id - MO_KEY, 1, &k, &sh);
-            key_bind(id - MO_KEY, k, sh);
+            key_try(id - MO_KEY, k, sh);
         }
         return 1;
     }
@@ -2843,6 +2942,7 @@ static int menu_step_page_row(int id, int step)
         if (plat_home()) port_config_set(plat_home(), "map_arrows8", port_map_arrows8 ? "1" : "0");
         return 1;
     }
+    if (id == MO_QUICKQUIT) { quick_quit(!quick_quit(-1)); return 1; }   /* (uw1port.cfg quick_quit, 1 unless 0) */
     if (id == MO_MAPNOTES) {   /* the map's notes kept right (uw1port.cfg map_notes_fixed, 1 unless 0) */
         port_map_notes_fixed = !port_map_notes_fixed;
         if (plat_home()) port_config_set(plat_home(), "map_notes_fixed", port_map_notes_fixed ? "1" : "0");
@@ -3053,9 +3153,13 @@ static int menu_event(int kind, int c, int down, int x, int y)
         if (c == 0x2A || c == 0x36) menu_shift = down != 0;   /* (Shift held: Shift+Tab, the tab before) */
         if (!menu_open) {
             key_ask = -1;
-            if (c == 0x01 && down == 1 && ((V.ok && V.menu) || soft_live())) menu_open = 1, menu_sel = 0, port_pause(1);
+            if (c == 0x01 && down == 1 && ((V.ok && V.menu) || soft_live())) {
+                menu_open = 1, menu_sel = 0, port_pause(1);
+                RLOG_I("front", "menu: opened (Esc) at %lu ms", (unsigned long)(ms_now() - L.start));
+            }
             return 1;
         }
+        if (key_conf.on && !menu_page) return key_conf_event(c, down);   /* the Keys tab asks: swap or keep */
         if (key_ask >= 0 && !menu_page) return key_ask_event(c, down);   /* the Keys tab asks: this key is the answer */
         if (!down) return 1;
         if (!menu_page && vol_key(c)) return 1;   /* a slider's row: a number typed in; a row that only Enter acts on */
@@ -3076,7 +3180,11 @@ static int menu_event(int kind, int c, int down, int x, int y)
     }
     if (!menu_open) return 1;           /* (a press's release after the menu closed: nothing) */
     menu_mx = x, menu_my = y;
-    if (key_ask >= 0 && kind == UWI_BUTTON && down) { key_ask = -1; return 1; }   /* a click while a key is asked: given up */
+    if ((key_ask >= 0 || key_conf.on) && kind == UWI_BUTTON && down) {   /* a click while a key is asked: given up */
+        if (key_conf.on) RLOG_I("front", "keys: conflict: kept as they were");
+        key_ask = -1, key_conf.on = 0;
+        return 1;
+    }
     if (!menu_page && kind == UWI_BUTTON && down && c == PLAT_BUTTON_LEFT) {   /* a left press on a tab's name opens it */
         int t = soft_menu_up() ? (soft_menu->tab_at ? soft_menu->tab_at(x, y) : -1) : V.menu_tab_at ? V.menu_tab_at(x, y) : -1;
         if (t >= 0 && t < tab_nvis) { quit_armed = 0, vol_edit_on = 0, menu_tab_set(tab_vis[t]); return 1; }
@@ -3572,6 +3680,7 @@ static void input_state(UwiState *s)
     }
 #endif
     s->ctrl_down = uwp_ctrl_down();
+    s->alt_down = uwp_alt_down();
     /* (not over the original's options panel: Esc is its own there, it closes it; our menu opened under it unseen and
        paused the game) */
     /* (nor while an instrument is played: SOUND.C play_instrument's loop ends only at Esc; uwlog.c knows it from the
@@ -4073,12 +4182,22 @@ static void view_menu_draw(void)
     const char *lab[MENU_MAX], *val[MENU_MAX], *hint[MENU_MAX];
     static char vbuf[MENU_MAX][128];
     const char *title = menu_page == 1 ? "Save game" : menu_page == 2 ? "Load game" : pick_prompt ? "Pick a model" : "Options";
+    uint64_t t0 = plat_counter();
     menu_rows_build(lab, val, hint, vbuf);
+    uint64_t t1 = plat_counter();
     menu_sel_fix(1);
     menu_tabs_give();
     if (V.menu_sliders) V.menu_sliders(!menu_page ? vol_frac : NULL, !menu_page ? menu_n : 0);   /* (the sliders' rows: the Fog and smoke tab's) */
+    uint64_t t2 = plat_counter();
     menu_hover = V.menu_rows2 ? V.menu_rows2(title, lab, val, hint, menu_n, menu_sel, menu_mx, menu_my)
                               : V.menu_rows(title, lab, val, menu_n, menu_sel, menu_mx, menu_my);
+    {   /* (a slow menu frame, the opening's: its parts in the log; the 2026-11-22 review's P3-2) */
+        uint64_t t3 = plat_counter();
+        double hz = (double)plat_counter_hz() / 1000.0, all = (double)(t3 - t0) / hz;
+        if (all > 20)
+            RLOG_I("front", "a slow menu frame: %.0f ms (the rows built %.1f, tabs and sliders %.1f, drawn %.1f)", all,
+                   (double)(t1 - t0) / hz, (double)(t2 - t1) / hz, (double)(t3 - t2) / hz);
+    }
 }
 /* the death's fade: the composed picture darkened to black over 1000 ms (port_death_scene waits on it), then black
    until the game leaves PS_DEATH (real_start's menu) */
@@ -4176,6 +4295,9 @@ static void view_present(const uint32_t *src, int sw, int sh)
         layer = V.ui;
     }
     inv_pump();
+    if (V.panel_allow) V.panel_allow(!menu_open);   /* (our menu is drawn into the layer after the panel: then the panel is too) */
+    if (V.pointer_front)   /* (view_sys_pointer's own test: the panel draws the pointer itself when the cursor is not shown) */
+        V.pointer_front(display_mode == 0 && !settings_open() && (menu_open || (inv_open && uwf_pointer_free())));
     if (inv_open && full_play() && V.inventory && layer) inv_draw();   /* our inventory panel */
     if (menu_open && V.menu_rows && layer) view_menu_draw();
     view_sys_pointer();
@@ -4633,6 +4755,19 @@ void uwf_fx_audio_start(void) { fx_audio_start(0); }   /* fx_audio 1: OpenAL Sof
 void uwf_input_init(void) { uwi_init(&uwi_out); }      /* the window's input (uwinput.c) */
 
 /* the loop ended */
+/* the row Quick quit (uw1port.cfg quick_quit, on unless 0); v 0 or 1 sets and keeps it, -1 reads it */
+static int quick_quit(int v)
+{
+    static int on = -1;
+    if (v >= 0) {
+        on = v != 0;
+        if (plat_home()) port_config_set(plat_home(), "quick_quit", on ? "1" : "0");
+    } else if (on < 0) {
+        char b[16];
+        on = !(plat_home() && port_config_get(plat_home(), "quick_quit", b, sizeof b) == 0 && !strcmp(b, "0"));
+    }
+    return on;
+}
 void uwf_shutdown(void)
 {
     {   /* the language model's worker stopped and the model let go before the DLLs go (uwmindhost.c) */
@@ -4641,6 +4776,11 @@ void uwf_shutdown(void)
     }
     if (uwp_window()) RLOG_I("front", "%u presents", L.presents);
     if (clip_on) uwp_capture(0);
+#ifdef _WIN32
+    /* Quick quit: the renderer left to Windows and the process ended at once after our own clean-up and the game's
+       recording (plat_win32.c uwp_quick_end): NVIDIA's NGX shutdown faults at the quit since the 2026-11-22 update */
+    if (V.ok && V.quit_fast && quick_quit(-1)) V.quit_fast(), V.ok = 0, uwp_quick_end();
+#endif
     if (V.ok) V.shutdown();
     /* OpenAL Soft (fx_audio) closed and let go before the process ends: left open, its threads die in ExitProcess and
        the DLL's own teardown then fails (libstdc++'s "std::__condvar::~__condvar(): Assertion '__e != 16' failed",

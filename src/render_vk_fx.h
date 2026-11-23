@@ -182,6 +182,7 @@ static bool vfx_particles_start(void)
 
 void render_particles_spawn(const RParticle *p, int n)
 {
+    gpu_idle();
     if (!F.pok) return;
     double t = vfx_clock_s();
     RParticle *sp = F.spawn_up.ptr;
@@ -193,6 +194,7 @@ void render_particles_spawn(const RParticle *p, int n)
 
 void render_particles_clear(void)
 {
+    gpu_idle();
     if (!F.pok) return;
     F.clear = true, F.nspawn = 0;
     memset(F.death, 0, sizeof F.death);
@@ -275,6 +277,7 @@ static bool vfx_decals_start(void)
 
 void render_decals_add(float x, float y, float z, int kind, float size, float yaw, const float rgb[3])
 {
+    gpu_idle();
     static const float COL[RD_KINDS][3] = {{0.40f, 0.04f, 0.03f}, {0.22f, 0.19f, 0.16f}, {0.75f, 0.88f, 1.0f}, {0.45f, 0.75f, 0.12f}};
     Decal *d = &F.d[F.dhead];
     F.dhead = (F.dhead + 1) % RD_MAX;
@@ -285,7 +288,7 @@ void render_decals_add(float x, float y, float z, int kind, float size, float ya
     d->born = (double)rv_ticks() / 1000.0;
 }
 
-void render_decals_clear(void) { F.n = 0, F.dhead = 0; }
+void render_decals_clear(void) { gpu_idle(); F.n = 0, F.dhead = 0; }
 int render_decals_count(void) { return F.n; }
 
 /* the frame's marks into their vertex buffer and constants (render_decals.c's rfx_decals_draw, its CPU half; before

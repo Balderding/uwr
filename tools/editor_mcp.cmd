@@ -1,17 +1,18 @@
 @echo off
-rem The Underworld Editor's MCP server (O:\UltimaUnderworldEditorAvalonia\src\UwEditor.Mcp).
+if not defined UWR_TOOLS set UWR_TOOLS=X:\tools
+rem The Underworld Editor's MCP server (X:\uw-editor\src\UwEditor.Mcp).
 rem   editor_mcp build   builds it (Release)
 rem   editor_mcp test    runs its tests on copies of work\testlevel\gamedata\UW
 rem   editor_mcp apptest the app's Let Claude work here test (headless)
 rem   editor_mcp         runs the server on stdio, only on work\testlevel\game
 rem   editor_mcp app     passes stdio through to the editor app (its Level menu, Let Claude work here)
 rem Through dotnet.exe on O: (Defender's ASR rule blocks a new exe); nothing on C:.
-set DOTNET_CLI_HOME=O:\appsnotonc\dotnet10\home
-set NUGET_PACKAGES=O:\appsnotonc\dotnet10\home\.nuget\packages
+set DOTNET_CLI_HOME=%UWR_TOOLS%\dotnet10\home
+set NUGET_PACKAGES=%UWR_TOOLS%\dotnet10\home\.nuget\packages
 set DOTNET_CLI_TELEMETRY_OPTOUT=1
 set DOTNET_NOLOGO=1
-set ED=O:\UltimaUnderworldEditorAvalonia
-set DN=O:\appsnotonc\dotnet10\dotnet.exe
+set ED=X:\uw-editor
+set DN=%UWR_TOOLS%\dotnet10\dotnet.exe
 if "%1"=="build" "%DN%" build "%ED%\src\UwEditor.Mcp.Server" -c Release -nologo -v q & goto :eof
 if "%1"=="apptest" set TESTS=%ED%\tests\UwEditor.App.Tests& set FILTER=--filter FullyQualifiedName~McpWindow
 if "%1"=="test" set TESTS=%ED%\tests\UwEditor.Mcp.Tests& set FILTER=

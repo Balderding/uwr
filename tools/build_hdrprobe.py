@@ -5,12 +5,13 @@ then put in release\linux beside the game (the probe uses the libSDL3.so.0 there
     <python> -I tools\build_hdrprobe.py
 """
 import os, sys, subprocess, shutil
+TOOLS = os.environ.get('UWR_TOOLS', r'X:\tools')   # the compilers and SDKs (one variable: the move to X:, 2026-11-22)
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-LLVM_BIN = r'O:\appsnotonc\llvm\23.1.4\bin'
-LLVM_TMP = r'O:\appsnotonc\llvm\tmp'
-SYSROOT = os.environ.get('LINUX_SYSROOT', r'O:\appsnotonc\linux-sysroot')
-VULKAN_INC = r'O:\appsnotonc\vulkan-sdk\1.4.363.1\Include'
+LLVM_BIN = TOOLS + r'\llvm\23.1.4\bin'
+LLVM_TMP = TOOLS + r'\llvm\tmp'
+SYSROOT = os.environ.get('LINUX_SYSROOT', TOOLS + r'\linux-sysroot')
+VULKAN_INC = TOOLS + r'\vulkan-sdk\1.4.363.1\Include'
 OUT = os.path.join(HERE, 'build', 'linux', 'hdrprobe')
 REL = os.path.join(HERE, 'release', 'linux')
 

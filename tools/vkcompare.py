@@ -15,6 +15,7 @@ Run: python -I tools\vkcompare.py [--only title|menu|switch] [--visible]   (pict
 --visible: the windows on the screen, not off it: full screen really fills the monitor)
 """
 import ctypes, os, shutil, subprocess, sys, threading, time, zlib, struct
+TOOLS = os.environ.get('UWR_TOOLS', r'X:\tools')   # the compilers and SDKs (one variable: the move to X:, 2026-11-22)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # (VKCOMPARE_EXE: another copy of the program with its DLLs, for when another session's runs hold build\port's files)
@@ -22,7 +23,7 @@ EXE = os.environ.get('VKCOMPARE_EXE') or os.path.join(ROOT, 'underworld-exhumed'
 DATA = os.path.join(ROOT, 'dist', 'UW1', 'game')
 SAVES = os.path.join(ROOT, 'work', 'in2-4')
 OUT = os.path.join(ROOT, 'work', 'vk', 'compare')
-LAYERS = r'O:\appsnotonc\vulkan-sdk\1.4.363.1\Bin'
+LAYERS = TOOLS + r'\vulkan-sdk\1.4.363.1\Bin'
 THRESHOLD = 8
 # the start menu's restore of the saved game (work\convshot.py's), then F1: our menu
 RESTORE = ['3000 key esc', '5000 key esc', '7000 key esc', '9000 key end', '9300 key enter', '12000 key home',

@@ -54,6 +54,7 @@ static RenderVolume g_vol;
 
 void render_volume(const RenderVolume *v)
 {
+    gpu_idle();
     if (v) g_vol = *v;
     else g_vol.on = 0;
 }

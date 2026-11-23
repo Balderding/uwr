@@ -5,7 +5,7 @@ is built from (external\llama.cpp, b12131):
 
     https://github.com/ggml-org/llama.cpp/releases/download/b12131/llama-b12131-bin-ubuntu-vulkan-x64.tar.gz
     sha256 a9f6c2818734a7d364ff51ad21a06ab34cbc7aaa08583553b41545c5ef6fcc55
-    unpacked in O:\appsnotonc\llama-linux\b12131\extracted (MIT, as the source; its licence is staged beside it)
+    unpacked in X:\tools\llama-linux\b12131\extracted (MIT, as the source; its licence is staged beside it)
 
 and that build's libraries the game needs are put beside it by the names they are asked for: libllama.so.0,
 libggml.so.0, libggml-base.so.0 (the three libuwmind.so needs, found beside it: RUNPATH $ORIGIN), every
@@ -14,19 +14,20 @@ driver's Vulkan). tools\makelinuxdist.py stages the folder as llm\bin.
 
 libgomp.so.1 (GCC's OpenMP runtime, which llama.cpp's libraries need and a stock Ubuntu 24.04 / Linux Mint 22 may not
 have) goes beside them too: Ubuntu 24.04's own libgomp1 14.2.0-4ubuntu2~24.04.1 (apt-get download in the WSL distro,
-nothing installed; unpacked in O:\appsnotonc\llama-linux\libgomp; GPL 3 with the GCC Runtime Library Exception, which
+nothing installed; unpacked in X:\tools\llama-linux\libgomp; GPL 3 with the GCC Runtime Library Exception, which
 lets it be shipped with a program). It needs glibc 2.38: Linux Mint 22, as the rest of the Linux build.
 
     <python> -I tools\buildmind_linux.py
 """
 import os, sys, subprocess, shutil, glob
+TOOLS = os.environ.get('UWR_TOOLS', r'X:\tools')   # the compilers and SDKs (one variable: the move to X:, 2026-11-22)
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-LLVM_BIN = r'O:\appsnotonc\llvm\23.1.4\bin'
-LLVM_TMP = r'O:\appsnotonc\llvm\tmp'
-SYSROOT = os.environ.get('LINUX_SYSROOT', r'O:\appsnotonc\linux-sysroot')
-LLAMA = r'O:\appsnotonc\llama-linux\b12131\extracted\llama-b12131'
-GOMP = r'O:\appsnotonc\llama-linux\libgomp\libgomp.so.1'
+LLVM_BIN = TOOLS + r'\llvm\23.1.4\bin'
+LLVM_TMP = TOOLS + r'\llvm\tmp'
+SYSROOT = os.environ.get('LINUX_SYSROOT', TOOLS + r'\linux-sysroot')
+LLAMA = TOOLS + r'\llama-linux\b12131\extracted\llama-b12131'
+GOMP = TOOLS + r'\llama-linux\libgomp\libgomp.so.1'
 SRC = os.path.join(HERE, 'external', 'llama.cpp')
 OUT = os.path.join(HERE, 'build', 'linux', 'llm', 'bin')
 

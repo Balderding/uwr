@@ -47,6 +47,20 @@ const unsigned *ui_text_rect(int *x0, int *y0, int *x1, int *y1, int *stride) {
     *x0 = tx0, *y0 = ty0, *x1 = tx1, *y1 = ty1, *stride = g_ww;
     return T;
 }
+/* the text layer's drawn rectangle grown by x0..x1, y0..y1 (window pixels): text written into it by st_draw directly
+   (the Esc menu's own, menu_draw.c) is cleared by the next ui_clear and goes up with it (render_set_panel) */
+void ui_text_mark(int x0, int y0, int x1, int y1) {
+    if (!T) return;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 >= g_ww) x1 = g_ww - 1;
+    if (y1 >= g_wh) y1 = g_wh - 1;
+    if (x1 < x0 || y1 < y0) return;
+    if (x0 < tx0) tx0 = x0;
+    if (y0 < ty0) ty0 = y0;
+    if (x1 > tx1) tx1 = x1;
+    if (y1 > ty1) ty1 = y1;
+}
 /* lays the text layer over the pixels d (w x h), fully opaque */
 void ui_text_apply(unsigned *d, int w, int h) { ui_text_apply_a(d, w, h, 256); }
 /* the same at opacity A, 0..256 (a fading box) */
@@ -433,10 +447,12 @@ void ui_cursor(int n, int x, int y) {
    the front fetches the picture once a frame (uwv_pointer) and gives it to the window's cursor. ------------------ */
 static int g_sys_ptr = 1;
 static struct { int want, item, qty, scale; } P;
+static int g_front_shows = 1;   /* the backend shows the system's cursor over our panels this frame (uwv_pointer_front) */
 void ui_sys_pointer_set(int on) { g_sys_ptr = on != 0; }
+void ui_sys_pointer_front(int on) { g_front_shows = on != 0; }
 int ui_sys_pointer_on(void) { return g_sys_ptr; }
 int ui_pointer_take(int item, int qty) {
-    if (!g_sys_ptr) return 0;
+    if (!g_sys_ptr || !g_front_shows) return 0;   /* (a captured pointer: drawn as before, the review's P3-4) */
     P.want = 1, P.item = item, P.qty = item >= 0 ? qty : 0, P.scale = O.scale;
     return 1;
 }

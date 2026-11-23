@@ -1,7 +1,7 @@
 @echo off
 rem buildmind.cmd: tests\uwmind_bench.c (our own Strata's first step) against build\llama (tools\buildllama.cmd first),
 rem into build\llama\bin beside the llama.cpp DLLs.
-call O:\appsnotonc\llvm\env.cmd
+call "%~dp0uwr_env.cmd"
 cd /d "%~dp0.."
 set L=build\llama
 clang %CLANG_FLAGS% -O2 -Wall -I external\llama.cpp\include -I external\llama.cpp\ggml\include ^

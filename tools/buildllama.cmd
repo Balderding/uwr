@@ -5,14 +5,14 @@ rem   The core as DLLs (llama.dll, ggml.dll, ggml-base.dll) and every CPU varian
 rem   (GGML_BACKEND_DL + GGML_CPU_ALL_VARIANTS): at start ggml loads the best one this PC's processor has, so one
 rem   build runs on any x64 PC. A GPU backend (ggml-vulkan.dll) is another DLL beside them, loaded when present.
 rem   tools\buildllama.cmd          CPU
-rem   tools\buildllama.cmd vulkan   CPU + Vulkan (the Vulkan SDK in O:\appsnotonc\vulkan-sdk: glslc + headers; only
+rem   tools\buildllama.cmd vulkan   CPU + Vulkan (the Vulkan SDK in %UWR_TOOLS%\vulkan-sdk: glslc + headers; only
 rem                                 for building, players need just their graphics driver)
-call O:\appsnotonc\llvm\env.cmd
-set PATH=%PATH%;O:\appsnotonc\gcc\mingw64\bin
+call "%~dp0uwr_env.cmd"
+set PATH=%PATH%;%UWR_TOOLS%\gcc\mingw64\bin
 cd /d "%~dp0.."
 set VK=-DGGML_VULKAN=OFF
 if /i not "%1"=="vulkan" goto novk
-set VULKAN_SDK=O:\appsnotonc\vulkan-sdk\1.4.363.1
+set VULKAN_SDK=%UWR_TOOLS%\vulkan-sdk\1.4.363.1
 set PATH=%VULKAN_SDK%\Bin;%PATH%
 rem the shader generator (vulkan-shaders-gen, run only while building) is its own CMake project that does not get
 rem the -D settings below; llama.cpp hands it a toolchain file only when "cross-compiling", which naming the
@@ -21,7 +21,7 @@ set VK=-DGGML_VULKAN=ON -DCMAKE_SYSTEM_NAME=Windows -DCMAKE_SYSTEM_PROCESSOR=AMD
 :novk
 cmake --fresh -G Ninja -S external\llama.cpp -B build\llama -DCMAKE_BUILD_TYPE=Release ^
   -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_COMPILER_TARGET=x86_64-w64-windows-gnu ^
-  -DCMAKE_CXX_COMPILER_TARGET=x86_64-w64-windows-gnu -DCMAKE_SYSROOT=O:/appsnotonc/gcc/mingw64 ^
+  -DCMAKE_CXX_COMPILER_TARGET=x86_64-w64-windows-gnu -DCMAKE_SYSROOT=%UWR_TOOLS:\=/%/gcc/mingw64 ^
   "-DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld -static-libgcc -static-libstdc++" ^
   "-DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld -static-libgcc -static-libstdc++" ^
   "-DCMAKE_MODULE_LINKER_FLAGS=-fuse-ld=lld -static-libgcc -static-libstdc++" ^

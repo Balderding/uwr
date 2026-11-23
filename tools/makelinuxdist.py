@@ -27,18 +27,19 @@ Staged (lower-case names, as every name in the folder):
 Library names are the ones the program and the system ask for (libSDL3.so.0, libphonon.so): the dynamic loader
 matches them exactly, so they keep their case."""
 import os, sys, shutil
+TOOLS = os.environ.get('UWR_TOOLS', r'X:\tools')   # the compilers and SDKs (one variable: the move to X:, 2026-11-22)
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ELF = os.path.join(HERE, 'underworld-exhumed', 'uw1', 'build', 'port-linux', 'uw1port')
-SYSROOT = r'O:\appsnotonc\linux-sysroot'
+SYSROOT = TOOLS + r'\linux-sysroot'
 SDL3 = os.path.join(SYSROOT, 'usr', 'lib', 'x86_64-linux-gnu', 'libSDL3.so.0')
 MUNT = os.path.join(HERE, 'build', 'munt-linux', 'libmt32emu.so.2')   # (tools/buildmunt_linux.py: the music and our effects)
 SNDIO = os.path.join(SYSROOT, 'usr', 'lib', 'x86_64-linux-gnu', 'libsndio.so.7')   # (SDL3 NEEDS it; Mint 22 lacks it)
-PHONON = r'O:\appsnotonc\steam-audio\4.8.1\extracted\steamaudio\lib\linux-x64\libphonon.so'
+PHONON = TOOLS + r'\steam-audio\4.8.1\extracted\steamaudio\lib\linux-x64\libphonon.so'
 UWVIEW = os.path.join(HERE, 'build', 'linux', 'libuwview.so')   # (tools\buildview_linux.py)
 MIND = os.path.join(HERE, 'build', 'linux', 'llm', 'bin')        # (tools\buildmind_linux.py: libuwmind.so and llama.cpp's)
 FREEFONTS = os.path.join(HERE, 'freefonts')
-NGX_DLSS = [os.path.join(r'O:\appsnotonc\dlss-sdk\lib\Linux_x86_64\rel', f)
+NGX_DLSS = [os.path.join(TOOLS + r'\dlss-sdk\lib\Linux_x86_64\rel', f)
             for f in ('libnvidia-ngx-dlss.so.310.9.16', 'libnvidia-ngx-dlssd.so.310.9.16')]
 OUT = os.path.join(HERE, 'release', 'linux')
 # the packages a stock Linux Mint 22 (Ubuntu 24.04 "noble") may lack, for SDL3 (its NEEDED list) and OpenAL; apt

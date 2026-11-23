@@ -80,6 +80,7 @@ typedef struct {
     float ripple[16][4];/* the splashes' rings: x, z, age (s), strength */
     float texres[4];    /* the walls' and floors' high-res copy: x its scale (0: off) */
     float hdr[4];       /* HDR output: x on, y paper white / 80 (scRGB's 1.0 is 80 nits), z peak / paper white */
+    float panel[4];     /* our panel on the GPU (Vulkan's present.hlsl): x on, y its scale, z, w its size (D3D12: 0) */
 } Constants;
 #define CB_SHOT_OFF 2048   /* the screenshot's SDR copy of the constants in the 4096-byte constant buffer (HDR on) */
 
@@ -1216,6 +1217,16 @@ void render_set_light_pos(int k, const float pos[3]) {
 /* the interface layer's size (a whole factor smaller than the output) */
 void render_ui_size(int *w, int *h, int *scale) { *w = R.ui_w, *h = R.ui_h, *scale = R.ui_s; }
 /* this frame's interface picture copied into its upload buffer (sent to the GPU at the next frame) */
+bool render_set_panel(const u8 *rgba, int w, int h, int scale, const unsigned *text, int stride, int x0, int y0, int x1, int y1)
+{
+    (void)rgba, (void)w, (void)h, (void)scale, (void)text, (void)stride, (void)x0, (void)y0, (void)x1, (void)y1;
+    return false;   /* (D3D12: the panel blended into the layer, as before) */
+}
+bool render_has_panel(void) { return false; }
+unsigned render_panel_gen(void) { return 0; }
+bool render_keep_panel(void) { return false; }
+void render_set_overlap(bool on) { (void)on; }   /* (D3D12: every frame waited for, as before) */
+bool render_overlap(void) { return false; }
 void render_set_ui(const u8 *rgba) {
     if (!R.ui_up) return;
     if (!R.ui_ptr) {
@@ -1932,6 +1943,8 @@ bool render_readback(u8 *rgba) {
 }
 
 /* the end: the GPU idle, the run's Ray Reconstruction and DLSS 5 counts logged, NGX stopped */
+void render_quit_fast(void);
+void render_quit_fast(void) { render_shutdown(); }   /* (D3D12: taken down as before) */
 void render_shutdown(void) {
     if (!R.dev) return;
     wait_gpu();

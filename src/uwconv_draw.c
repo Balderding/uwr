@@ -22,6 +22,15 @@
 
 static unsigned *buf;
 static int bw, bh;
+#include <time.h>
+/* UWVIEW_MENU_TIMING=1: the conversation screen's parts, ms a frame, every 120 frames (the fast-UI plan's next step) */
+static int cv_timed(void) { static int on = -1; if (on < 0) { const char *e = getenv("UWVIEW_MENU_TIMING"); on = e && *e && *e != '0'; } return on; }
+static double cv_ms(void) { struct timespec t; timespec_get(&t, TIME_UTC); return (double)t.tv_sec * 1000.0 + t.tv_nsec / 1e6; }
+static double cv_t[4];   /* fill, edges + pieces, (unused), text */
+static double cvx[4];     /* the text's parts: erase, wrap, draw, the pointer over it */
+extern int uwv_conv_fast_flag;   /* uwview.c: Quick conversation drawing (the Esc menu's row, settings.txt conv_fast) */
+#define cv_fast uwv_conv_fast_flag
+static int cv_n;
 
 /* (re)makes the layer buffer for uw x uh pixels; 0 when memory is short (logged once: it is called every frame) */
 static int layer_buf(int uw, int uh)
@@ -39,21 +48,17 @@ static int layer_buf(int uw, int uh)
     return 1;
 }
 
-/* draws the conversation screen's pieces over the dimmed view (see the top); returns the layer, NULL if it cannot */
-UWV_API const unsigned char *uwv_conv(const unsigned *src, int sw, int sh, int uw, int uh, const int *pieces, int n,
-                                      int scale, int dim)
+/* the pieces' dark edges and the pieces themselves into b (uw x uh), the old way: every pixel of each edge's box
+   tested, each piece pixel found by a divide (kept as the check's reference: UWVIEW_CONV_VERIFY) */
+static void conv_paint_old(unsigned *b, const unsigned *src, int sw, int sh, int uw, int uh, const int *pieces, int n, int scale)
 {
-    if (!src || uw <= 0 || uh <= 0 || scale < 1) return NULL;
-    if (!layer_buf(uw, uh)) return NULL;
-    unsigned shade = (unsigned)(dim & 0xFF) << 24;
-    for (size_t i = 0, all = (size_t)uw * (size_t)uh; i < all; i++) buf[i] = shade;
     int edge = scale > 1 ? scale / 2 + 1 : 1;
-    for (int p = 0; p < n; p++) {     /* the dark edges first, so that a piece next to another covers its edge */
+    for (int p = 0; p < n; p++) {
         const int *q = pieces + p * 6;
         int x0 = q[4] - edge, y0 = q[5] - edge, x1 = q[4] + q[2] * scale + edge, y1 = q[5] + q[3] * scale + edge;
         for (int y = y0 < 0 ? 0 : y0; y < y1 && y < uh; y++)
             for (int x = x0 < 0 ? 0 : x0; x < x1 && x < uw; x++)
-                if (x < q[4] || y < q[5] || x >= x1 - edge || y >= y1 - edge) buf[(size_t)y * uw + x] = 0xE0000000u;
+                if (x < q[4] || y < q[5] || x >= x1 - edge || y >= y1 - edge) b[(size_t)y * uw + x] = 0xE0000000u;
     }
     for (int p = 0; p < n; p++) {
         const int *q = pieces + p * 6;
@@ -61,14 +66,110 @@ UWV_API const unsigned char *uwv_conv(const unsigned *src, int sw, int sh, int u
             int ty = q[5] + y, ry = q[1] + y / scale;
             if (ty < 0 || ty >= uh || ry < 0 || ry >= sh) continue;
             const unsigned *srow = src + (size_t)ry * sw;
-            unsigned *drow = buf + (size_t)ty * uw;
+            unsigned *drow = b + (size_t)ty * uw;
             for (int x = 0; x < q[2] * scale; x++) {
                 int tx = q[4] + x, rx = q[0] + x / scale;
                 if (tx < 0 || tx >= uw || rx < 0 || rx >= sw) continue;
                 unsigned c = srow[rx] & 0xFFFFFF;
-                if (c == 0x000004) continue;            /* the screen's black round the panels: the edge shows */
+                if (c == 0x000004) continue;
                 drow[tx] = 0xFF000000u | (c >> 16 & 0xFF) | (c & 0xFF00) | (c & 0xFF) << 16;
             }
+        }
+    }
+}
+/* a rectangle x0..x1-1, y0..y1-1 of b set to v, clipped to uw x uh */
+static void conv_fill(unsigned *b, int uw, int uh, int x0, int y0, int x1, int y1, unsigned v)
+{
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > uw) x1 = uw;
+    if (y1 > uh) y1 = uh;
+    for (int y = y0; y < y1; y++)
+        for (unsigned *d = b + (size_t)y * uw + x0, *e = b + (size_t)y * uw + x1; d < e; d++) *d = v;
+}
+/* the same as conv_paint_old, faster: the edges as their four strips, each piece row scaled once into row and laid
+   down on its scale rows (a straight copy where the row has none of the screen's black, 0x000004, to keep) */
+static void conv_paint(unsigned *b, const unsigned *src, int sw, int sh, int uw, int uh, const int *pieces, int n, int scale)
+{
+    static unsigned *row;
+    static int row_n;
+    int edge = scale > 1 ? scale / 2 + 1 : 1;
+    for (int p = 0; p < n; p++) {
+        const int *q = pieces + p * 6;
+        int x0 = q[4] - edge, y0 = q[5] - edge, x1 = q[4] + q[2] * scale + edge, y1 = q[5] + q[3] * scale + edge;
+        conv_fill(b, uw, uh, x0, y0, x1, q[5], 0xE0000000u);                 /* (above the piece) */
+        conv_fill(b, uw, uh, x0, y1 - edge, x1, y1, 0xE0000000u);            /* (below) */
+        conv_fill(b, uw, uh, x0, q[5], q[4], y1 - edge, 0xE0000000u);        /* (left) */
+        conv_fill(b, uw, uh, x1 - edge, q[5], x1, y1 - edge, 0xE0000000u);   /* (right) */
+    }
+    for (int p = 0; p < n; p++) {
+        const int *q = pieces + p * 6;
+        int pw = q[2] * scale;
+        if (pw <= 0 || q[3] <= 0) continue;
+        if (pw > row_n) {
+            unsigned *r2 = realloc(row, (size_t)pw * 4);
+            if (!r2) { conv_paint_old(b, src, sw, sh, uw, uh, q, 1, scale); continue; }
+            row = r2, row_n = pw;
+        }
+        int a = q[4] < 0 ? -q[4] : 0, z = q[4] + pw > uw ? uw - q[4] : pw;   /* (the row's part inside the layer) */
+        if (z <= a) continue;
+        for (int sy = 0; sy < q[3]; sy++) {
+            int ry = q[1] + sy, keep = 0;
+            if (ry < 0 || ry >= sh) continue;
+            const unsigned *srow = src + (size_t)ry * sw;
+            for (int sx = 0; sx < q[2]; sx++) {   /* (0: not drawn there: off the screen, or its black) */
+                int rx = q[0] + sx;
+                unsigned c = rx >= 0 && rx < sw ? srow[rx] & 0xFFFFFF : 0x000004, v;
+                if (c == 0x000004) v = 0, keep = 1;
+                else v = 0xFF000000u | (c >> 16 & 0xFF) | (c & 0xFF00) | (c & 0xFF) << 16;
+                for (int k = 0; k < scale; k++) row[sx * scale + k] = v;
+            }
+            for (int k = 0; k < scale; k++) {
+                int ty = q[5] + sy * scale + k;
+                if (ty < 0 || ty >= uh) continue;
+                unsigned *d = b + (size_t)ty * uw + q[4];
+                if (!keep) memcpy(d + a, row + a, (size_t)(z - a) * 4);
+                else for (int x = a; x < z; x++) if (row[x]) d[x] = row[x];
+            }
+        }
+    }
+}
+/* draws the conversation screen's pieces over the dimmed view (see the top); returns the layer, NULL if it cannot */
+UWV_API const unsigned char *uwv_conv(const unsigned *src, int sw, int sh, int uw, int uh, const int *pieces, int n,
+                                      int scale, int dim)
+{
+    if (!src || uw <= 0 || uh <= 0 || scale < 1) return NULL;
+    if (!layer_buf(uw, uh)) return NULL;
+    const int timed = cv_timed();
+    double t0 = timed ? cv_ms() : 0, t1 = 0, t2 = 0;
+    if (timed && ++cv_n == 120) {
+        RLOG_I(LOG_TAG, "conversation at %dx%d, ms a frame: dimming %.2f, edges and pieces %.2f, (none) %.2f, text %.2f",
+               uw, uh, cv_t[0] / cv_n, cv_t[1] / cv_n, cv_t[2] / cv_n, cv_t[3] / cv_n);
+        RLOG_I(LOG_TAG, "conversation text, ms a frame: erase %.2f, wrap %.2f, draw %.2f, pointer %.2f", cvx[0] / cv_n, cvx[1] / cv_n, cvx[2] / cv_n, cvx[3] / cv_n);
+        cv_n = 0, cv_t[0] = cv_t[1] = cv_t[2] = cv_t[3] = 0, cvx[0] = cvx[1] = cvx[2] = cvx[3] = 0;
+    }
+    unsigned shade = (unsigned)(dim & 0xFF) << 24;
+    for (size_t i = 0, all = (size_t)uw * (size_t)uh; i < all; i++) buf[i] = shade;
+    if (timed) t1 = cv_ms(), cv_t[0] += t1 - t0;
+    /* the dark edges first, so that a piece next to another covers its edge; then the pieces (the screen's black round
+       the panels left as the edge or the dimming has it). Quick conversation drawing (settings.txt conv_fast, the
+       Esc menu's row): conv_paint; off: conv_paint_old, as before */
+    if (cv_fast) conv_paint(buf, src, sw, sh, uw, uh, pieces, n, scale);
+    else conv_paint_old(buf, src, sw, sh, uw, uh, pieces, n, scale);
+    if (timed) t2 = cv_ms(), cv_t[1] += t2 - t1;
+    {   /* UWVIEW_CONV_VERIFY=1 (a check's): the frame drawn the old way too, and compared */
+        static int verify = -1, frames, bad;
+        static unsigned *ref;
+        static size_t ref_n;
+        if (verify < 0) { const char *e = getenv("UWVIEW_CONV_VERIFY"); verify = e && *e == '1'; }
+        size_t all = (size_t)uw * uh;
+        if (verify && cv_fast && (ref_n >= all || (free(ref), ref = malloc(all * 4), ref_n = ref ? all : 0))) {
+            for (size_t i = 0; i < all; i++) ref[i] = shade;
+            conv_paint_old(ref, src, sw, sh, uw, uh, pieces, n, scale);
+            size_t diff = 0;
+            for (size_t i = 0; i < all; i++) diff += ref[i] != buf[i];
+            frames++, bad += diff != 0;
+            if (diff || frames % 120 == 1) RLOG_I(LOG_TAG, "conversation verify: frame %d: %zu pixels differ from the old drawing (%d of %d differed)", frames, diff, bad, frames);
         }
     }
     return (const unsigned char *)buf;
@@ -131,7 +232,7 @@ static SGlyph *sg;              /* 256 characters at the size sg_em */
 static int sg_em, sg_cw, sg_ch, sg_pad, sg_base;
 
 /* makes the 256 glyph cells for the smooth font at size em (Tahoma through GDI; a stand-in face on Linux) */
-static void smooth_build(int em)
+static void smooth_make(int em)
 {
     static int said;
     if (sg && sg_em == em) return;
@@ -180,6 +281,36 @@ static void smooth_build(int em)
     SelectObject(dc, of), SelectObject(dc, ob);
     DeleteObject(f), DeleteObject(bm), DeleteDC(dc);
 #endif
+}
+
+/* the smooth font at size em: with Quick conversation drawing the last four sizes' glyph sets are kept (a
+   conversation's name plates and its text use two sizes, and each change made all 256 glyphs again through GDI: 5 ms
+   a frame at 2544x1353); off, one set made again at each change, as before */
+static struct { SGlyph *g; int em, cw, ch, pad, base; unsigned use; } sgset[4];
+static unsigned sgset_clock;
+static void smooth_build(int em)
+{
+    if (sg && sg_em == em) return;
+    if (!cv_fast) {   /* (as before: one set; the kept ones given up, their memory being the one set's now) */
+        for (int k = 0; k < 4; k++) sgset[k].em = 0;
+        smooth_make(em);
+        return;
+    }
+    int k, old = 0;
+    for (k = 0; k < 4; k++) {
+        if (sgset[k].g && sgset[k].em == em) {
+            sg = sgset[k].g, sg_em = em, sg_cw = sgset[k].cw, sg_ch = sgset[k].ch, sg_pad = sgset[k].pad, sg_base = sgset[k].base;
+            sgset[k].use = ++sgset_clock;
+            return;
+        }
+        if (sgset[k].use < sgset[old].use) old = k;
+    }
+    if (!sgset[old].g) sgset[old].g = calloc(256, sizeof(SGlyph));
+    if (!sgset[old].g) { smooth_make(em); return; }
+    sg = sgset[old].g, sg_em = -1;
+    smooth_make(em);
+    sgset[old].em = em, sgset[old].cw = sg_cw, sgset[old].ch = sg_ch, sgset[old].pad = sg_pad, sgset[old].base = sg_base;
+    sgset[old].use = ++sgset_clock;
 }
 
 /* the font in use: a character's advance, a line's height, and drawing one at (x, y) (its line's top) */
@@ -263,6 +394,50 @@ static int wrap(const char *s, int width)
     return n;
 }
 
+/* wrap's lines kept (Quick conversation drawing): the last 8 texts' wraps, each for its text (a hash and the length),
+   the width and the font (the original's or the smooth one: its scale and glyph set), the oldest given up first */
+static struct { unsigned h; size_t len; int width, orig, k, em, n; void *lines; size_t cap; unsigned use; } wcache[8];
+static unsigned wcache_clock;
+static int wrap_kept(const char *s, int width)
+{
+    if (!cv_fast) return wrap(s, width);
+    unsigned h = 2166136261u;
+    size_t len = 0;
+    for (const unsigned char *p = (const unsigned char *)s; *p; p++, len++) h = (h ^ *p) * 16777619u;
+    int k, old = 0;
+    for (k = 0; k < 8; k++) {
+        if (wcache[k].lines && wcache[k].h == h && wcache[k].len == len && wcache[k].width == width && wcache[k].orig == tf_original &&
+            wcache[k].k == tf_k && wcache[k].em == (tf_original ? 0 : sg_em)) {   /* (the smooth glyphs' size: smooth_build) */
+            memcpy(tl, wcache[k].lines, (size_t)wcache[k].n * sizeof tl[0]);
+            wcache[k].use = ++wcache_clock;
+            static int verify = -1;
+            if (verify < 0) { const char *e = getenv("UWVIEW_CONV_VERIFY"); verify = e && *e == '1'; }
+            if (verify) {   /* (the check: wrapped again, the same lines) */
+                static int checks, bad;
+                int n2 = wrap(s, width);
+                int same = n2 == wcache[k].n && !memcmp(tl, wcache[k].lines, (size_t)n2 * sizeof tl[0]);
+                checks++, bad += !same;
+                if (!same || checks % 240 == 1) RLOG_I(LOG_TAG, "conversation verify: kept wrap %d: %s (%d of %d differed)", checks, same ? "the same" : "DIFFERENT", bad, checks);
+            }
+            return wcache[k].n;
+        }
+        if (wcache[k].use < wcache[old].use) old = k;
+    }
+    int n = wrap(s, width);
+    { static int said; if (getenv("UWVIEW_CONV_WRAPLOG") && said++ < 40) RLOG_I(LOG_TAG, "wrap miss: %zu bytes, width %d, %d lines, orig %d k %d em %d", len, width, n, tf_original, tf_k, sg_em); }
+    size_t need = (size_t)n * sizeof tl[0];
+    if (need > wcache[old].cap) {
+        void *nl = realloc(wcache[old].lines, need ? need : 1);
+        if (!nl) return n;
+        wcache[old].lines = nl, wcache[old].cap = need;
+    }
+    if (!wcache[old].lines) { wcache[old].lines = malloc(1); if (!wcache[old].lines) return n; }
+    memcpy(wcache[old].lines, tl, need);
+    wcache[old].h = h, wcache[old].len = len, wcache[old].width = width, wcache[old].orig = tf_original, wcache[old].k = tf_k;
+    wcache[old].em = tf_original ? 0 : sg_em, wcache[old].n = n, wcache[old].use = ++wcache_clock;
+    return n;
+}
+
 /* one screen pixel c drawn scale x scale into the layer */
 static void block(const unsigned *src, int sw, int x, int y, int rx, int ry, int dx, int dy, int scale, unsigned c)
 {
@@ -283,12 +458,27 @@ static void block(const unsigned *src, int sw, int x, int y, int rx, int ry, int
  * area from its top as the original's scroll does, and once they are more than it holds, the last ones (back lines
  * earlier) end at its bottom. rows (rows_n of them): for each line row of the area, the offset in text where the line
  * drawn there starts, -1 for none (the backend finds the answer under a click with it). */
+static int conv_text_draw(const unsigned *src, int sw, int sh, int x, int y, int w, int h, int dx, int dy, int scale,
+                          const unsigned *erase, int nerase, const char *text, const unsigned *inks, int text_x,
+                          int line_rows, int back, unsigned paper, int *rows, int rows_n);
 UWV_API int uwv_conv_text(const unsigned *src, int sw, int sh, int x, int y, int w, int h, int dx, int dy, int scale,
                           const unsigned *erase, int nerase, const char *text, const unsigned *inks, int text_x,
                           int line_rows, int back, unsigned paper, int *rows, int rows_n)
 {
     for (int r = 0; rows && r < rows_n; r++) rows[r] = -1;
     if (!buf || !src || scale < 1) return 0;
+    double tt0 = cv_timed() ? cv_ms() : 0;
+    int lines = conv_text_draw(src, sw, sh, x, y, w, h, dx, dy, scale, erase, nerase, text, inks, text_x, line_rows, back, paper, rows, rows_n);
+    if (cv_timed()) cv_t[3] += cv_ms() - tt0;
+    return lines;
+}
+/* uwv_conv_text's drawing (timed by it) */
+static int conv_text_draw(const unsigned *src, int sw, int sh, int x, int y, int w, int h, int dx, int dy, int scale,
+                          const unsigned *erase, int nerase, const char *text, const unsigned *inks, int text_x,
+                          int line_rows, int back, unsigned paper, int *rows, int rows_n)
+{
+    const int tm = cv_timed();
+    double q0 = tm ? cv_ms() : 0, q1 = 0, q2 = 0, q3 = 0;
     /* the original's letters out */
     for (int ry = y; ry < y + h && ry < sh; ry++) {
         unsigned left = src[(size_t)ry * sw + (x > 0 ? x - 1 : 0)] & 0xFFFFFF;
@@ -310,10 +500,12 @@ UWV_API int uwv_conv_text(const unsigned *src, int sw, int sh, int x, int y, int
         }
     }
     int n = 0;
+    if (tm) q1 = cv_ms(), cvx[0] += q1 - q0, q2 = q1;
     if (text && *text) {
         tf_set(scale, line_rows);
         int x0 = dx + (text_x - x) * scale, width = (x + w - text_x) * scale;
-        n = wrap(text, width);
+        n = wrap_kept(text, width);
+        if (tm) q2 = cv_ms(), cvx[1] += q2 - q1;
         while (n > 0 && tl[n - 1].a == tl[n - 1].b) n--;        /* no empty line at the end */
         int vis = h * scale / tf_line;
         if (vis < 1) vis = 1;
@@ -334,6 +526,7 @@ UWV_API int uwv_conv_text(const unsigned *src, int sw, int sh, int x, int y, int
         }
         clip_y0 = 0, clip_y1 = bh;
     }
+    if (tm) q3 = cv_ms(), cvx[2] += q3 - q2;
     /* the pointer over our text */
     if (paper != 0xFFFFFFFFu)
         for (int ry = y; ry < y + h && ry < sh; ry++)
@@ -344,6 +537,7 @@ UWV_API int uwv_conv_text(const unsigned *src, int sw, int sh, int x, int y, int
                 for (int k = 0; k < nerase; k++) if (c == (erase[k] & 0xFFFFFF)) { er = 1; break; }
                 if (!er) block(src, sw, x, y, rx, ry, dx, dy, scale, c);
             }
+    if (tm) cvx[3] += cv_ms() - q3;
     return n;
 }
 

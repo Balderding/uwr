@@ -2,7 +2,7 @@
 rem buildmunt.cmd: Munt's libmt32emu (external\mt32emu, LGPL 2.1+) for the original game's port: build\munt\mt32emu.dll
 rem and its import library build\munt\libmt32emu.dll.a, and build\munt\include\mt32emu (a junction to the source) for
 rem <mt32emu/c_interface/c_interface.h>. Apart from uw.exe's build\mt32emu.dll. Built once; tools\portwin32.py runs it.
-call O:\appsnotonc\llvm\env.cmd
+call "%~dp0uwr_env.cmd"
 cd /d "%~dp0..\external\mt32emu"
 if not exist ..\..\build\munt mkdir ..\..\build\munt
 if not exist ..\..\build\munt\include mkdir ..\..\build\munt\include

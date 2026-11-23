@@ -6,6 +6,10 @@
 Texture2D<float4> src : register(t0);
 Texture2D<float> depth : register(t1); // the scene's depth, at the render size
 Texture2D<float4> ui : register(t2);   // the interface, post.w window pixels a pixel
+#ifdef VKPANEL
+Texture2D<float4> pan : register(t3);  // our panel's overlay (the inventory: ui.c's), panel.y window pixels a pixel
+Texture2D<float4> ptx : register(t4);  // its smooth text at the window's pixels, premultiplied (ui.c's text layer)
+#endif
 
 float4 vs(uint id : SV_VertexID) : SV_Position {
     float2 p = float2((id << 1) & 2, id & 2);
@@ -54,6 +58,16 @@ float4 ps(float4 pos : SV_Position) : SV_Target {
     // the interface over everything
     float4 u = ui.Load(int3(int2(pos.xy / max(post.w, 1)), 0));
     c = lerp(c, u.rgb, u.a);
+#ifdef VKPANEL
+    // our panel over it, as uwview.c's ui_blend_overlay and ui.c's ui_text_apply did on the CPU (the fast-UI plan B)
+    if (panel.x > 0.5) {
+        int2 wp = int2(pos.xy / max(post.w, 1));
+        int2 q = wp / max((int)panel.y, 1);
+        if (q.x < (int)panel.z && q.y < (int)panel.w) { float4 p = pan.Load(int3(q, 0)); c = lerp(c, p.rgb, p.a); }
+        float4 t = ptx.Load(int3(wp, 0));
+        c = t.rgb + c * (1 - t.a);
+    }
+#endif
     // HDR: the picture as the SDR screen would show it (its 2.2 gamma undone: linear light, 1 = paper white), in
     // scRGB (1.0 = 80 nits): paper white's nits / 80; the interface's white lands on paper white
     if (hdr) c = pow(max(c, 0), 2.2) * hdrout.y;

@@ -1,7 +1,7 @@
 @echo off
 rem buildview.cmd: our D3D12 renderer as build\uwview.dll for the original game's port (src\uwview.c over
 rem src\render.c), and the DLSS 5 bridge build\uw_nvngx.dll (src\nrbridge.c). tools\portwin32.py runs it.
-call O:\appsnotonc\llvm\env.cmd
+call "%~dp0uwr_env.cmd"
 cd /d "%~dp0.."
 rem UWR_AREA=NAME (the user, 2026-11-17: every session builds in its own private area): everything this makes goes
 rem to build/areas/NAME instead of build, so sessions build at the same time without the build lock
@@ -9,7 +9,7 @@ set B=build
 if not "%UWR_AREA%"=="" set B=build\areas\%UWR_AREA%
 if not exist %B%\gen mkdir %B%\gen
 rem the shaders, as build.cmd compiles them (into build\gen headers the renderer carries)
-set DXC=O:\appsnotonc\dxc\v1.9.2609\bin\x64\dxc.exe
+set DXC=%UWR_TOOLS%\dxc\v1.9.2609\bin\x64\dxc.exe
 set SH=src\shaders
 %DXC% -T vs_6_0 -E vs -Fh %B%\gen\scene_vs.h -Vn SCENE_VS %SH%\scene.hlsl || exit /b 1
 %DXC% -T ps_6_0 -E ps -Fh %B%\gen\scene_ps.h -Vn SCENE_PS %SH%\scene.hlsl || exit /b 1
@@ -24,7 +24,7 @@ rem -fvk-use-dx-layout: structured buffers' structs packed as D3D12's (a Vertex 
 rem structs serve both renderers (checked after the build: tools\vklayout.py)
 set SPV=-spirv -fspv-target-env=vulkan1.3 -fvk-use-dx-layout -fvk-b-shift 0 0 -fvk-t-shift 16 0 -fvk-u-shift 48 0 -fvk-s-shift 64 0
 %DXC% %SPV% -T vs_6_0 -E vs -Fh %B%\gen\present_vs_spv.h -Vn PRESENT_VS_SPV %SH%\present.hlsl || exit /b 1
-%DXC% %SPV% -T ps_6_0 -E ps -Fh %B%\gen\present_ps_spv.h -Vn PRESENT_PS_SPV %SH%\present.hlsl || exit /b 1
+%DXC% %SPV% -D VKPANEL -T ps_6_0 -E ps -Fh %B%\gen\present_ps_spv.h -Vn PRESENT_PS_SPV %SH%\present.hlsl || exit /b 1
 rem the scene without ray tracing (M2). No -fvk-invert-y: render_vk.c draws it with a negative-height viewport
 %DXC% %SPV% -T vs_6_0 -E vs -Fh %B%\gen\scene_vs_spv.h -Vn SCENE_VS_SPV %SH%\scene.hlsl || exit /b 1
 %DXC% %SPV% -T ps_6_0 -E ps -Fh %B%\gen\scene_ps_spv.h -Vn SCENE_PS_SPV %SH%\scene.hlsl || exit /b 1
@@ -75,7 +75,7 @@ rem gives; and the shaders' SPIR-V reads every struct where the C side writes it
 set VKPY=O:\appsnotonc\sentinel\uv\python\cpython-3.13.17-windows-x86_64-none\python.exe
 %VKPY% -I tools\render_vk_cpu.py --check || exit /b 1
 %VKPY% -I tools\vklayout.py || exit /b 1
-clang %CF% -I O:\appsnotonc\vulkan-sdk\1.4.363.1\Include -shared -o %B%\uwview_vk.dll %RLOG% src\uwview.c src\render_vk.c src\vk_load.c src\ngx_vk.c src\ui.c src\menu_draw.c src\smoothtext.c src\uwinv_draw.c src\uwconv_draw.c src\uwrec.c %COMMON% -ldxgi -ldxguid -luser32 -lgdi32 -ladvapi32 -lwinmm -lmfplat -lmfreadwrite -lmfuuid -lole32 -lshell32 || exit /b 1
+clang %CF% -I %UWR_TOOLS%\vulkan-sdk\1.4.363.1\Include -shared -o %B%\uwview_vk.dll %RLOG% src\uwview.c src\render_vk.c src\vk_load.c src\ngx_vk.c src\ui.c src\menu_draw.c src\smoothtext.c src\uwinv_draw.c src\uwconv_draw.c src\uwrec.c %COMMON% -ldxgi -ldxguid -luser32 -lgdi32 -ladvapi32 -lwinmm -lmfplat -lmfreadwrite -lmfuuid -lole32 -lshell32 || exit /b 1
 echo built uwview_vk.dll
 rem uwr-vulkan.exe: uwr.exe started with the Vulkan renderer for one run (makedist.py puts it beside uwr.exe)
 clang %CLANG_FLAGS% -O2 -municode -mwindows tools\uw_vulkan_launch.c -o %B%\uwr-vulkan.exe || exit /b 1

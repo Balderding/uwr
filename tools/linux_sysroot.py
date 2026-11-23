@@ -1,7 +1,7 @@
 r"""linux_sysroot.py: a Linux x86-64 sysroot for our clang's cross-builds (the Linux / SDL plan, step 4), made from
 Debian 13 "trixie" amd64's own .deb packages, on this Windows machine with nothing installed.
 
-  python -I tools\linux_sysroot.py [ROOT]     (default O:\appsnotonc\linux-sysroot)
+  python -I tools\linux_sysroot.py [ROOT]     (default X:\tools\linux-sysroot)
 
 1. The suite's InRelease from deb.debian.org (https); its OpenPGP signature checked with gpg (Git for Windows' own)
    against Debian's archive and release keys from ftp-master.debian.org/keys, when gpg is there (said either way).
@@ -14,6 +14,7 @@ Debian 13 "trixie" amd64's own .deb packages, on this Windows machine with nothi
    case (the kernel headers have some) are logged to ROOT\debs\case-collisions.txt: the second one written wins.
 Nothing outside ROOT is written."""
 import hashlib, io, lzma, os, re, shutil, subprocess, sys, tarfile, urllib.request
+TOOLS = os.environ.get('UWR_TOOLS', r'X:\tools')   # the compilers and SDKs (one variable: the move to X:, 2026-11-22)
 
 MIRROR = 'https://deb.debian.org/debian'
 SUITE = 'trixie'
@@ -25,7 +26,7 @@ PACKAGES = ['libc6', 'libc6-dev', 'linux-libc-dev', 'libgcc-s1', 'libgcc-14-dev'
             'libsdl3-0', 'libsdl3-dev',
             'libsndio7.0']   # (SDL3 NEEDS libsndio.so.7, which a stock Mint 22 lacks: shipped beside it, makelinuxdist.py)
 
-ROOT = sys.argv[1] if len(sys.argv) > 1 else r'O:\appsnotonc\linux-sysroot'
+ROOT = sys.argv[1] if len(sys.argv) > 1 else TOOLS + r'\linux-sysroot'
 DEBS = os.path.join(ROOT, 'debs')
 os.makedirs(DEBS, exist_ok=True)
 

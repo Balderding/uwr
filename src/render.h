@@ -63,6 +63,14 @@ void render_set_sprites(const Vertex *v, int n);
 /* the interface overlay: its size (a whole factor, scale, smaller than the window) and this frame's pixels */
 void render_ui_size(int *w, int *h, int *scale);
 void render_set_ui(const u8 *rgba);
+/* our panel on the GPU for this frame (Vulkan: render_vk.c; D3D12 false, the caller blends it into the layer) */
+bool render_set_panel(const u8 *rgba, int w, int h, int scale, const unsigned *text, int stride, int x0, int y0, int x1, int y1);
+bool render_has_panel(void);   /* render_set_panel can take a panel here (Vulkan, started) */
+unsigned render_panel_gen(void);   /* how many panels were uploaded: a caller's own one is still there while unchanged */
+bool render_keep_panel(void);      /* the panel uploaded last, over this frame again (nothing sent) */
+/* one frame in flight (Vulkan; the row Frame overlap): false waits for each frame at its submit, as before */
+void render_set_overlap(bool on);
+bool render_overlap(void);
 /* the player's torch, every frame */
 void render_set_torch(bool on, const float pos[3], const float color[3], float intensity, float range);
 void render_set_shade_scale(float k);
@@ -151,6 +159,9 @@ const char *render_dlss_text(void);
 bool render_readback(u8 *rgba);
 void render_want_screenshot(void);
 void render_shutdown(void);
+/* the game quits and the process ends at once (the row Quick quit): the GPU's work finished, nothing taken down (Vulkan:
+   NVIDIA's NGX shutdown faults at the quit since the 2026-11-22 update; D3D12: render_shutdown, as before) */
+void render_quit_fast(void);
 const char *render_status(void);
 
 /* --- the effects (docs\superpowers\plans\2026-11-12-fx-audio-and-visual.md): each pass runs only while its setting is

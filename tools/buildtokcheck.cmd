@@ -1,7 +1,7 @@
 @echo off
 rem buildtokcheck.cmd: tests\uwmind_tokcheck.c (uwmind.c's choice-token check on llama.cpp's vocabulary-only files)
 rem into build\llama\bin, then run on a SentencePiece vocabulary (must fail the check) and GPT-2 style ones (pass).
-call O:\appsnotonc\llvm\env.cmd
+call "%~dp0uwr_env.cmd"
 cd /d "%~dp0.."
 set L=build\llama
 set M=external\llama.cpp\models

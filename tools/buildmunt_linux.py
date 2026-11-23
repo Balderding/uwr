@@ -6,12 +6,13 @@ tools\portlinux.py answers pkg-config "mt32emu" with these; tools\makelinuxdist.
 
     <python> -I tools\buildmunt_linux.py"""
 import os, subprocess, sys
+TOOLS = os.environ.get('UWR_TOOLS', r'X:\tools')   # the compilers and SDKs (one variable: the move to X:, 2026-11-22)
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(HERE, 'external', 'mt32emu')
 OUT = os.path.join(HERE, 'build', 'munt-linux')
-CXX = r'O:\appsnotonc\llvm\23.1.4\bin\clang++.exe'
-SYSROOT = os.environ.get('LINUX_SYSROOT', r'O:\appsnotonc\linux-sysroot')
+CXX = TOOLS + r'\llvm\23.1.4\bin\clang++.exe'
+SYSROOT = os.environ.get('LINUX_SYSROOT', TOOLS + r'\linux-sysroot')
 FILES = ('Analog.cpp BReverbModel.cpp Display.cpp File.cpp FileStream.cpp LA32FloatWaveGenerator.cpp LA32Ramp.cpp '
          'LA32WaveGenerator.cpp MidiStreamParser.cpp Part.cpp Partial.cpp PartialManager.cpp Poly.cpp ROMInfo.cpp '
          'Synth.cpp Tables.cpp TVA.cpp TVF.cpp TVP.cpp sha1/sha1.cpp SampleRateConverter.cpp c_interface/c_interface.cpp '
@@ -20,7 +21,7 @@ FILES = ('Analog.cpp BReverbModel.cpp Display.cpp File.cpp FileStream.cpp LA32Fl
          'srchelper/srctools/src/ResamplerModel.cpp srchelper/InternalResampler.cpp').split()
 
 os.makedirs(OUT, exist_ok=True)
-os.environ['TMP'] = os.environ['TEMP'] = r'O:\appsnotonc\llvm\tmp'
+os.environ['TMP'] = os.environ['TEMP'] = TOOLS + r'\llvm\tmp'
 cmd = [CXX, '--target=x86_64-linux-gnu', '--sysroot=' + SYSROOT.replace('\\', '/'), '-fuse-ld=lld', '-O2', '-std=c++11',
        '-fPIC', '-shared',
        # (libstdc++-14-dev's headers by hand: clang on this Windows host does not add them for the sysroot's GCC 14)

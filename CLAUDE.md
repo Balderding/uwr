@@ -101,10 +101,13 @@ critters through move_mobile, effects, sound); the front end feeds GAME_TIME (co
 
 ## Standing rules from the user (all sessions)
 
-- End every update with ONLY the full-path exe command, no quotes, in one code block: `O:\uw\uo-new\build\uw.exe`
-- Never delete anything without asking; only create/add.
-- Nothing on C:. Installs/clones go to O:\appsnotonc; scratch and test files go in O:\uw\uo-new\work (gitignored).
-- Data in O:\uw is read-only; all our work goes in O:\uw\uo-new. Never the GOG install. No DOSBox.
+- End every update with ONLY the full-path exe command, no quotes, in one code block: `X:\uwr\dist\uwr\uwr.exe`
+- Never delete anything without asking; only create/add (since 2026-11-22: unused old scripts and test output may go,
+  by the safe-delete steps: references first, quarantine in X:\_trash\uwr\<date>, prove, then empty).
+- Nothing on C:. Since 2026-11-22 the project is X:\uwr (was O:\uw\uo-new). The compilers and SDKs are in
+  X:\tools\<tool>, read from ONE variable, UWR_TOOLS (default X:\tools: tools\uwr_env.cmd and TOOLS in the build
+  scripts); everything of ours is found relative to the script. Scratch and test files go in X:\uwr\work (gitignored).
+- The original game files are in X:\uw-gamedata, read-only; all our work goes in X:\uwr. Never the GOG install. No DOSBox.
 - Headless tests only, no focus stealing. Never kill the user's running uw.exe: build with `build.cmd new` if locked.
 - Never download Roland ROMs; the user's own are in uo-new\roms; never commit roms\.
 - Python tools run with uv (`UV_CACHE_DIR=O:\appsnotonc\sentinel\uv\cache`, `python -I`); pin unicorn==2.0.1.post1.

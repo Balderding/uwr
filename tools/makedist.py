@@ -30,6 +30,7 @@ readme-linux.txt) are placed beside the Windows ones when they are staged; game\
 Refused while a program of the folder runs.
 """
 import os, sys, shutil, subprocess
+TOOLS = os.environ.get('UWR_TOOLS', r'X:\tools')   # the compilers and SDKs (one variable: the move to X:, 2026-11-22)
 
 KEEP_CASE = {'libSDL3.so.0'}   # (a name the dynamic loader matches exactly)
 
@@ -99,8 +100,8 @@ if os.path.isdir(LLAMA):
             pairs.append((os.path.join(LLAMA, f), os.path.join(OUT, 'llm', 'bin', f)))
 # the effects' audio (THIRD-PARTY-NOTICES.md; port\win32\uwaudio.c loads them from bin\ when fx_audio / fx_acoustics
 # are on): OpenAL Soft 1.25.2 (LGPL 2.1, its COPYING beside it) and Steam Audio 4.8.1 (Apache 2.0, its notices)
-OPENAL = r'O:\appsnotonc\openal-soft\1.25.2\extracted\openal-soft-1.25.2-bin'
-STEAMAUDIO = r'O:\appsnotonc\steam-audio\4.8.1\extracted\steamaudio'
+OPENAL = TOOLS + r'\openal-soft\1.25.2\extracted\openal-soft-1.25.2-bin'
+STEAMAUDIO = TOOLS + r'\steam-audio\4.8.1\extracted\steamaudio'
 pairs += [(os.path.join(OPENAL, 'bin', 'Win64', 'soft_oal.dll'), os.path.join(OUT, 'bin', 'soft_oal.dll')),
           (os.path.join(OPENAL, 'COPYING'), os.path.join(OUT, 'bin', 'OpenAL-Soft-COPYING.txt')),
           (os.path.join(STEAMAUDIO, 'lib', 'windows-x64', 'phonon.dll'), os.path.join(OUT, 'bin', 'phonon.dll')),

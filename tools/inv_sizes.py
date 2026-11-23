@@ -5,6 +5,7 @@ real size, not up to the next symbol. A name the headers do not declare keeps th
 """
 import json
 import os
+TOOLS = os.environ.get('UWR_TOOLS', r'X:\tools')   # the compilers and SDKs (one variable: the move to X:, 2026-11-22)
 import re
 import subprocess
 import sys
@@ -14,7 +15,7 @@ from coreproof import ROOT, symbols  # noqa: E402
 
 X = os.path.join(ROOT, 'underworld-exhumed', 'uw1', 'src')
 E = os.path.join(ROOT, 'external', 'exhume')
-CLANG = r'O:\appsnotonc\llvm\23.1.4\bin\clang.exe'
+CLANG = TOOLS + r'\llvm\23.1.4\bin\clang.exe'
 OUT = os.path.join(ROOT, 'work', 'inv_sizes.json')
 
 
@@ -25,13 +26,13 @@ def sizes():
     names = sorted(n for n in host if not host[n] and n in data)
     heads = [f for f in sorted(os.listdir(os.path.join(X, 'include'))) if f.endswith('.h')]
     inc = ''.join('#include "%s"\n' % h for h in heads)
-    flags = ['--target=x86_64-w64-windows-gnu', '--sysroot=O:/appsnotonc/gcc/mingw64', '-x', 'c', '-std=gnu17', '-w',
+    flags = ['--target=x86_64-w64-windows-gnu', '--sysroot=' + TOOLS.replace('\\', '/') + '/gcc/mingw64', '-x', 'c', '-std=gnu17', '-w',
              '-fwrapv', '-fno-strict-aliasing', '-mno-ms-bitfields', '-include', os.path.join(E, 'port', 'compat.h'),
              '-I', os.path.join(E, 'port'), '-I', os.path.join(E, 'port', 'include'), '-I', os.path.join(E, 'include'),
              '-I', os.path.join(ROOT, 'build', 'core', 'inc'), '-I', os.path.join(X, 'port'), '-I', X,
              '-I', os.path.join(X, 'include')]
     env = dict(os.environ)
-    env['TMP'] = env['TEMP'] = env['TMPDIR'] = r'O:\appsnotonc\llvm\tmp'
+    env['TMP'] = env['TEMP'] = env['TMPDIR'] = TOOLS + r'\llvm\tmp'
     todo = list(names)
     res = {}
     for _ in range(40):

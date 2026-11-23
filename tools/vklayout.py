@@ -16,10 +16,11 @@ side: DXC -spirv with the build's flags, spirv-dis, the OpMemberDecorate ... Off
     python -I tools\vklayout.py      (run by tools\buildview.cmd, clang on the PATH; exit 1 and the differences when not alike)
 """
 import os, re, subprocess, sys
+TOOLS = os.environ.get('UWR_TOOLS', r'X:\tools')   # the compilers and SDKs (one variable: the move to X:, 2026-11-22)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DXC = r'O:\appsnotonc\dxc\v1.9.2609\bin\x64\dxc.exe'
-DIS = r'O:\appsnotonc\vulkan-sdk\1.4.363.1\Bin\spirv-dis.exe'
+DXC = TOOLS + r'\dxc\v1.9.2609\bin\x64\dxc.exe'
+DIS = TOOLS + r'\vulkan-sdk\1.4.363.1\Bin\spirv-dis.exe'
 SPV = '-spirv -fspv-target-env=vulkan1.3 -fvk-use-dx-layout -fvk-b-shift 0 0 -fvk-t-shift 16 0 -fvk-u-shift 48 0 -fvk-s-shift 64 0'.split()
 WORK = os.path.join(ROOT, 'build', *((['areas', os.environ['UWR_AREA']]) if os.environ.get('UWR_AREA') else []), 'gen', 'vklayout')   # (UWR_AREA: a session's private build area)
 
@@ -37,7 +38,7 @@ int main(void) {
     printf("Constants %zu:", sizeof(Constants));
     M(Constants, vp), M(Constants, vp_nojit), M(Constants, vp_prev), M(Constants, eye), M(Constants, look), M(Constants, size), M(Constants, post),
     M(Constants, lpos), M(Constants, lcol), M(Constants, linfo), M(Constants, outp), M(Constants, tint), M(Constants, rtlim), M(Constants, torchc),
-    M(Constants, sprite), M(Constants, fxw), M(Constants, ripple), M(Constants, texres), M(Constants, hdr);
+    M(Constants, sprite), M(Constants, fxw), M(Constants, ripple), M(Constants, texres), M(Constants, hdr), M(Constants, panel);
     printf("\nGpuLight %zu:", sizeof(GpuLight));
     M(GpuLight, pr), M(GpuLight, col), M(GpuLight, info), M(GpuLight, puff), M(GpuLight, pcol);
     printf("\nVertex %zu:", sizeof(Vertex));

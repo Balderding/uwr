@@ -29,6 +29,7 @@
 #               epoch moved by the level change; and the game's own line for each ("fx: acoustics: grid epoch ...")
 # Usage: python -I tools\fxcheck.py [materials|grid|audio|particles|decals|water|fog|acoustics ...]. Exit code: the failures.
 import os, sys, shutil, subprocess, struct, zlib, re
+TOOLS = os.environ.get('UWR_TOOLS', r'X:\tools')   # the compilers and SDKs (one variable: the move to X:, 2026-11-22)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EXE = os.path.join(ROOT, 'underworld-exhumed', 'uw1', 'build', 'port', 'uw1port.exe')
@@ -36,10 +37,10 @@ HOME0 = os.path.join(ROOT, 'work', 'in2-4')
 WORK = os.path.join(ROOT, 'work', 'fx')
 DATA = os.path.join(ROOT, 'dist', 'UW1', 'game')
 MENU = "3000 key esc\n5000 key esc\n7000 key esc\n9000 key end\n9300 key enter\n12000 key home\n12600 key enter\n14000 key enter\n"
-OPENAL_BIN = r'O:\appsnotonc\openal-soft\1.25.2\extracted\openal-soft-1.25.2-bin\bin\Win64'
-PHONON_BIN = r'O:\appsnotonc\steam-audio\4.8.1\extracted\steamaudio\lib\windows-x64'   # Steam Audio's phonon.dll (Acoustics High)
-LLVM = r'O:\appsnotonc\llvm\23.1.4\bin'
-TARGET = ['--target=x86_64-w64-windows-gnu', '--sysroot=O:/appsnotonc/gcc/mingw64', '-fuse-ld=lld']
+OPENAL_BIN = TOOLS + r'\openal-soft\1.25.2\extracted\openal-soft-1.25.2-bin\bin\Win64'
+PHONON_BIN = TOOLS + r'\steam-audio\4.8.1\extracted\steamaudio\lib\windows-x64'   # Steam Audio's phonon.dll (Acoustics High)
+LLVM = TOOLS + r'\llvm\23.1.4\bin'
+TARGET = ['--target=x86_64-w64-windows-gnu', '--sysroot=' + TOOLS.replace('\\', '/') + '/gcc/mingw64', '-fuse-ld=lld']
 
 fails = 0
 def check(name, ok, why=''):
@@ -74,7 +75,7 @@ def run(name, script, exit_ms, env=None, shot_ms=None, audio=False, cfg='', args
     return r.stderr.splitlines() + r.stdout.splitlines(), wshot
 
 def clang(out, srcs, libs=()):
-    env = dict(os.environ, PATH=LLVM + os.pathsep + os.environ.get('PATH', ''), TMP=r'O:\appsnotonc\llvm\tmp', TEMP=r'O:\appsnotonc\llvm\tmp')
+    env = dict(os.environ, PATH=LLVM + os.pathsep + os.environ.get('PATH', ''), TMP=TOOLS + r'\llvm\tmp', TEMP=TOOLS + r'\llvm\tmp')
     cmd = [os.path.join(LLVM, 'clang.exe')] + TARGET + ['-std=c17', '-O2', '-Wall', '-static', '-o', out] + list(srcs) + list(libs)
     r = subprocess.run(cmd, env=env, capture_output=True, text=True)
     if r.returncode: print(r.stdout + r.stderr)

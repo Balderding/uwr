@@ -671,6 +671,16 @@ static DWORD WINAPI term_thread(LPVOID arg)
     for (;;) term_copy(), Sleep(50);
 }
 static void term_last(void) { fflush(stdout), fflush(stderr), term_copy(); }
+/* Quick quit (uwfront.c): registered last, so the C runtime runs it first at exit, after main has written the game's
+   recording: our output written out, the terminal's copy made, then the process ends with the game's exit code and
+   nothing else's teardown runs (NVIDIA's NGX and the drivers' DLLs: Windows frees what they hold) */
+static void quick_end(void)
+{
+    fflush(stdout), fflush(stderr);
+    if (term_file != INVALID_HANDLE_VALUE) term_copy();   /* (only a start from a terminal has the copy and its lock) */
+    TerminateProcess(GetCurrentProcess(), (UINT)game_status);
+}
+void uwp_quick_end(void) { atexit(quick_end); }
 /* the terminal copy started: the log file read from byte from on, by a thread every 50 ms, and once more at exit */
 static void term_start(const char *path, HANDLE out, LONGLONG from)
 {
@@ -694,7 +704,9 @@ static void log_start(void)
     const char *home = plat_home();
     char dir[MAX_PATH], path[MAX_PATH], old[MAX_PATH];
     WIN32_FILE_ATTRIBUTE_DATA fa;
-    if (t == FILE_TYPE_DISK || t == FILE_TYPE_PIPE || !home || getenv("UWPORT_OFFSCREEN")) return;
+    /* (UWPORT_LOG_AS_PLAYER=1, a check's: a hidden run takes this path too, the log as the player's own start makes it:
+       the 2026-11-22 review P2-2, the quit with unbuffered output to uwr.log) */
+    if (t == FILE_TYPE_DISK || t == FILE_TYPE_PIPE || !home || (getenv("UWPORT_OFFSCREEN") && !getenv("UWPORT_LOG_AS_PLAYER"))) return;
     snprintf(dir, sizeof dir, "%s\\logs", home);
     CreateDirectoryA(dir, NULL);
     snprintf(path, sizeof path, "%s\\uwr.log", dir), snprintf(old, sizeof old, "%s\\uwr.1.log", dir);
@@ -952,6 +964,7 @@ int uwp_clip_hold(int x0, int y0, int x1, int y1, int first, int *mx, int *my)
 }
 void uwp_clip_free(void) { ClipCursor(NULL); }
 int uwp_ctrl_down(void) { return GetKeyState(VK_CONTROL) < 0; }
+int uwp_alt_down(void) { return GetKeyState(VK_MENU) < 0; }
 void uwp_close(void) { PostMessageW(g_win, WM_CLOSE, 0, 0); }
 void uwp_new_game(void)
 {
